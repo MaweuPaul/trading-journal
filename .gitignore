@@ -1,0 +1,46 @@
+# ── Environment & Secrets (NEVER commit these) ─────────────────────
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+frontend/.env.local
+frontend/.env*.local
+
+# ── Local fallback database (contains real trade data) ──────────────
+backend/local_trades.json
+
+# ── Screenshot uploads (served via Cloudinary, not stored in repo) ──
+backend/public/screenshots/
+
+# ── Node.js ─────────────────────────────────────────────────────────
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Next.js build output ─────────────────────────────────────────────
+frontend/.next/
+frontend/out/
+
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── OS & Editor junk ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

@@ -1,0 +1,35 @@
+const mongoose = require('mongoose');
+
+const tradeSchema = new mongoose.Schema({
+  dealId:     { type: String, required: true, unique: true }, // MT5 close deal ticket
+  positionId: { type: String, default: '' },                  // MT5 position_id — used to match EA screenshots
+  symbol: { type: String, required: true },
+  direction: { type: String, enum: ['BUY', 'SELL'], required: true },
+  entryPrice: { type: Number, required: true },
+  exitPrice: { type: Number, required: true },
+  lotSize: { type: Number, required: true },
+  pnlUSD: { type: Number, required: true },         // profit in USD
+  pnlPct: { type: Number, default: 0 },             // P&L as % of balance at close
+  commission: { type: Number, default: 0 },
+  swap: { type: Number, default: 0 },
+  openTime: { type: Date, required: true },
+  closeTime: { type: Date, required: true },
+  durationMinutes: { type: Number, default: 0 },
+  runningBalance: { type: Number, default: 0 },     // account balance after trade
+  notes: { type: String, default: "" },             // trader journal notes
+  tags: [{ type: String }],                         // custom tags, e.g. #FOMO, #double-top
+  emotion: { type: String, enum: ['Calm', 'Anxious', 'Greedy', 'Fearful', 'Disciplined', 'FOMO', ''], default: '' },
+  grade: { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' },
+  checklist: [{ rule: String, complied: Boolean }], // rule compliance checklist
+  synced: { type: Date, default: Date.now },
+  entryScreenshot: { type: String, default: "" },
+  exitScreenshot: { type: String, default: "" },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+}, { timestamps: true });
+
+tradeSchema.index({ symbol: 1 });
+tradeSchema.index({ closeTime: -1 });
+tradeSchema.index({ pnlUSD: 1 });
+tradeSchema.index({ user: 1, closeTime: -1 });
+
+module.exports = mongoose.model('Trade', tradeSchema);

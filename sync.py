@@ -11,7 +11,6 @@ Configuration:
         MT5_LOGIN=YOUR_MT5_ACCOUNT_NUMBER
         MT5_PASSWORD=YOUR_MT5_PASSWORD
         MT5_SERVER=YOUR_MT5_SERVER_NAME
-        MT5_FILES_DIR=PATH_TO_MT5_MQL5_FILES_FOLDER
         API_BASE=http://localhost:4000/api
         SYNC_INTERVAL=60
         USER_EMAIL=YOUR_ADMIN_EMAIL
@@ -36,10 +35,6 @@ API_BASE      = os.getenv("API_BASE", "http://localhost:4000/api")
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
 USER_EMAIL    = os.getenv("USER_EMAIL", "")
 USER_PASSWORD = os.getenv("USER_PASSWORD", "")
-
-# Explicit MT5 MQL5/Files path -- avoids terminal_info() returning the wrong terminal folder.
-# Set this in .env to the correct path shown in MT5 -> Tools -> Options -> Files tab.
-MT5_FILES_DIR = os.getenv("MT5_FILES_DIR", "")
 
 JWT_TOKEN = None
 
@@ -185,7 +180,7 @@ def fetch_deals(from_date=None):
 
         result.append({
             "dealId":          str(deal.ticket),
-            "positionId":      str(deal.position_id),   # matches EA screenshot filenames
+            "positionId":      str(deal.position_id),
             "symbol":          deal.symbol,
             "direction":       direction,
             "entryPrice":      float(entry_price),
@@ -202,104 +197,6 @@ def fetch_deals(from_date=None):
         })
 
     return result
-
-
-def get_mql5_files_dir():
-    """
-    Resolve the MT5 MQL5/Files directory.
-    Priority: MT5_FILES_DIR env var -> terminal_info().data_path -> None
-    """
-    if MT5_FILES_DIR and os.path.isdir(MT5_FILES_DIR):
-        return MT5_FILES_DIR
-
-    try:
-        term_info = mt5.terminal_info()
-        if term_info:
-            candidate = os.path.join(term_info.data_path, "MQL5", "Files")
-            if os.path.isdir(candidate):
-                return candidate
-    except Exception:
-        pass
-
-    return None
-
-
-def scan_and_upload_screenshots():
-    """
-    Scan the MT5 MQL5/Files directory for entry/exit screenshot PNGs,
-    upload them to the Express backend, then delete on success.
-    Naming convention: {position_id}_entry.png / {position_id}_exit.png
-    """
-    global JWT_TOKEN
-    if not JWT_TOKEN:
-        if not get_jwt_token():
-            return
-
-    mql5_files_dir = get_mql5_files_dir()
-    if not mql5_files_dir:
-        log.warning("[SCREENSHOTS] MT5 Files directory not found. Set MT5_FILES_DIR in .env.")
-        return
-
-    log.debug("[SCREENSHOTS] Scanning: %s", mql5_files_dir)
-
-    try:
-        all_files = os.listdir(mql5_files_dir)
-    except Exception as err:
-        log.error("[SCREENSHOTS] Cannot list MT5 Files directory: %s", err)
-        return
-
-    png_files = [
-        f for f in all_files
-        if f.endswith(".png") and (f.endswith("_entry.png") or f.endswith("_exit.png"))
-    ]
-
-    if not png_files:
-        return
-
-    log.info("[SCREENSHOTS] Found %d screenshot(s) to upload", len(png_files))
-
-    for filename in png_files:
-        filepath = os.path.join(mql5_files_dir, filename)
-
-        # Parse: 12345678_entry.png -> ticket="12345678", shot_type="entry"
-        base = filename.replace(".png", "")
-        parts = base.rsplit("_", 1)
-        if len(parts) != 2 or parts[1] not in ("entry", "exit"):
-            log.warning("[SCREENSHOTS] Skipping unexpected filename format: %s", filename)
-            continue
-
-        ticket    = parts[0]
-        shot_type = parts[1]
-
-        log.info("[SCREENSHOTS] Uploading %s (position_id=%s, type=%s)", filename, ticket, shot_type)
-
-        try:
-            with open(filepath, "rb") as f:
-                files_payload = {"file": (filename, f, "image/png")}
-                data_payload  = {"tradeId": str(ticket), "type": shot_type}
-                headers       = {"Authorization": f"Bearer {JWT_TOKEN}"}
-
-                resp = requests.post(
-                    f"{API_BASE}/upload-local-screenshot",
-                    files=files_payload,
-                    data=data_payload,
-                    headers=headers,
-                    timeout=30,
-                )
-
-            if resp.ok:
-                log.info("[SCREENSHOTS] Uploaded %s for position_id=%s", shot_type, ticket)
-                os.remove(filepath)
-            elif resp.status_code == 401:
-                log.warning("[SCREENSHOTS] JWT expired during upload -- re-authenticating...")
-                if get_jwt_token():
-                    scan_and_upload_screenshots()
-                return
-            else:
-                log.error("[SCREENSHOTS] Upload failed for %s: %s", filename, resp.text)
-
-        except Exception as e:
-            log.error("[SCREENSHOTS] Error uploading %s: %s", filename, e)
 
 
 def sync_trades(trades):
@@ -355,7 +252,6 @@ def main():
 
     while True:
         try:
-            # 1. Sync closed trades first -- trades must exist in DB before screenshots are linked
             latest_time = get_latest_trade_time()
             if latest_time:
                 log.info("[SYNC] Latest trade: %s. Syncing incrementally...", latest_time)
@@ -370,9 +266,6 @@ def main():
                 log.info("[SYNC] Complete -> inserted: %d, skipped (dup): %d", inserted, skipped)
             else:
                 log.info("[SYNC] Complete -> no new trades")
-
-            # 2. Upload screenshots AFTER trades are synced so linking always succeeds
-            scan_and_upload_screenshots()
 
         except Exception as e:
             log.error("[SYNC] Unexpected error: %s", e)

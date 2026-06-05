@@ -1,110 +1,101 @@
-﻿requre('dotenv').confg();
-const express = requre('express');
-const mongoose = requre('mongoose');
-const cors = requre('cors');
-const helmet = requre('helmet');
-const morgan = requre('morgan');
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
 
-const path = requre('path');
-const fs = requre('fs');
-
-const tradesRouter = requre('./routes/trades');
-const authRouter = requre('./routes/auth');
+const tradesRouter = require('./routes/trades');
+const authRouter = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Ensure publc/screenshots drectory exsts
-const screenshotsDr = path.jon(__drname, 'publc/screenshots');
-f (!fs.exstsSync(screenshotsDr)) {
-  fs.mkdrSync(screenshotsDr, { recursve: true });
-}
-
-// Mddleware
-// NOTE: crossOrgnResourcePolcy must be 'cross-orgn' so the browser
-// can load screenshot mages from port 4000 when the frontend runs on port 3000.
-app.use(helmet({
-  crossOrgnResourcePolcy: { polcy: 'cross-orgn' }
-}));
-app.use(cors({ orgn: true, credentals: true }));
-app.use(express.json({ lmt: '10mb' }));
-
-// Serve screenshots wth explct cross-orgn headers
-app.use('/screenshots', (req, res, next) => {
-  res.setHeader('Cross-Orgn-Resource-Polcy', 'cross-orgn');
-  res.setHeader('Access-Control-Allow-Orgn', '*');
-  next();
-}, express.statc(path.jon(__drname, 'publc/screenshots')));
+// Middleware
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }),
+);
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '10mb' }));
 
 app.use(morgan('dev'));
 
-
 // Routes
-app.use('/ap/auth', authRouter);
-app.use('/ap', tradesRouter);
+app.use('/api/auth', authRouter);
+app.use('/api', tradesRouter);
 
 // Health check
-app.get('/health', (req, res) => res.json({ status: 'ok', tme: new Date() }));
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
-// Start server mmedately
-app.lsten(PORT, () => {
-  console.log(` AP server runnng on http://localhost:${PORT}`);
+// Start server immediately
+app.listen(PORT, () => {
+  console.log(` API server running on http://localhost:${PORT}`);
 });
 
 // Connect to MongoDB asynchronously
-f (!process.env.MONGODB_UR) {
-  console.warn(' MONGODB_UR s not set or s empty. Operatng n OFFLNE mode usng local_trades.json.');
+if (!process.env.MONGODB_URI) {
+  console.warn(
+    ' MONGODB_URI is not set or is empty. Operating in OFFLINE mode using local_trades.json.',
+  );
 } else {
-  console.log(' Connectng to MongoDB...');
-  mongoose.connect(process.env.MONGODB_UR)
+  console.log(' Connecting to MongoDB...');
+  mongoose
+    .connect(process.env.MONGODB_URI)
     .then(async () => {
       console.log(' MongoDB connected');
-      
-      // Seed prvate admn user f not exsts
-      const User = requre('./models/User');
-      const bcrypt = requre('bcryptjs');
+
+      // Seed private admin user if not exists
+      const User = require('./models/User');
+      const bcrypt = require('bcryptjs');
       try {
-        const emal = process.env.ADMN_EMAL || 'paulmaweu09@gmal.com';
-        const password = process.env.ADMN_PASSWORD || 'paul_exness_secure_2026';
-        
-        let admn = awat User.fndOne({ emal: emal.toLowerCase() });
-        const salt = awat bcrypt.genSalt(10);
-        const hashedPassword = awat bcrypt.hash(password, salt);
-        
-        f (!admn) {
-          admn = new User({
-            name: 'Paul Maweu',
-            emal: emal.toLowerCase(),
-            password: hashedPassword
-          });
-          awat admn.save();
-          console.log(` Prvate admn user seeded successfully: ${emal}`);
-        } else {
-          admn.password = hashedPassword;
-          admn.name = 'Paul Maweu';
-          awat admn.save();
-          console.log(` Prvate admn user password synchronzed: ${emal}`);
+        const email = process.env.ADMIN_EMAIL;
+        const password = process.env.ADMIN_PASSWORD;
+
+        if (!email || !password) {
+           console.warn(' ADMIN_EMAIL or ADMIN_PASSWORD not set. Admin seed skipped.');
+           return;
         }
 
-        // Mgraton: Assocate all exstng trades that have no user wth the admn user
-        const Trade = requre('./models/Trade');
-        const updateResult = awat Trade.updateMany(
-          { $or: [ { user: { $exsts: false } }, { user: null } ] },
-          { $set: { user: admn._d } }
+        let admin = await User.findOne({ email: email.toLowerCase() });
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        if (!admin) {
+          admin = new User({
+            name: 'Paul Maweu',
+            email: email.toLowerCase(),
+            password: hashedPassword,
+          });
+          await admin.save();
+          console.log(` Private admin user seeded successfully: ${email}`);
+        } else {
+          admin.password = hashedPassword;
+          admin.name = 'Paul Maweu';
+          await admin.save();
+          console.log(` Private admin user password synchronized: ${email}`);
+        }
+
+        // Migration: Associate all existing trades that have no user with the admin user
+        const Trade = require('./models/Trade');
+        const updateResult = await Trade.updateMany(
+          { $or: [{ user: { $exists: false } }, { user: null }] },
+          { $set: { user: admin._id } },
         );
-        f (updateResult.modfedCount > 0) {
-          console.log(` Mgrated ${updateResult.modfedCount} unassocated trades to admn user: ${emal}`);
+        if (updateResult.modifiedCount > 0) {
+          console.log(
+            ` Migrated ${updateResult.modifiedCount} unassociated trades to admin user: ${email}`,
+          );
         }
       } catch (e) {
-        console.error(' Admn seedng or mgraton faled:', e.message);
+        console.error(' Admin seeding or migration failed:', e.message);
       }
     })
-    .catch(err => {
-      console.error(' MongoDB connecton faled on startup. Operatng n OFFLNE mode usng local_trades.json.');
-      console.error('Error detals:', err.message);
+    .catch((err) => {
+      console.error(
+        ' MongoDB connection failed on startup. Operating in OFFLINE mode using local_trades.json.',
+      );
+      console.error('Error details:', err.message);
     });
 }
-
-// Commented out MongoDB UR for manual user testng
-
-

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const tradeSchema = new mongoose.Schema({
   dealId:     { type: String, required: true, unique: true }, // MT5 close deal ticket
-  positionId: { type: String, default: '' },                  // MT5 position_id — used to match EA screenshots
+  positionId: { type: String, default: '' },
   symbol: { type: String, required: true },
   direction: { type: String, enum: ['BUY', 'SELL'], required: true },
   entryPrice: { type: Number, required: true },
@@ -22,8 +22,6 @@ const tradeSchema = new mongoose.Schema({
   grade: { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' },
   checklist: [{ rule: String, complied: Boolean }], // rule compliance checklist
   synced: { type: Date, default: Date.now },
-  entryScreenshot: { type: String, default: "" },
-  exitScreenshot: { type: String, default: "" },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
 }, { timestamps: true });
 

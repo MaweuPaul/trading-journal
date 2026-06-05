@@ -1,109 +1,109 @@
-﻿const express = requre('express');
+const express = require('express');
 const router = express.Router();
-const bcrypt = requre('bcryptjs');
-const jwt = requre('jsonwebtoken');
-const User = requre('../models/User');
-const auth = requre('../mddleware/auth');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const auth = require('../middleware/auth');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_123';
 
-// @route   POST ap/auth/regster
-// @desc    Regster a user (DSABLED)
-// @access  Prvate (Blocked)
-router.post('/regster', async (req, res) => {
-  return res.status(403).json({ error: 'Regstraton s dsabled on ths prvate journal nstance.' });
+// @route   POST api/auth/register
+// @desc    Register a user (DISABLED)
+// @access  Private (Blocked)
+router.post('/register', async (req, res) => {
+  return res.status(403).json({ error: 'Registration is disabled on this private journal instance.' });
 });
 
-const mongoose = requre('mongoose');
+const mongoose = require('mongoose');
 
-// @route   POST ap/auth/logn
-// @desc    Authentcate user & get token
-// @access  Publc
-router.post('/logn', async (req, res) => {
-  const { emal, password } = req.body;
-  const admnEmal = process.env.ADMN_EMAL || 'paulmaweu09@gmal.com';
-  const admnPassword = process.env.ADMN_PASSWORD || 'paul_exness_secure_2026';
+// @route   POST api/auth/login
+// @desc    Authenticate user & get token
+// @access  Public
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
 
   try {
-    f (!emal || !password) {
-      return res.status(400).json({ error: 'Please enter all felds' });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Please enter all fields' });
     }
 
-    // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      f (emal.toLowerCase() === admnEmal.toLowerCase() && password === admnPassword) {
-        const payload = { userd: 'mocked_admn_user_d', emal: admnEmal };
-        const token = jwt.sgn(payload, JWT_SECRET, { expresn: '7d' });
+    // Database Offline Fallback
+    if (mongoose.connection.readyState !== 1) {
+      if (adminEmail && adminPassword && email.toLowerCase() === adminEmail.toLowerCase() && password === adminPassword) {
+        const payload = { userId: 'mocked_admin_user_id', email: adminEmail };
+        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
         return res.json({
           token,
           user: {
-            d: 'mocked_admn_user_d',
+            id: 'mocked_admin_user_id',
             name: 'Paul Maweu (Local DB)',
-            emal: admnEmal,
+            email: adminEmail,
           },
         });
       } else {
-        return res.status(400).json({ error: 'nvald credentals' });
+        return res.status(400).json({ error: 'Invalid credentials' });
       }
     }
 
-    // Check for exstng user
-    const user = awat User.fndOne({ emal });
-    f (!user) {
-      return res.status(400).json({ error: 'nvald credentals' });
+    // Check for existing user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // Valdate password
-    const sMatch = awat bcrypt.compare(password, user.password);
-    f (!sMatch) {
-      return res.status(400).json({ error: 'nvald credentals' });
+    // Validate password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Invalid credentials' });
     }
 
     const payload = {
-      userd: user.d,
-      emal: user.emal,
+      userId: user.id,
+      email: user.email,
     };
 
-    jwt.sgn(
+    jwt.sign(
       payload,
       JWT_SECRET,
-      { expresn: '7d' },
+      { expiresIn: '7d' },
       (err, token) => {
-        f (err) throw err;
+        if (err) throw err;
         res.json({
           token,
           user: {
-            d: user.d,
+            id: user.id,
             name: user.name,
-            emal: user.emal,
+            email: user.email,
           },
         });
       }
     );
   } catch (err) {
-    console.error('Logn error:', err.message);
-    res.status(500).json({ error: 'Server error durng logn' });
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Server error during login' });
   }
 });
 
-// @route   GET ap/auth/me
+// @route   GET api/auth/me
 // @desc    Get user data
-// @access  Prvate
+// @access  Private
 router.get('/me', auth, async (req, res) => {
   try {
-    f (mongoose.connecton.readyState !== 1) {
-      f (req.user.userd === 'mocked_admn_user_d') {
+    if (mongoose.connection.readyState !== 1) {
+      if (req.user.userId === 'mocked_admin_user_id') {
         return res.json({
-          d: 'mocked_admn_user_d',
+          id: 'mocked_admin_user_id',
           name: 'Paul Maweu (Local DB)',
-          emal: process.env.ADMN_EMAL || 'paulmaweu09@gmal.com',
+          email: process.env.ADMIN_EMAIL,
         });
       }
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = awat User.fndByd(req.user.userd).select('-password');
-    f (!user) {
+    const user = await User.findById(req.user.userId).select('-password');
+    if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     res.json(user);

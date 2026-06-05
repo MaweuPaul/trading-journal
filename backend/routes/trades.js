@@ -1,238 +1,185 @@
-﻿const express = requre('express');
+﻿const express = require('express');
 const router = express.Router();
-const Trade = requre('../models/Trade');
-const auth = requre('../mddleware/auth');
-const mongoose = requre('mongoose');
-const fs = requre('fs');
-const path = requre('path');
-const multer = requre('multer');
-const cloudnary = requre('cloudnary').v2;
+const Trade = require('../models/Trade');
+const auth = require('../middleware/auth');
+const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
 
-// Confgure Cloudnary
-cloudnary.confg({
-  cloud_name: process.env.CLOUDNARY_CLOUD_NAME,
-  ap_key: process.env.CLOUDNARY_AP_KEY,
-  ap_secret: process.env.CLOUDNARY_AP_SECRET
-});
+const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 
-// Confgure multer storage
-const storage = multer.dskStorage({
-  destnaton: functon (req, fle, cb) {
-    const dr = path.jon(__drname, '../publc/screenshots');
-    f (!fs.exstsSync(dr)) {
-      fs.mkdrSync(dr, { recursve: true });
-    }
-    cb(null, dr);
-  },
-  flename: functon (req, fle, cb) {
-    const traded = req.body.traded || 'unknown';
-    const type = req.body.type || 'unknown';
-    cb(null, `${traded}_${type}.png`);
-  }
-});
-const upload = multer({ storage: storage });
-
-functon getScreenshotUrls(deald, postond) {
-  const result = { entryScreenshot: '', extScreenshot: '' };
-  try {
-    const publcDr = path.jon(__drname, '../publc/screenshots');
-    // EA names fles as entry_{poston_d}.png / ext_{poston_d}.png
-    // postond s the relable key; fall back to deald for legacy fles
-    const keys = [];
-    f (postond && Strng(postond) !== '0') keys.push(Strng(postond));
-    f (deald) keys.push(Strng(deald));
-
-    for (const key of keys) {
-      f (!result.entryScreenshot) {
-        const entryFle = path.jon(publcDr, `${key}_entry.png`);
-        f (fs.exstsSync(entryFle)) {
-          result.entryScreenshot = `http://localhost:4000/screenshots/${key}_entry.png`;
-        }
-      }
-      f (!result.extScreenshot) {
-        const extFle = path.jon(publcDr, `${key}_ext.png`);
-        f (fs.exstsSync(extFle)) {
-          result.extScreenshot = `http://localhost:4000/screenshots/${key}_ext.png`;
-        }
-      }
-      f (result.entryScreenshot && result.extScreenshot) break;
-    }
-  } catch (e) {
-    // gnore
-  }
-  return result;
-}
-
-const LOCAL_DB_PATH = path.jon(__drname, '../local_trades.json');
-
-// Load ntal n-memory trades from local fle f exsts
-let nMemoryTrades = [];
+// Load initial n-memory trades from local file f exists
+let inMemoryTrades = [];
 try {
-  f (fs.exstsSync(LOCAL_DB_PATH)) {
-    nMemoryTrades = JSON.parse(fs.readFleSync(LOCAL_DB_PATH, 'utf8'));
-    console.log(` Loaded ${nMemoryTrades.length} trades from local persstent database fle.`);
+  if (fs.existsSync(LOCAL_DB_PATH)) {
+    inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+    console.log(` Loaded ${inMemoryTrades.length} trades from local persistent database file.`);
   }
 } catch (e) {
-  console.error("Faled to load local persstent database:", e.message);
+  console.error("Failed to load local persistent database:", e.message);
 }
 
-functon saveLocalDatabase() {
+function saveLocalDatabase() {
   try {
-    fs.wrteFleSync(LOCAL_DB_PATH, JSON.strngfy(nMemoryTrades, null, 2), 'utf8');
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(inMemoryTrades, null, 2), 'utf8');
   } catch (e) {
-    console.error("Faled to save local persstent database:", e.message);
+    console.error("Failed to save local persistent database:", e.message);
   }
 }
 
-// Sync/Backup MongoDB trades to local persstent database fle
-async functon backupMongoToLocal() {
+function isOfflineTradeVisibleToUser(trade, userId) {
+  if (String(userId) === 'mocked_admin_user_id') return true;
+  if (!trade.user) return true;
+  return String(trade.user) === String(userId);
+}
+
+// Sync/Backup MongoDB trades to local persistent database file
+async function backupMongoToLocal() {
   try {
-    f (mongoose.connecton.readyState === 1) {
-      console.log(' Backng up MongoDB trades to local persstent database fle...');
-      const allTrades = awat Trade.fnd({}).sort({ closeTme: -1 }).lean();
+    if (mongoose.connection.readyState === 1) {
+      console.log(' Backing up MongoDB trades to local persistent database file...');
+      const allTrades = await Trade.find({}).sort({ closeTime: -1 }).lean();
       
-      // Map MongoDB _d to strng for consstency
+      // Map MongoDB _id to string for consstency
       const formattedTrades = allTrades.map(t => ({
         ...t,
-        _d: Strng(t._d),
-        user: t.user ? Strng(t.user) : null,
-        openTme: t.openTme ? new Date(t.openTme).toSOStrng() : null,
-        closeTme: t.closeTme ? new Date(t.closeTme).toSOStrng() : null,
-        createdAt: t.createdAt ? new Date(t.createdAt).toSOStrng() : null,
-        updatedAt: t.updatedAt ? new Date(t.updatedAt).toSOStrng() : null,
+        _id: String(t._id),
+        user: t.user ? String(t.user) : null,
+        openTime: t.openTime ? new Date(t.openTime).toISOString() : null,
+        closeTime: t.closeTime ? new Date(t.closeTime).toISOString() : null,
+        createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : null,
+        updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : null,
       }));
 
-      nMemoryTrades = formattedTrades;
+      inMemoryTrades = formattedTrades;
       saveLocalDatabase();
-      console.log(` Successfully backed up ${nMemoryTrades.length} trades from MongoDB to local JSON.`);
+      console.log(` Successfully backed up ${inMemoryTrades.length} trades from MongoDB to local JSON.`);
     }
   } catch (err) {
-    console.error(' Faled to backup MongoDB trades to local JSON:', err.message);
+    console.error(' Failed to backup MongoDB trades to local JSON:', err.message);
   }
 }
 
-// Subscrbe to mongoose connecton events to trgger backup when connecton s establshed
-mongoose.connecton.on('connected', () => {
+// Subscrbe to mongoose connection events to trgger backup when connection is establshed
+mongoose.connection.on('connected', () => {
   // Wat 5 seconds to let any seedng/mgratons complete frst
-  setTmeout(backupMongoToLocal, 5000);
+  setTimeout(backupMongoToLocal, 5000);
 });
 
 
-//  GET /ap/performance  equty curve + full rsk metrcs 
+//  GET /api/performance  equty curve + full rsk metrics 
 router.get('/performance', auth, async (req, res) => {
   try {
     const { range } = req.query;
 
-    // Buld date flter
+    // Buld date filter
     let fromDate = null;
     const now = new Date();
-    f (range === '7d')  fromDate = new Date(now - 7  * 86400000);
-    f (range === '30d') fromDate = new Date(now - 30 * 86400000);
-    f (range === '3m')  fromDate = new Date(now - 90 * 86400000);
-    f (range === '6m')  fromDate = new Date(now - 180 * 86400000);
-    f (range === '1y')  fromDate = new Date(now - 365 * 86400000);
+    if (range === '7d')  fromDate = new Date(now - 7  * 86400000);
+    if (range === '30d') fromDate = new Date(now - 30 * 86400000);
+    if (range === '3m')  fromDate = new Date(now - 90 * 86400000);
+    if (range === '6m')  fromDate = new Date(now - 180 * 86400000);
+    if (range === '1y')  fromDate = new Date(now - 365 * 86400000);
 
     let trades;
-    f (mongoose.connecton.readyState === 1) {
-      const q = { user: req.user.userd };
-      f (fromDate) q.closeTme = { $gte: fromDate };
-      trades = awat Trade.fnd(q)
-        .sort({ closeTme: 1 })
-        .select('closeTme openTme pnlUSD runnngBalance symbol drecton lotSze commsson swap');
+    if (mongoose.connection.readyState === 1) {
+      const q = { user: req.user.userId };
+      if (fromDate) q.closeTime = { $gte: fromDate };
+      trades = await Trade.find(q)
+        .sort({ closeTime: 1 })
+        .select('closeTime openTime pnlUSD runningBalance symbol direction lotSize commission swap');
     } else {
-      trades = nMemoryTrades
-        .flter(t => {
-          f (Strng(t.user) !== Strng(req.user.userd)) return false;
-          f (fromDate && new Date(t.closeTme) < fromDate) return false;
+      trades = inMemoryTrades
+        .filter(t => {
+          if (String(t.user) !== String(req.user.userId)) return false;
+          if (fromDate && new Date(t.closeTime) < fromDate) return false;
           return true;
         })
-        .sort((a, b) => new Date(a.closeTme) - new Date(b.closeTme));
-    }
-
-    f (trades.length === 0) {
-      return res.json({ equtyCurve: [], drawdownCurve: [], stats: null });
+        .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+    } if (trades.length === 0) {
+      return res.json({ equityCurve: [], drawdownCurve: [], stats: null });
     }
 
     //  Equty curve + drawdown 
-    let peakBalance = -nfnty;
-    const equtyCurve = [];
+    let peakBalance = -Infinity;
+    const equityCurve = [];
 
     for (const t of trades) {
-      const bal = Number(t.runnngBalance || 0);
-      f (bal > peakBalance) peakBalance = bal;
+      const bal = Number(t.runningBalance || 0);
+      if (bal > peakBalance) peakBalance = bal;
       const drawdownPct = peakBalance > 0 ? ((bal - peakBalance) / peakBalance) * 100 : 0;
-      equtyCurve.push({
-        date:        t.closeTme,
-        balance:     parseFloat(bal.toFxed(2)),
-        drawdown:    parseFloat(drawdownPct.toFxed(2)),
-        pnl:         parseFloat(Number(t.pnlUSD).toFxed(2)),
+      equityCurve.push({
+        date:        t.closeTime,
+        balance:     parseFloat(bal.toFixed(2)),
+        drawdown:    parseFloat(drawdownPct.toFixed(2)),
+        pnl:         parseFloat(Number(t.pnlUSD).toFixed(2)),
         symbol:      t.symbol,
-        drecton:   t.drecton,
+        direction:   t.direction,
       });
     }
 
     //  Rsk stats 
-    const wns   = trades.flter(t => Number(t.pnlUSD) > 0);
-    const losses = trades.flter(t => Number(t.pnlUSD) < 0);
+    const wins   = trades.filter(t => Number(t.pnlUSD) > 0);
+    const losses = trades.filter(t => Number(t.pnlUSD) < 0);
 
-    const grossProft = wns.reduce((s, t)   => s + Number(t.pnlUSD), 0);
+    const grossProfit = wins.reduce((s, t)   => s + Number(t.pnlUSD), 0);
     const grossLoss   = Math.abs(losses.reduce((s, t) => s + Number(t.pnlUSD), 0));
-    const proftFactor = grossLoss > 0 ? grossProft / grossLoss : grossProft > 0 ? 999 : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0;
 
-    const avgWn  = wns.length   > 0 ? grossProft / wns.length   : 0;
+    const avgWin  = wins.length   > 0 ? grossProfit / wins.length   : 0;
     const avgLoss = losses.length > 0 ? grossLoss   / losses.length : 0;
-    const rrRato = avgLoss > 0 ? avgWn / avgLoss : 0;
+    const rrRatio = avgLoss > 0 ? avgWin / avgLoss : 0;
 
-    const wnRate    = (wns.length / trades.length) * 100;
-    const expectancy = (wnRate / 100) * avgWn - ((100 - wnRate) / 100) * avgLoss;
+    const winRate    = (wins.length / trades.length) * 100;
+    const expectancy = (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss;
 
     // Max drawdown %
-    let peakBal = -nfnty, maxDD = 0;
+    let peakBal = -Infinity, maxDD = 0;
     for (const t of trades) {
-      const b = Number(t.runnngBalance);
-      f (b > peakBal) peakBal = b;
+      const b = Number(t.runningBalance);
+      if (b > peakBal) peakBal = b;
       const dd = peakBal > 0 ? ((b - peakBal) / peakBal) * 100 : 0;
-      f (dd < maxDD) maxDD = dd;
+      if (dd < maxDD) maxDD = dd;
     }
 
-    // Max consecutve wns / losses
+    // Max consecutve wins / losses
     let maxConsecW = 0, curW = 0, maxConsecL = 0, curL = 0;
     for (const t of trades) {
-      f (Number(t.pnlUSD) > 0) { curW++; curL = 0; maxConsecW = Math.max(maxConsecW, curW); }
+      if (Number(t.pnlUSD) > 0) { curW++; curL = 0; maxConsecW = Math.max(maxConsecW, curW); }
       else                       { curL++; curW = 0; maxConsecL = Math.max(maxConsecL, curL); }
     }
 
-    // Largest sngle wn / loss
-    const largestWn  = wns.length   > 0 ? Math.max(...wns.map(t   => Number(t.pnlUSD))) : 0;
-    const largestLoss = losses.length > 0 ? Math.mn(...losses.map(t => Number(t.pnlUSD))) : 0;
+    // Largest single wn / loss
+    const largestWin  = wins.length   > 0 ? Math.max(...wins.map(t => Number(t.pnlUSD))) : 0;
+    const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => Number(t.pnlUSD))) : 0;
 
     // Net P&L and overall account growth
-    const startBal   = Number(trades[0].runnngBalance) - Number(trades[0].pnlUSD);
-    const currentBal = Number(trades[trades.length - 1].runnngBalance);
+    const startBal   = Number(trades[0].runningBalance) - Number(trades[0].pnlUSD);
+    const currentBal = Number(trades[trades.length - 1].runningBalance);
     const netPnL     = currentBal - startBal;
     const growthPct  = startBal > 0 ? (netPnL / startBal) * 100 : 0;
 
     res.json({
-      equtyCurve,
+      equityCurve,
       stats: {
         totalTrades:    trades.length,
-        wnRate:        parseFloat(wnRate.toFxed(1)),
-        proftFactor:   parseFloat(proftFactor.toFxed(2)),
-        avgWn:         parseFloat(avgWn.toFxed(2)),
-        avgLoss:        parseFloat(avgLoss.toFxed(2)),
-        rrRato:        parseFloat(rrRato.toFxed(2)),
-        expectancy:     parseFloat(expectancy.toFxed(2)),
-        maxDrawdownPct: parseFloat(maxDD.toFxed(2)),
-        maxConsecWns:  maxConsecW,
+        winRate:        parseFloat(winRate.toFixed(1)),
+        profitFactor:   parseFloat(profitFactor.toFixed(2)),
+        avgWin:         parseFloat(avgWin.toFixed(2)),
+        avgLoss:        parseFloat(avgLoss.toFixed(2)),
+        rrRatio:        parseFloat(rrRatio.toFixed(2)),
+        expectancy:     parseFloat(expectancy.toFixed(2)),
+        maxDrawdownPct: parseFloat(maxDD.toFixed(2)),
+        maxConsecWins:  maxConsecW,
         maxConsecLosses:maxConsecL,
-        largestWn:     parseFloat(largestWn.toFxed(2)),
-        largestLoss:    parseFloat(largestLoss.toFxed(2)),
-        grossProft:    parseFloat(grossProft.toFxed(2)),
-        grossLoss:      parseFloat(grossLoss.toFxed(2)),
-        netPnL:         parseFloat(netPnL.toFxed(2)),
-        growthPct:      parseFloat(growthPct.toFxed(2)),
-        startBalance:   parseFloat(startBal.toFxed(2)),
-        currentBalance: parseFloat(currentBal.toFxed(2)),
+        largestWin:     parseFloat(largestWin.toFixed(2)),
+        largestLoss:    parseFloat(largestLoss.toFixed(2)),
+        grossProfit:    parseFloat(grossProfit.toFixed(2)),
+        grossLoss:      parseFloat(grossLoss.toFixed(2)),
+        netPnL:         parseFloat(netPnL.toFixed(2)),
+        growthPct:      parseFloat(growthPct.toFixed(2)),
+        startBalance:   parseFloat(startBal.toFixed(2)),
+        currentBalance: parseFloat(currentBal.toFixed(2)),
       },
     });
   } catch (err) {
@@ -244,195 +191,111 @@ router.get('/performance', auth, async (req, res) => {
 
 
 const DEFAULT_CHECKLST = [
-  { rule: 'HTF Trend Algned', compled: false },
-  { rule: 'Daly/H4 Key Level Tap', compled: false },
-  { rule: 'Confluence / Confrmaton Entry', compled: false },
-  { rule: 'Rsk-to-Reward Rato >= 1:2', compled: false },
-  { rule: 'Stop Loss and Take Proft Defned', compled: false },
+  { rule: 'HTF Trend Algned', complied: false },
+  { rule: 'Daly/H4 Key Level Tap', complied: false },
+  { rule: 'Confluence / Confrmaton Entry', complied: false },
+  { rule: 'Rsk-to-Reward Rato >= 1:2', complied: false },
+  { rule: 'Stop Loss and Take Proft Defned', complied: false },
 ];
 
-// POST /ap/upload-local-screenshot  upload chart screenshot locally
-router.post('/upload-local-screenshot', auth, upload.sngle('fle'), async (req, res) => {
-  try {
-    const { traded, type } = req.body;
-    f (!traded || !type) {
-      return res.status(400).json({ error: 'traded and type are requred' });
-    }
-
-    f (type !== 'entry' && type !== 'ext') {
-      return res.status(400).json({ error: 'type must be entry or ext' });
-    }
-
-    f (!req.fle) {
-      return res.status(400).json({ error: 'fle s requred' });
-    }
-
-    const flename = `${traded}_${type}.png`;
-    let mageUrl = `http://localhost:4000/screenshots/${flename}`;
-    
-    // Upload to Cloudnary f confgured
-    f (process.env.CLOUDNARY_CLOUD_NAME && process.env.CLOUDNARY_AP_KEY && process.env.CLOUDNARY_AP_SECRET) {
-      try {
-        console.log(`  Uploadng screenshot to Cloudnary for ${traded} (${type})...`);
-        const result = awat cloudnary.uploader.upload(req.fle.path, {
-          folder: 'tradejournal/screenshots',
-          publc_d: `${traded}_${type}`,
-          overwrte: true
-        });
-        mageUrl = result.secure_url;
-        console.log(` Cloudnary upload successful: ${mageUrl}`);
-        // Optonally delete local fle to save space
-        fs.unlnkSync(req.fle.path);
-      } catch (cloudErr) {
-        console.error(' Cloudnary upload faled, fallng back to local storage:', cloudErr.message);
-        console.log(` Screenshot saved locally: ${mageUrl}`);
-      }
-    } else {
-      console.log(` Screenshot saved locally: ${mageUrl}`);
-    }
-
-    const updateFeld = type === 'entry' ? { entryScreenshot: mageUrl } : { extScreenshot: mageUrl };
-
-    // Update n MongoDB f connected
-    // Match by postond frst (EA uses poston_d), then deald
-    // NOTE: do NOT nclude _d  poston_d s not a vald Objectd and causes CastError
-    f (mongoose.connecton.readyState === 1) {
-      const updated = awat Trade.fndOneAndUpdate(
-        {
-          $or: [
-            { postond: Strng(traded) },
-            { deald: Strng(traded) },
-          ],
-          user: req.user.userd
-        },
-        { $set: updateFeld }
-      );
-      f (updated) {
-        console.log(` Lnked screenshot to trade: deald=${updated.deald} postond=${updated.postond}`);
-      } else {
-        console.warn(`  No trade found for screenshot traded=${traded}  trade may not be synced yet. Screenshot stored, wll lnk on next sync.`);
-      }
-    }
-
-    // Update n local database cache
-    // Match by postond, deald, or _d
-    const tradedx = nMemoryTrades.fndndex(t =>
-      Strng(t.postond) === Strng(traded) ||
-      Strng(t.deald) === Strng(traded) ||
-      Strng(t._d) === Strng(traded)
-    );
-    f (tradedx !== -1) {
-      nMemoryTrades[tradedx] = { ...nMemoryTrades[tradedx], ...updateFeld };
-      saveLocalDatabase();
-    } else {
-      console.warn(`  Screenshot for ${traded} stored on dsk  wll lnk when trade syncs.`);
-    }
-
-    res.json({ url: mageUrl });
-  } catch (err) {
-    console.error('Screenshot upload error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /ap/trades  all trades, newest frst, wth optonal flters
+// GET /api/trades  all trades, newest frst, wth optonal flters
 router.get('/trades', auth, async (req, res) => {
   try {
-    const { symbol, drecton, from, to, page = 1, lmt = 50 } = req.query;
+    const { symbol, direction, from, to, page = 1, limit = 50 } = req.query;
 
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      let fltered = [...nMemoryTrades];
-      f (symbol) fltered = fltered.flter(t => t.symbol === symbol.toUpperCase());
-      f (drecton) fltered = fltered.flter(t => t.drecton === drecton.toUpperCase());
-      f (from) fltered = fltered.flter(t => new Date(t.closeTme) >= new Date(from));
-      f (to) fltered = fltered.flter(t => new Date(t.closeTme) <= new Date(to));
+    if (mongoose.connection.readyState !== 1) {
+      let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
+      if (direction) filtered = filtered.filter(t => t.direction === direction.toUpperCase());
+      if (from) filtered = filtered.filter(t => new Date(t.closeTime) >= new Date(from));
+      if (to) filtered = filtered.filter(t => new Date(t.closeTime) <= new Date(to));
 
       // Sort newest frst
-      fltered.sort((a, b) => new Date(b.closeTme) - new Date(a.closeTme));
+      filtered.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
 
-      const skp = (parsent(page) - 1) * parsent(lmt);
-      const pagnated = fltered.slce(skp, skp + parsent(lmt));
+      const skp = (parseInt(page) - 1) * parseInt(limit);
+      const paginated = filtered.slice(skp, skp + parseInt(limit));
 
       return res.json({
-        trades: pagnated,
-        total: fltered.length,
-        page: parsent(page),
-        lmt: parsent(lmt)
+        trades: paginated,
+        total: filtered.length,
+        page: parseInt(page),
+        limit: parseInt(limit)
       });
     }
 
-    const query = { user: req.user.userd };
-    f (symbol) query.symbol = symbol.toUpperCase();
-    f (drecton) query.drecton = query.drecton = drecton.toUpperCase();
-    f (from || to) {
-      query.closeTme = {};
-      f (from) query.closeTme.$gte = new Date(from);
-      f (to) query.closeTme.$lte = new Date(to);
+    const query = { user: req.user.userId };
+    if (symbol) query.symbol = symbol.toUpperCase();
+    if (direction) query.direction = query.direction = direction.toUpperCase();
+    if (from || to) {
+      query.closeTime = {};
+      if (from) query.closeTime.$gte = new Date(from);
+      if (to) query.closeTime.$lte = new Date(to);
     }
 
-    const skp = (parsent(page) - 1) * parsent(lmt);
-    const [trades, total] = awat Promse.all([
-      Trade.fnd(query).sort({ closeTme: -1 }).skp(skp).lmt(parsent(lmt)),
+    const skp = (parseInt(page) - 1) * parseInt(limit);
+    const [trades, total] = await Promise.all([
+      Trade.find(query).sort({ closeTime: -1 }).skip(skp).limit(parseInt(limit)),
       Trade.countDocuments(query),
     ]);
 
-    res.json({ trades, total, page: parsent(page), lmt: parsent(lmt) });
+    res.json({ trades, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// PUT /ap/trades/:d  update journal data (notes, tags, emoton, grade, checklst)
-router.put('/trades/:d', auth, async (req, res) => {
+// PUT /api/trades/:d  update journal data (notes, tags, emotion, grade, checklist)
+router.put('/trades/:id', auth, async (req, res) => {
   try {
-    const { notes, tags, emoton, grade, checklst } = req.body;
+    const { notes, tags, emotion, grade, checklist } = req.body;
 
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      const tradedx = nMemoryTrades.fndndex(t => t._d === req.params.d);
-      f (tradedx === -1) {
+    if (mongoose.connection.readyState !== 1) {
+      const tradeIdx = inMemoryTrades.findIndex(t => t._id === req.params.id);
+      if (tradeIdx === -1) {
         return res.status(404).json({ error: 'Trade not found' });
       }
 
-      const t = nMemoryTrades[tradedx];
-      f (notes !== undefned) t.notes = notes;
-      f (tags !== undefned) t.tags = Array.sArray(tags) ? tags : [];
-      f (emoton !== undefned) t.emoton = emoton;
-      f (grade !== undefned) t.grade = grade;
-      f (checklst !== undefned) t.checklst = Array.sArray(checklst) ? checklst : [];
+      const t = inMemoryTrades[tradeIdx];
+      if (notes !== undefined) t.notes = notes;
+      if (tags !== undefined) t.tags = Array.isArray(tags) ? tags : [];
+      if (emotion !== undefined) t.emotion = emotion;
+      if (grade !== undefined) t.grade = grade;
+      if (checklist !== undefined) t.checklist = Array.isArray(checklist) ? checklist : [];
 
-      nMemoryTrades[tradedx] = t;
+      inMemoryTrades[tradeIdx] = t;
       saveLocalDatabase();
       return res.json(t);
     }
 
     const update = {};
-    f (notes !== undefned) update.notes = notes;
-    f (tags !== undefned) update.tags = Array.sArray(tags) ? tags : [];
-    f (emoton !== undefned) update.emoton = emoton;
-    f (grade !== undefned) update.grade = grade;
-    f (checklst !== undefned) update.checklst = Array.sArray(checklst) ? checklst : [];
+    if (notes !== undefined) update.notes = notes;
+    if (tags !== undefined) update.tags = Array.isArray(tags) ? tags : [];
+    if (emotion !== undefined) update.emotion = emotion;
+    if (grade !== undefined) update.grade = grade;
+    if (checklist !== undefined) update.checklist = Array.isArray(checklist) ? checklist : [];
 
-    const updated = awat Trade.fndOneAndUpdate(
-      { _d: req.params.d, user: req.user.userd },
+    const updated = await Trade.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.userId },
       update,
       { new: true }
     );
-    f (!updated) {
+    if (!updated) {
       return res.status(404).json({ error: 'Trade not found' });
     }
 
-    // Mrror to nMemoryTrades and local JSON
-    const tradedx = nMemoryTrades.fndndex(t => Strng(t._d) === Strng(req.params.d));
-    f (tradedx !== -1) {
-      const t = nMemoryTrades[tradedx];
-      f (notes !== undefned) t.notes = notes;
-      f (tags !== undefned) t.tags = Array.sArray(tags) ? tags : [];
-      f (emoton !== undefned) t.emoton = emoton;
-      f (grade !== undefned) t.grade = grade;
-      f (checklst !== undefned) t.checklst = Array.sArray(checklst) ? checklst : [];
-      nMemoryTrades[tradedx] = t;
+    // Mrror to inMemoryTrades and local JSON
+    const tradeIdx = inMemoryTrades.findIndex(t => String(t._id) === String(req.params.id));
+    if (tradeIdx !== -1) {
+      const t = inMemoryTrades[tradeIdx];
+      if (notes !== undefined) t.notes = notes;
+      if (tags !== undefined) t.tags = Array.isArray(tags) ? tags : [];
+      if (emotion !== undefined) t.emotion = emotion;
+      if (grade !== undefined) t.grade = grade;
+      if (checklist !== undefined) t.checklist = Array.isArray(checklist) ? checklist : [];
+      inMemoryTrades[tradeIdx] = t;
       saveLocalDatabase();
     }
 
@@ -443,297 +306,253 @@ router.put('/trades/:d', auth, async (req, res) => {
   }
 });
 
-// POST /ap/sync  receve trades from Python scrpt
+// POST /api/sync  receve trades from Python scrpt
 router.post('/sync', auth, async (req, res) => {
   try {
     const { trades } = req.body;
-    f (!Array.sArray(trades) || trades.length === 0) {
-      return res.status(400).json({ error: 'trades array s requred' });
+    if (!Array.isArray(trades) || trades.length === 0) {
+      return res.status(400).json({ error: 'trades array is required' });
     }
 
-    let nserted = 0;
-    let skpped = 0;
+    let inserted = 0;
+    let skipped = 0;
 
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
+    if (mongoose.connection.readyState !== 1) {
       for (const t of trades) {
-        const exsts = nMemoryTrades.some(x => Strng(x.deald) === Strng(t.deald));
-        f (exsts) {
-          skpped++;
-          // Even f trade exsts, try to lnk any newly uploaded screenshots
-          const exstngdx = nMemoryTrades.fndndex(x => Strng(x.deald) === Strng(t.deald));
-          f (exstngdx !== -1) {
-            const exstng = nMemoryTrades[exstngdx];
-            f (!exstng.entryScreenshot || !exstng.extScreenshot) {
-              const screenshots = getScreenshotUrls(Strng(t.deald), Strng(t.postond || ''));
-              f (screenshots.entryScreenshot || screenshots.extScreenshot) {
-                nMemoryTrades[exstngdx] = { ...exstng, ...screenshots };
-                saveLocalDatabase();
-              }
-            }
-          }
-          contnue;
+        const exists = inMemoryTrades.some(x => String(x.dealId) === String(t.dealId));
+        if (exists) {
+          skipped++;
+          continue;
         }
 
-        const screenshots = getScreenshotUrls(Strng(t.deald), Strng(t.postond || ''));
         const newTrade = {
-          _d: Strng(t.deald),
-          deald: Strng(t.deald),
-          postond: Strng(t.postond || ''),
+          _id: String(t.dealId),
+          dealId: String(t.dealId),
+          positionId: String(t.positionId || ''),
           symbol: t.symbol,
-          drecton: t.drecton,
-          entryPrce: Number(t.entryPrce),
-          extPrce: Number(t.extPrce),
-          lotSze: Number(t.lotSze),
+          direction: t.direction,
+          entryPrice: Number(t.entryPrice),
+          exitPrice: Number(t.exitPrice),
+          lotSize: Number(t.lotSize),
           pnlUSD: Number(t.pnlUSD),
           pnlPct: Number(t.pnlPct || 0),
-          commsson: Number(t.commsson || 0),
+          commission: Number(t.commission || 0),
           swap: Number(t.swap || 0),
-          openTme: t.openTme,
-          closeTme: t.closeTme,
-          duratonMnutes: Number(t.duratonMnutes || 0),
-          runnngBalance: Number(t.runnngBalance || 0),
-          checklst: DEFAULT_CHECKLST,
-          entryScreenshot: screenshots.entryScreenshot,
-          extScreenshot: screenshots.extScreenshot,
-          user: req.user.userd,
-          synced: new Date().toSOStrng()
+          openTime: t.openTime,
+          closeTime: t.closeTime,
+          durationMinutes: Number(t.durationMinutes || 0),
+          runningBalance: Number(t.runningBalance || 0),
+          checklist: DEFAULT_CHECKLST,
+          user: req.user.userId,
+          synced: new Date().toISOString()
         };
 
-        nMemoryTrades.push(newTrade);
-        nserted++;
-      }
-
-      f (nserted > 0) {
+        inMemoryTrades.push(newTrade);
+        inserted++;
+      } if (inserted > 0) {
         saveLocalDatabase();
       }
 
-      return res.json({ nserted, skpped, total: trades.length });
+      return res.json({ inserted, skipped, total: trades.length });
     }
 
     for (const t of trades) {
       try {
-        const screenshots = getScreenshotUrls(Strng(t.deald), Strng(t.postond || ''));
-        const created = awat Trade.create({
-          deald:     Strng(t.deald),
-          postond: Strng(t.postond || ''),
+        const created = await Trade.create({
+          dealId:     String(t.dealId),
+          positionId: String(t.positionId || ''),
           symbol: t.symbol,
-          drecton: t.drecton,
-          entryPrce: t.entryPrce,
-          extPrce: t.extPrce,
-          lotSze: t.lotSze,
+          direction: t.direction,
+          entryPrice: t.entryPrice,
+          exitPrice: t.exitPrice,
+          lotSize: t.lotSize,
           pnlUSD: t.pnlUSD,
           pnlPct: t.pnlPct || 0,
-          commsson: t.commsson || 0,
+          commission: t.commission || 0,
           swap: t.swap || 0,
-          openTme: new Date(t.openTme),
-          closeTme: new Date(t.closeTme),
-          duratonMnutes: t.duratonMnutes || 0,
-          runnngBalance: t.runnngBalance || 0,
-          checklst: DEFAULT_CHECKLST,
-          entryScreenshot: screenshots.entryScreenshot,
-          extScreenshot: screenshots.extScreenshot,
-          user: req.user.userd,
+          openTime: new Date(t.openTime),
+          closeTime: new Date(t.closeTime),
+          durationMinutes: t.durationMinutes || 0,
+          runningBalance: t.runningBalance || 0,
+          checklist: DEFAULT_CHECKLST,
+          user: req.user.userId,
         });
 
-        // Mrror to nMemoryTrades
-        const exsts = nMemoryTrades.some(x => Strng(x.deald) === Strng(t.deald));
-        f (!exsts) {
-          nMemoryTrades.push({
+        // Mrror to inMemoryTrades
+        const exists = inMemoryTrades.some(x => String(x.dealId) === String(t.dealId));
+        if (!exists) {
+          inMemoryTrades.push({
             ...created.toObject(),
-            _d: Strng(created._d),
-            user: Strng(created.user),
-            openTme: created.openTme ? new Date(created.openTme).toSOStrng() : null,
-            closeTme: created.closeTme ? new Date(created.closeTme).toSOStrng() : null,
+            _id: String(created._id),
+            user: String(created.user),
+            openTime: created.openTime ? new Date(created.openTime).toISOString() : null,
+            closeTime: created.closeTime ? new Date(created.closeTime).toISOString() : null,
           });
-        } else {
-          // Trade already n memory  patch screenshots f they were just found
-          const dx = nMemoryTrades.fndndex(x => Strng(x.deald) === Strng(t.deald));
-          f (dx !== -1 && (screenshots.entryScreenshot || screenshots.extScreenshot)) {
-            nMemoryTrades[dx] = { ...nMemoryTrades[dx], ...screenshots };
-          }
         }
 
-        nserted++;
+        inserted++;
       } catch (e) {
-        f (e.code === 11000) {
-          skpped++;
-          // Duplcate: try to backfll screenshots for already-exstng trades
-          f (t.postond) {
-            const screenshots = getScreenshotUrls(Strng(t.deald), Strng(t.postond));
-            f (screenshots.entryScreenshot || screenshots.extScreenshot) {
-              awat Trade.fndOneAndUpdate(
-                { deald: Strng(t.deald), user: req.user.userd },
-                { $set: screenshots }
-              ).catch(() => {});
-              const dx = nMemoryTrades.fndndex(x => Strng(x.deald) === Strng(t.deald));
-              f (dx !== -1) {
-                nMemoryTrades[dx] = { ...nMemoryTrades[dx], ...screenshots };
-              }
-            }
-          }
+        if (e.code === 11000) {
+          skipped++;
         } else {
           throw e;
         }
       }
-    }
-
-    f (nserted > 0) {
+    } if (inserted > 0) {
       saveLocalDatabase();
     }
 
-    res.json({ nserted, skpped, total: trades.length });
+    res.json({ inserted, skipped, total: trades.length });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /ap/stats  aggregated performance metrcs
+// GET /api/stats  aggregated performance metrics
 router.get('/stats', auth, async (req, res) => {
   try {
     const { range } = req.query;
     let trades;
 
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      let fltered = [...nMemoryTrades];
-      f (range && range !== 'all') {
+    if (mongoose.connection.readyState !== 1) {
+      let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      if (range && range !== 'all') {
         const now = new Date();
-        f (range === 'today') {
-          const todayStr = now.toSOStrng().splt('T')[0];
-          fltered = fltered.flter(t => t.closeTme.startsWth(todayStr));
-        } else f (range === '7d') {
-          const sevenDaysAgo = new Date(now.getTme() - 7 * 24 * 60 * 60 * 1000);
-          fltered = fltered.flter(t => new Date(t.closeTme) >= sevenDaysAgo);
-        } else f (range === '30d') {
-          const thrtyDaysAgo = new Date(now.getTme() - 30 * 24 * 60 * 60 * 1000);
-          fltered = fltered.flter(t => new Date(t.closeTme) >= thrtyDaysAgo);
-        } else f (range === '3m') {
+        if (range === 'today') {
+          const todayStr = now.toISOString().split('T')[0];
+          filtered = filtered.filter(t => t.closeTime.startsWith(todayStr));
+        } else if (range === '7d') {
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          filtered = filtered.filter(t => new Date(t.closeTime) >= sevenDaysAgo);
+        } else if (range === '30d') {
+          const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          filtered = filtered.filter(t => new Date(t.closeTime) >= thirtyDaysAgo);
+        } else if (range === '3m') {
           const threeMonthsAgo = new Date();
           threeMonthsAgo.setMonth(now.getMonth() - 3);
-          fltered = fltered.flter(t => new Date(t.closeTme) >= threeMonthsAgo);
-        } else f (range === '6m') {
-          const sxMonthsAgo = new Date();
-          sxMonthsAgo.setMonth(now.getMonth() - 6);
-          fltered = fltered.flter(t => new Date(t.closeTme) >= sxMonthsAgo);
+          filtered = filtered.filter(t => new Date(t.closeTime) >= threeMonthsAgo);
+        } else if (range === '6m') {
+          const sixMonthsAgo = new Date();
+          sixMonthsAgo.setMonth(now.getMonth() - 6);
+          filtered = filtered.filter(t => new Date(t.closeTime) >= sixMonthsAgo);
         }
       }
-      fltered.sort((a, b) => new Date(a.closeTme) - new Date(b.closeTme));
-      trades = fltered;
+      filtered.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+      trades = filtered;
     } else {
-      const query = { user: req.user.userd };
-      f (range && range !== 'all') {
+      const query = { user: req.user.userId };
+      if (range && range !== 'all') {
         const now = new Date();
-        f (range === 'today') {
+        if (range === 'today') {
           const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-          query.closeTme = { $gte: today };
-        } else f (range === '7d') {
-          const sevenDaysAgo = new Date(now.getTme() - 7 * 24 * 60 * 60 * 1000);
-          query.closeTme = { $gte: sevenDaysAgo };
-        } else f (range === '30d') {
-          const thrtyDaysAgo = new Date(now.getTme() - 30 * 24 * 60 * 60 * 1000);
-          query.closeTme = { $gte: thrtyDaysAgo };
-        } else f (range === '3m') {
+          query.closeTime = { $gte: today };
+        } else if (range === '7d') {
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          query.closeTime = { $gte: sevenDaysAgo };
+        } else if (range === '30d') {
+          const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          query.closeTime = { $gte: thirtyDaysAgo };
+        } else if (range === '3m') {
           const threeMonthsAgo = new Date();
           threeMonthsAgo.setMonth(now.getMonth() - 3);
-          query.closeTme = { $gte: threeMonthsAgo };
-        } else f (range === '6m') {
-          const sxMonthsAgo = new Date();
-          sxMonthsAgo.setMonth(now.getMonth() - 6);
-          query.closeTme = { $gte: sxMonthsAgo };
+          query.closeTime = { $gte: threeMonthsAgo };
+        } else if (range === '6m') {
+          const sixMonthsAgo = new Date();
+          sixMonthsAgo.setMonth(now.getMonth() - 6);
+          query.closeTime = { $gte: sixMonthsAgo };
         }
       }
-      trades = awat Trade.fnd(query).sort({ closeTme: 1 });
-    }
-
-    f (trades.length === 0) {
+      trades = await Trade.find(query).sort({ closeTime: 1 });
+    } if (trades.length === 0) {
       return res.json({
-        totalTrades: 0, wnRate: 0, proftFactor: 0, netPnL: 0,
-        bggestWn: 0, bggestLoss: 0, currentDrawdown: 0,
-        equtyCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
-        avgDuratonMn: 0,
-        avgWnUSD: 0, avgLossUSD: 0, wnLossRato: 0, expectancyUSD: 0,
-        maxWnStreak: 0, maxLossStreak: 0, sharpeRato: 0,
-        bySesson: [], byTag: [], byEmoton: [], globalComplanceRate: 0
+        totalTrades: 0, winRate: 0, profitFactor: 0, netPnL: 0,
+        biggestWin: 0, biggestLoss: 0, currentDrawdown: 0,
+        equityCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
+        avgDurationMin: 0,
+        avgWinUSD: 0, avgLossUSD: 0, winLossRatio: 0, expectancyUSD: 0,
+        maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
+        bySession: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0
       });
     }
 
-    const wns = trades.flter(t => t.pnlUSD > 0);
-    const losses = trades.flter(t => t.pnlUSD < 0);
-    const grossProft = wns.reduce((s, t) => s + t.pnlUSD, 0);
+    const wins = trades.filter(t => t.pnlUSD > 0);
+    const losses = trades.filter(t => t.pnlUSD < 0);
+    const grossProfit = wins.reduce((s, t) => s + t.pnlUSD, 0);
     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnlUSD, 0));
     const netPnL = trades.reduce((s, t) => s + t.pnlUSD, 0);
 
-    // Equty curve (runnng balance over tme)
-    const equtyCurve = trades.map(t => ({
-      date: t.closeTme,
-      balance: t.runnngBalance,
+    // Equty curve (running balance over time)
+    const equityCurve = trades.map(t => ({
+      date: t.closeTime,
+      balance: t.runningBalance,
       pnl: t.pnlUSD,
     }));
 
-    // Drawdown: peak-to-trough on runnng balance
-    let peak = -nfnty;
+    // Drawdown: peak-to-trough on running balance
+    let peak = -Infinity;
     let maxDrawdownPct = 0;
     for (const t of trades) {
-      f (t.runnngBalance > peak) peak = t.runnngBalance;
-      const dd = peak > 0 ? ((peak - t.runnngBalance) / peak) * 100 : 0;
-      f (dd > maxDrawdownPct) maxDrawdownPct = dd;
+      if (t.runningBalance > peak) peak = t.runningBalance;
+      const dd = peak > 0 ? ((peak - t.runningBalance) / peak) * 100 : 0;
+      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
     }
-    const lastBalance = trades[trades.length - 1]?.runnngBalance || 0;
+    const lastBalance = trades[trades.length - 1]?.runningBalance || 0;
     const currentDrawdown = peak > 0 ? ((peak - lastBalance) / peak) * 100 : 0;
 
     // Advanced Metrcs
-    const avgWnUSD = wns.length > 0 ? grossProft / wns.length : 0;
+    const avgWinUSD = wins.length > 0 ? grossProfit / wins.length : 0;
     const avgLossUSD = losses.length > 0 ? grossLoss / losses.length : 0;
-    const wnLossRato = avgLossUSD > 0 ? avgWnUSD / avgLossUSD : avgWnUSD > 0 ? nfnty : 0;
+    const winLossRatio = avgLossUSD > 0 ? avgWinUSD / avgLossUSD : avgWinUSD > 0 ? Infinity : 0;
     
-    const wnRate = (wns.length / trades.length) * 100;
-    const lossRate = 100 - wnRate;
-    const expectancyUSD = (wnRate / 100 * avgWnUSD) - (lossRate / 100 * avgLossUSD);
+    const winRate = (wins.length / trades.length) * 100;
+    const lossRate = 100 - winRate;
+    const expectancyUSD = (winRate / 100 * avgWinUSD) - (lossRate / 100 * avgLossUSD);
 
     // Wn/Loss Streaks
     let currentWnStreak = 0;
     let currentLossStreak = 0;
-    let maxWnStreak = 0;
+    let maxWinStreak = 0;
     let maxLossStreak = 0;
     for (const t of trades) {
-      f (t.pnlUSD > 0) {
+      if (t.pnlUSD > 0) {
         currentWnStreak++;
         currentLossStreak = 0;
-        f (currentWnStreak > maxWnStreak) maxWnStreak = currentWnStreak;
-      } else f (t.pnlUSD < 0) {
+        if (currentWnStreak > maxWinStreak) maxWinStreak = currentWnStreak;
+      } else if (t.pnlUSD < 0) {
         currentLossStreak++;
         currentWnStreak = 0;
-        f (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
+        if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
       }
     }
 
     // Sharpe Rato
     const meanPnL = netPnL / trades.length;
-    const varance = trades.reduce((s, t) => s + Math.pow(t.pnlUSD - meanPnL, 2), 0) / trades.length;
-    const stdDev = Math.sqrt(varance);
-    const sharpeRato = stdDev > 0 ? meanPnL / stdDev : 0;
+    const variance = trades.reduce((s, t) => s + Math.pow(t.pnlUSD - meanPnL, 2), 0) / trades.length;
+    const stdDev = Math.sqrt(variance);
+    const sharpeRatio = stdDev > 0 ? meanPnL / stdDev : 0;
 
     // P&L by symbol
     const symbolMap = {};
     for (const t of trades) {
-      f (!symbolMap[t.symbol]) symbolMap[t.symbol] = { symbol: t.symbol, pnl: 0, trades: 0, wns: 0 };
+      if (!symbolMap[t.symbol]) symbolMap[t.symbol] = { symbol: t.symbol, pnl: 0, trades: 0, wins: 0 };
       symbolMap[t.symbol].pnl += t.pnlUSD;
       symbolMap[t.symbol].trades++;
-      f (t.pnlUSD > 0) symbolMap[t.symbol].wns++;
+      if (t.pnlUSD > 0) symbolMap[t.symbol].wins++;
     }
     const bySymbol = Object.values(symbolMap).map(s => ({
       ...s,
-      wnRate: s.trades > 0 ? (s.wns / s.trades) * 100 : 0,
+      winRate: s.trades > 0 ? (s.wins / s.trades) * 100 : 0,
     })).sort((a, b) => b.pnl - a.pnl);
 
     // P&L by day of week
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Frday','Saturday'];
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dayMap = {};
     for (const t of trades) {
-      const day = days[new Date(t.closeTme).getDay()];
-      f (!dayMap[day]) dayMap[day] = { day, pnl: 0, trades: 0 };
+      const day = days[new Date(t.closeTime).getDay()];
+      if (!dayMap[day]) dayMap[day] = { day, pnl: 0, trades: 0 };
       dayMap[day].pnl += t.pnlUSD;
       dayMap[day].trades++;
     }
@@ -742,187 +561,187 @@ router.get('/stats', auth, async (req, res) => {
     // Monthly P&L
     const monthMap = {};
     for (const t of trades) {
-      const d = new Date(t.closeTme);
-      const key = `${d.getFullYear()}-${Strng(d.getMonth() + 1).padStart(2, '0')}`;
-      f (!monthMap[key]) monthMap[key] = { month: key, pnl: 0, trades: 0, wns: 0 };
+      const d = new Date(t.closeTime);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthMap[key]) monthMap[key] = { month: key, pnl: 0, trades: 0, wins: 0 };
       monthMap[key].pnl += t.pnlUSD;
       monthMap[key].trades++;
-      f (t.pnlUSD > 0) monthMap[key].wns++;
+      if (t.pnlUSD > 0) monthMap[key].wins++;
     }
     const byMonth = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month));
 
-    const avgDuratonMn = trades.reduce((s, t) => s + (t.duratonMnutes || 0), 0) / trades.length;
+    const avgDurationMin = trades.reduce((s, t) => s + (t.durationMinutes || 0), 0) / trades.length;
 
-    // Sesson Analytcs based on closeTme UTC hour
-    const bySessonMap = {
-      Tokyo: { sesson: 'Tokyo (Asan)', pnl: 0, trades: 0, wns: 0 },
-      London: { sesson: 'London (Eur)', pnl: 0, trades: 0, wns: 0 },
-      Overlap: { sesson: 'London/NY Overlap', pnl: 0, trades: 0, wns: 0 },
-      NewYork: { sesson: 'New York (US)', pnl: 0, trades: 0, wns: 0 },
-      Pacfc: { sesson: 'Pacfc/Late NY', pnl: 0, trades: 0, wns: 0 },
+    // Sesson Analytcs based on closeTime UTC hour
+    const bySessionMap = {
+      Tokyo: { session: 'Tokyo (Asan)', pnl: 0, trades: 0, wins: 0 },
+      London: { session: 'London (Eur)', pnl: 0, trades: 0, wins: 0 },
+      Overlap: { session: 'London/NY Overlap', pnl: 0, trades: 0, wins: 0 },
+      NewYork: { session: 'New York (US)', pnl: 0, trades: 0, wins: 0 },
+      Pacfc: { session: 'Pacfc/Late NY', pnl: 0, trades: 0, wins: 0 },
     };
     for (const t of trades) {
-      const utcHour = new Date(t.closeTme).getUTCHours();
+      const utcHour = new Date(t.closeTime).getUTCHours();
       let sess = 'Pacfc';
-      f (utcHour >= 0 && utcHour < 8) sess = 'Tokyo';
-      else f (utcHour >= 8 && utcHour < 13) sess = 'London';
-      else f (utcHour >= 13 && utcHour < 16) sess = 'Overlap';
-      else f (utcHour >= 16 && utcHour < 21) sess = 'NewYork';
+      if (utcHour >= 0 && utcHour < 8) sess = 'Tokyo';
+      else if (utcHour >= 8 && utcHour < 13) sess = 'London';
+      else if (utcHour >= 13 && utcHour < 16) sess = 'Overlap';
+      else if (utcHour >= 16 && utcHour < 21) sess = 'NewYork';
 
-      bySessonMap[sess].pnl += t.pnlUSD;
-      bySessonMap[sess].trades++;
-      f (t.pnlUSD > 0) bySessonMap[sess].wns++;
+      bySessionMap[sess].pnl += t.pnlUSD;
+      bySessionMap[sess].trades++;
+      if (t.pnlUSD > 0) bySessionMap[sess].wins++;
     }
-    const bySesson = Object.values(bySessonMap).map(s => ({
+    const bySession = Object.values(bySessionMap).map(s => ({
       ...s,
-      wnRate: s.trades > 0 ? (s.wns / s.trades) * 100 : 0
+      winRate: s.trades > 0 ? (s.wins / s.trades) * 100 : 0
     }));
 
     // Performance by Tag
     const tagMap = {};
     for (const t of trades) {
-      f (t.tags && t.tags.length > 0) {
+      if (t.tags && t.tags.length > 0) {
         for (const tag of t.tags) {
-          const trmmed = tag.trm();
-          f (!trmmed) contnue;
-          f (!tagMap[trmmed]) tagMap[trmmed] = { tag: trmmed, pnl: 0, trades: 0, wns: 0 };
-          tagMap[trmmed].pnl += t.pnlUSD;
-          tagMap[trmmed].trades++;
-          f (t.pnlUSD > 0) tagMap[trmmed].wns++;
+          const trimmed = tag.trim();
+          if (!trimmed) continue;
+          if (!tagMap[trimmed]) tagMap[trimmed] = { tag: trimmed, pnl: 0, trades: 0, wins: 0 };
+          tagMap[trimmed].pnl += t.pnlUSD;
+          tagMap[trimmed].trades++;
+          if (t.pnlUSD > 0) tagMap[trimmed].wins++;
         }
       }
     }
     const byTag = Object.values(tagMap).map(tg => ({
       ...tg,
-      wnRate: tg.trades > 0 ? (tg.wns / tg.trades) * 100 : 0
+      winRate: tg.trades > 0 ? (tg.wins / tg.trades) * 100 : 0
     })).sort((a, b) => b.pnl - a.pnl);
 
-    // Performance by Emoton
-    const emotonMap = {};
+    // Performance by emotion
+    const emotionMap = {};
     for (const t of trades) {
-      f (t.emoton) {
-        const emo = t.emoton;
-        f (!emotonMap[emo]) emotonMap[emo] = { emoton: emo, pnl: 0, trades: 0, wns: 0 };
-        emotonMap[emo].pnl += t.pnlUSD;
-        emotonMap[emo].trades++;
-        f (t.pnlUSD > 0) emotonMap[emo].wns++;
+      if (t.emotion) {
+        const emo = t.emotion;
+        if (!emotionMap[emo]) emotionMap[emo] = { emotion: emo, pnl: 0, trades: 0, wins: 0 };
+        emotionMap[emo].pnl += t.pnlUSD;
+        emotionMap[emo].trades++;
+        if (t.pnlUSD > 0) emotionMap[emo].wins++;
       }
     }
-    const byEmoton = Object.values(emotonMap).map(em => ({
+    const byEmotion = Object.values(emotionMap).map(em => ({
       ...em,
-      wnRate: em.trades > 0 ? (em.wns / em.trades) * 100 : 0
+      winRate: em.trades > 0 ? (em.wins / em.trades) * 100 : 0
     })).sort((a, b) => b.pnl - a.pnl);
 
-    // Global Checklst Complance
+    // Global Checklst compliance
     let totalRules = 0;
     let compledRules = 0;
     for (const t of trades) {
-      f (t.checklst && t.checklst.length > 0) {
-        for (const rule of t.checklst) {
+      if (t.checklist && t.checklist.length > 0) {
+        for (const rule of t.checklist) {
           totalRules++;
-          f (rule.compled) compledRules++;
+          if (rule.complied) compledRules++;
         }
       }
     }
-    const globalComplanceRate = totalRules > 0 ? (compledRules / totalRules) * 100 : 0;
+    const globalComplianceRate = totalRules > 0 ? (compledRules / totalRules) * 100 : 0;
 
     // Performance by Grade
     const gradeMap = {};
     for (const t of trades) {
-      f (t.grade) {
+      if (t.grade) {
         const grd = t.grade;
-        f (!gradeMap[grd]) gradeMap[grd] = { grade: grd, pnl: 0, trades: 0, wns: 0 };
+        if (!gradeMap[grd]) gradeMap[grd] = { grade: grd, pnl: 0, trades: 0, wins: 0 };
         gradeMap[grd].pnl += t.pnlUSD;
         gradeMap[grd].trades++;
-        f (t.pnlUSD > 0) gradeMap[grd].wns++;
+        if (t.pnlUSD > 0) gradeMap[grd].wins++;
       }
     }
     const byGrade = Object.values(gradeMap).map(g => ({
       ...g,
-      wnRate: g.trades > 0 ? (g.wns / g.trades) * 100 : 0
+      winRate: g.trades > 0 ? (g.wins / g.trades) * 100 : 0
     })).sort((a, b) => a.grade.localeCompare(b.grade));
 
     res.json({
       totalTrades: trades.length,
-      wnRate: trades.length > 0 ? (wns.length / trades.length) * 100 : 0,
-      proftFactor: grossLoss > 0 ? grossProft / grossLoss : grossProft > 0 ? nfnty : 0,
+      winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
+      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
       netPnL,
-      bggestWn: wns.length > 0 ? Math.max(...wns.map(t => t.pnlUSD)) : 0,
-      bggestLoss: losses.length > 0 ? Math.mn(...losses.map(t => t.pnlUSD)) : 0,
+      biggestWin: wins.length > 0 ? Math.max(...wins.map(t => t.pnlUSD)) : 0,
+      biggestLoss: losses.length > 0 ? Math.min(...losses.map(t => t.pnlUSD)) : 0,
       currentDrawdown,
       maxDrawdownPct,
-      equtyCurve,
+      equityCurve,
       bySymbol,
       byDayOfWeek,
       byMonth,
-      avgDuratonMn,
-      avgWnUSD,
+      avgDurationMin,
+      avgWinUSD,
       avgLossUSD,
-      wnLossRato,
+      winLossRatio,
       expectancyUSD,
-      maxWnStreak,
+      maxWinStreak,
       maxLossStreak,
-      sharpeRato,
-      bySesson,
+      sharpeRatio,
+      bySession,
       byTag,
-      byEmoton,
+      byEmotion,
       byGrade,
-      globalComplanceRate,
+      globalComplianceRate,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /ap/calendar  aggregate closed trades daly net P&L and stats
+// GET /api/calendar  aggregate closed trades daly net P&L and stats
 router.get('/calendar', auth, async (req, res) => {
   try {
     const { symbol, grade } = req.query;
 
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      let fltered = [...nMemoryTrades];
-      f (symbol) fltered = fltered.flter(t => t.symbol === symbol.toUpperCase());
-      f (grade) fltered = fltered.flter(t => t.grade === grade.toUpperCase());
+    if (mongoose.connection.readyState !== 1) {
+      let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
+      if (grade) filtered = filtered.filter(t => t.grade === grade.toUpperCase());
 
       const calendarData = {};
-      for (const t of fltered) {
-        const dateStr = t.closeTme.splt('T')[0];
-        f (!calendarData[dateStr]) {
+      for (const t of filtered) {
+        const dateStr = t.closeTime.split('T')[0];
+        if (!calendarData[dateStr]) {
           calendarData[dateStr] = {
             pnl: 0,
             tradesCount: 0,
-            wns: 0,
+            wins: 0,
             date: dateStr
           };
         }
         calendarData[dateStr].pnl += t.pnlUSD;
         calendarData[dateStr].tradesCount++;
-        f (t.pnlUSD > 0) calendarData[dateStr].wns++;
+        if (t.pnlUSD > 0) calendarData[dateStr].wins++;
       }
       return res.json(calendarData);
     }
 
-    const query = { user: req.user.userd };
-    f (symbol) query.symbol = symbol.toUpperCase();
-    f (grade) query.grade = grade.toUpperCase();
+    const query = { user: req.user.userId };
+    if (symbol) query.symbol = symbol.toUpperCase();
+    if (grade) query.grade = grade.toUpperCase();
 
-    const trades = awat Trade.fnd(query).sort({ closeTme: 1 });
+    const trades = await Trade.find(query).sort({ closeTime: 1 });
     const calendarData = {};
     for (const t of trades) {
-      // Group by close date n YYYY-MM-DD
-      const dateStr = new Date(t.closeTme).toSOStrng().splt('T')[0];
-      f (!calendarData[dateStr]) {
+      // Group by close date in YYYY-MM-DD
+      const dateStr = new Date(t.closeTime).toISOString().split('T')[0];
+      if (!calendarData[dateStr]) {
         calendarData[dateStr] = {
           pnl: 0,
           tradesCount: 0,
-          wns: 0,
+          wins: 0,
           date: dateStr
         };
       }
       calendarData[dateStr].pnl += t.pnlUSD;
       calendarData[dateStr].tradesCount++;
-      f (t.pnlUSD > 0) calendarData[dateStr].wns++;
+      if (t.pnlUSD > 0) calendarData[dateStr].wins++;
     }
     res.json(calendarData);
   } catch (err) {
@@ -930,18 +749,20 @@ router.get('/calendar', auth, async (req, res) => {
   }
 });
 
-// GET /ap/balance  latest runnng balance
+// GET /api/balance  latest running balance
 router.get('/balance', auth, async (req, res) => {
   try {
     // Database Offlne Fallback
-    f (mongoose.connecton.readyState !== 1) {
-      const sorted = [...nMemoryTrades].sort((a, b) => new Date(b.closeTme) - new Date(a.closeTme));
+    if (mongoose.connection.readyState !== 1) {
+      const sorted = inMemoryTrades
+        .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
+        .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
       const latest = sorted[0];
-      return res.json({ balance: latest?.runnngBalance || 0, asOf: latest?.closeTme || null });
+      return res.json({ balance: latest?.runningBalance || 0, asOf: latest?.closeTime || null });
     }
 
-    const latest = awat Trade.fndOne({ user: req.user.userd }).sort({ closeTme: -1 });
-    res.json({ balance: latest?.runnngBalance || 0, asOf: latest?.closeTme || null });
+    const latest = await Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 });
+    res.json({ balance: latest?.runningBalance || 0, asOf: latest?.closeTime || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

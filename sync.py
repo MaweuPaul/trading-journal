@@ -306,7 +306,7 @@ def sync_trades(trades):
         return 0, 0
 
 
-def main(once=False):
+def main(once=False, full=False):
     log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
 
     if not get_jwt_token():
@@ -319,9 +319,12 @@ def main(once=False):
 
     while True:
         try:
-            force_full_sync = get_resync_request()
+            force_full_sync = full or get_resync_request()
             latest_time = None if force_full_sync else get_latest_trade_time()
-            if force_full_sync:
+            if full:
+                log.info("[SYNC] Full history sync requested from command line...")
+                from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+            elif force_full_sync:
                 log.info("[SYNC] Dashboard requested full history resync...")
                 from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
             elif latest_time:
@@ -338,7 +341,7 @@ def main(once=False):
             else:
                 log.info("[SYNC] Complete -> no new trades")
 
-            if force_full_sync:
+            if force_full_sync and not full:
                 mark_resync_complete()
 
         except Exception as e:
@@ -354,5 +357,6 @@ def main(once=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync closed MetaTrader 5 trades to the Trade Journal API.")
     parser.add_argument("--once", action="store_true", help="Run one sync cycle and exit.")
+    parser.add_argument("--full", action="store_true", help="Ignore latest backend trade time and pull full MT5 history.")
     args = parser.parse_args()
-    main(once=args.once)
+    main(once=args.once, full=args.full)

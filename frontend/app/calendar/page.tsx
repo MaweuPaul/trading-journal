@@ -6,7 +6,7 @@ import {
   DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity 
 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+const API = '/api';
 
 interface DailyStats {
   pnl: number;

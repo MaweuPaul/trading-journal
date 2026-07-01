@@ -6,8 +6,22 @@ const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+const { v2: cloudinary } = require('cloudinary');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
+const CLOUDINARY_READY = Boolean(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
+
+if (CLOUDINARY_READY) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
 
 // Load initial n-memory trades from local file f exists
 let inMemoryTrades = [];
@@ -37,6 +51,24 @@ function isOfflineTradeVisibleToUser(trade, userId) {
 
 function sameTradeOwnerAndDealId(trade, userId, dealId) {
   return isOfflineTradeVisibleToUser(trade, userId) && String(trade.dealId) === String(dealId);
+}
+
+function syncLocalTrade(updatedTrade) {
+  const idx = inMemoryTrades.findIndex(t => String(t._id) === String(updatedTrade._id));
+  const plain = typeof updatedTrade.toObject === 'function' ? updatedTrade.toObject() : updatedTrade;
+  const formatted = {
+    ...plain,
+    _id: String(plain._id),
+    user: plain.user ? String(plain.user) : null,
+    openTime: plain.openTime ? new Date(plain.openTime).toISOString() : null,
+    closeTime: plain.closeTime ? new Date(plain.closeTime).toISOString() : null,
+    createdAt: plain.createdAt ? new Date(plain.createdAt).toISOString() : null,
+    updatedAt: plain.updatedAt ? new Date(plain.updatedAt).toISOString() : null,
+  };
+
+  if (idx === -1) inMemoryTrades.push(formatted);
+  else inMemoryTrades[idx] = formatted;
+  saveLocalDatabase();
 }
 
 // Sync/Backup MongoDB trades to local persistent database file
@@ -453,6 +485,107 @@ router.put('/trades/:id', auth, async (req, res) => {
 
     res.json(updated);
 
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/trades/:id/screenshots  upload a manually captured chart screenshot
+router.post('/trades/:id/screenshots', auth, async (req, res) => {
+  try {
+    if (!CLOUDINARY_READY) {
+      return res.status(500).json({ error: 'Cloudinary is not configured on the backend.' });
+    }
+
+    const { imageData, caption = '' } = req.body;
+    if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'imageData must be a base64 data URL image.' });
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'Screenshot uploads require MongoDB to be connected.' });
+    }
+
+    const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
+    if (!trade) {
+      return res.status(404).json({ error: 'Trade not found' });
+    }
+
+    const upload = await cloudinary.uploader.upload(imageData, {
+      folder: `trade-journal/${req.user.userId}/${trade._id}`,
+      resource_type: 'image',
+      overwrite: false,
+    });
+
+    trade.screenshots.push({
+      url: upload.secure_url,
+      publicId: upload.public_id,
+      caption: String(caption).trim().slice(0, 180),
+      uploadedAt: new Date(),
+    });
+
+    await trade.save();
+    syncLocalTrade(trade);
+    res.json(trade);
+  } catch (err) {
+    console.error('Screenshot upload error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/trades/:id/screenshots/:screenshotId  update screenshot caption
+router.patch('/trades/:id/screenshots/:screenshotId', auth, async (req, res) => {
+  try {
+    const { caption = '' } = req.body;
+
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'Screenshot captions require MongoDB to be connected.' });
+    }
+
+    const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
+    if (!trade) {
+      return res.status(404).json({ error: 'Trade not found' });
+    }
+
+    const screenshot = trade.screenshots.id(req.params.screenshotId);
+    if (!screenshot) {
+      return res.status(404).json({ error: 'Screenshot not found' });
+    }
+
+    screenshot.caption = String(caption).trim().slice(0, 180);
+    await trade.save();
+    syncLocalTrade(trade);
+    res.json(trade);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/trades/:id/screenshots/:screenshotId  remove a screenshot from Cloudinary and the trade
+router.delete('/trades/:id/screenshots/:screenshotId', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'Screenshot deletes require MongoDB to be connected.' });
+    }
+
+    const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
+    if (!trade) {
+      return res.status(404).json({ error: 'Trade not found' });
+    }
+
+    const screenshot = trade.screenshots.id(req.params.screenshotId);
+    if (!screenshot) {
+      return res.status(404).json({ error: 'Screenshot not found' });
+    }
+
+    if (CLOUDINARY_READY && screenshot.publicId) {
+      await cloudinary.uploader.destroy(screenshot.publicId, { resource_type: 'image' });
+    }
+
+    screenshot.deleteOne();
+    await trade.save();
+    syncLocalTrade(trade);
+    res.json(trade);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

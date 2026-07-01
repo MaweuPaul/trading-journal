@@ -1,0 +1,504 @@
+'use client';
+import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Info,
+  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity 
+} from 'lucide-react';
+
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+
+interface DailyStats {
+  pnl: number;
+  tradesCount: number;
+  wins: number;
+  date: string;
+}
+
+interface Trade {
+  _id: string;
+  dealId: string;
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  entryPrice: number;
+  exitPrice: number;
+  lotSize: number;
+  pnlUSD: number;
+  pnlPct: number;
+  commission: number;
+  swap: number;
+  openTime: string;
+  closeTime: string;
+  durationMinutes: number;
+  runningBalance: number;
+  grade?: string;
+  emotion?: string;
+}
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function fmtUSD(n: number) {
+  const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? `-$${abs}` : `$${abs}`;
+}
+
+export default function CalendarPage() {
+  const router = useRouter();
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [calendarStats, setCalendarStats] = useState<Record<string, DailyStats>>({});
+  const [loading, setLoading] = useState(true);
+  const [hasToken, setHasToken] = useState(false);
+
+  // Filters State
+  const [filterSymbol, setFilterSymbol] = useState('');
+  const [filterGrade, setFilterGrade] = useState('');
+  const [symbols, setSymbols] = useState<string[]>([]);
+
+  // Daily trades list modal/drawer state
+  const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
+  const [dailyTrades, setDailyTrades] = useState<Trade[]>([]);
+  const [loadingTrades, setLoadingTrades] = useState(false);
+
+  // Auth checking
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      router.push('/login');
+      return;
+    }
+    setHasToken(true);
+  }, [router]);
+
+  // Load active symbols dynamically from stats endpoint
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/stats`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem('token');
+          router.push('/login');
+          return;
+        }
+        return r.json();
+      })
+      .then(data => {
+        if (data && data.bySymbol) {
+          setSymbols(data.bySymbol.map((s: any) => s.symbol).sort());
+        }
+      })
+      .catch(console.error);
+  }, [router]);
+
+  // Load calendar daily statistics with filter query params
+  const loadCalendar = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setLoading(true);
+    const params = new URLSearchParams({
+      ...(filterSymbol && { symbol: filterSymbol }),
+      ...(filterGrade && { grade: filterGrade }),
+    });
+    try {
+      const res = await fetch(`${API}/calendar?${params}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+      const data = await res.json();
+      setCalendarStats(data || {});
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [filterSymbol, filterGrade, router]);
+
+  useEffect(() => { loadCalendar(); }, [loadCalendar]);
+
+  // Load trades for clicked day
+  const handleDayClick = async (dateStr: string, statsExist: boolean) => {
+    if (!statsExist) return; // ignore empty days
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setSelectedDateStr(dateStr);
+    setLoadingTrades(true);
+    setDailyTrades([]);
+    
+    try {
+      const fromStr = `${dateStr}T00:00:00.000Z`;
+      const toStr = `${dateStr}T23:59:59.999Z`;
+      const params = new URLSearchParams({
+        from: fromStr,
+        to: toStr,
+        limit: '100',
+        ...(filterSymbol && { symbol: filterSymbol }),
+        ...(filterGrade && { grade: filterGrade }),
+      });
+      const res = await fetch(`${API}/trades?${params}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+      const data = await res.json();
+      setDailyTrades(data.trades || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingTrades(false);
+    }
+  };
+
+  // Jump to specific selected date directly
+  const handleJumpToDate = (dateVal: string) => {
+    if (!dateVal) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const selected = new Date(dateVal);
+    setCurrentDate(selected);
+
+    const y = selected.getFullYear();
+    const m = String(selected.getMonth() + 1).padStart(2, '0');
+    const d = String(selected.getDate()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+
+    // Force open the trades drawer for this day
+    setSelectedDateStr(dateStr);
+    setLoadingTrades(true);
+    setDailyTrades([]);
+
+    const fromStr = `${dateStr}T00:00:00.000Z`;
+    const toStr = `${dateStr}T23:59:59.999Z`;
+    const params = new URLSearchParams({
+      from: fromStr,
+      to: toStr,
+      limit: '100',
+      ...(filterSymbol && { symbol: filterSymbol }),
+      ...(filterGrade && { grade: filterGrade }),
+    });
+
+    fetch(`${API}/trades?${params}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem('token');
+          router.push('/login');
+          return;
+        }
+        return r.json();
+      })
+      .then(data => {
+        if (data) setDailyTrades(data.trades || []);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingTrades(false));
+  };
+
+  const resetFilters = () => {
+    setFilterSymbol('');
+    setFilterGrade('');
+  };
+
+  // Nav Month shifts
+  const prevMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  };
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  // Calendar cells generation logic
+  const firstDayOfMonth = new Date(year, month, 1);
+  const startDayOfWeek = firstDayOfMonth.getDay(); // 0 (Sun) - 6 (Sat)
+  const totalDays = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
+  // 1. Padding leading empty cells
+  for (let i = 0; i < startDayOfWeek; i++) {
+    cells.push({ isEmpty: true, day: 0, dateStr: '' });
+  }
+  // 2. Add actual days in month
+  for (let day = 1; day <= totalDays; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    cells.push({ isEmpty: false, day, dateStr });
+  }
+
+  // Calculate Monthly Summary Stats dynamically for the selected month
+  const monthlyStats = Object.values(calendarStats).filter(s => {
+    const d = new Date(s.date);
+    return d.getFullYear() === year && d.getMonth() === month;
+  });
+
+  const monthlyPnL = monthlyStats.reduce((sum, s) => sum + s.pnl, 0);
+  const totalTradingDays = monthlyStats.length;
+  const greenDays = monthlyStats.filter(s => s.pnl > 0).length;
+  const redDays = monthlyStats.filter(s => s.pnl < 0).length;
+  const dailyWinRate = totalTradingDays > 0 ? (greenDays / totalTradingDays) * 100 : 0;
+
+  const bestDayStats = monthlyStats.length > 0 ? monthlyStats.reduce((best, s) => s.pnl > best.pnl ? s : best) : null;
+  const worstDayStats = monthlyStats.length > 0 ? monthlyStats.reduce((worst, s) => s.pnl < worst.pnl ? s : worst) : null;
+
+  const metricCards = [
+    {
+      label: `${MONTHS[month]} Net P&L`, icon: DollarSign, iconCls: monthlyPnL >= 0 ? 'green' : 'red',
+      value: (monthlyPnL >= 0 ? '+' : '') + fmtUSD(monthlyPnL),
+      cls: monthlyPnL >= 0 ? 'green' : 'red',
+      sub: `${totalTradingDays} active trading day${totalTradingDays > 1 ? 's' : ''}`,
+      cardCls: monthlyPnL >= 0 ? 'green-card' : 'red-card',
+    },
+    {
+      label: 'Consistency Score', icon: Percent, iconCls: dailyWinRate >= 50 ? 'green' : 'red',
+      value: `${dailyWinRate.toFixed(1)}% WR`,
+      cls: dailyWinRate >= 50 ? 'green' : 'red',
+      sub: `${greenDays} Win Day${greenDays !== 1 ? 's' : ''} / ${redDays} Loss Day${redDays !== 1 ? 's' : ''}`,
+      cardCls: dailyWinRate >= 50 ? 'green-card' : 'red-card',
+    },
+    {
+      label: 'Best Day Return', icon: TrendingUp, iconCls: 'green',
+      value: bestDayStats ? `+${fmtUSD(bestDayStats.pnl)}` : '$0.00',
+      cls: 'green',
+      sub: bestDayStats ? `On ${new Date(bestDayStats.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No wins this month',
+      cardCls: 'green-card',
+    },
+    {
+      label: 'Worst Day Return', icon: Award, iconCls: 'red',
+      value: worstDayStats ? fmtUSD(worstDayStats.pnl) : '$0.00',
+      cls: 'red',
+      sub: worstDayStats ? `On ${new Date(worstDayStats.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No losses this month',
+      cardCls: 'red-card',
+    },
+  ];
+
+  if (!hasToken) return null;
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-header-inner">
+          <div>
+            <h2>Daily Calendar</h2>
+            <p>Monthly trading P&L calendar grid with dynamic green/red indicators</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Monthly Performance Summary Bar */}
+      <div className="stat-grid" style={{ marginBottom: 20 }}>
+        {metricCards.map(c => (
+          <div className={`stat-card ${c.cardCls}`} key={c.label}>
+            <div className={`stat-icon ${c.iconCls}`}>
+              <c.icon size={14} />
+            </div>
+            <div className="stat-label">{c.label}</div>
+            <div className={`stat-value ${c.cls}`}>{c.value}</div>
+            <div className="stat-sub">{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Calendar Filter Tools Row */}
+      <div className="filters-bar">
+        <div className="filter-group">
+          <label>Symbol / Instrument</label>
+          <select value={filterSymbol} onChange={e => { setFilterSymbol(e.target.value); }}>
+            <option value="">All instruments</option>
+            {symbols.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div className="filter-group">
+          <label>Setup Grade Filter</label>
+          <select value={filterGrade} onChange={e => { setFilterGrade(e.target.value); }}>
+            <option value="">All setup grades</option>
+            <option value="A">Grade A Setups</option>
+            <option value="B">Grade B Setups</option>
+            <option value="C">Grade C Setups</option>
+            <option value="D">Grade D Setups</option>
+            <option value="F">Grade F (Boredom) Setups</option>
+          </select>
+        </div>
+        <button className="btn btn-ghost" onClick={resetFilters} style={{ alignSelf: 'flex-end', flexShrink: 0 }}>
+          <SlidersHorizontal size={13} />
+          Reset Filters
+        </button>
+      </div>
+
+      {/* Monthly Grid Card */}
+      <div className="calendar-card">
+        {/* Calendar Navigation Toolbar */}
+        <div className="calendar-toolbar">
+          <div className="calendar-month-title">
+            {MONTHS[month]} {year}
+          </div>
+          
+          <div className="calendar-controls" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {/* Jump to Specific Date Picker Tool */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Jump to:</span>
+              <input
+                type="date"
+                onChange={e => handleJumpToDate(e.target.value)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  padding: 0
+                }}
+              />
+            </div>
+
+            <button className="page-btn" onClick={prevMonth}>
+              <ChevronLeft size={16} />
+            </button>
+            <button className="page-btn" onClick={() => { setCurrentDate(new Date()); setSelectedDateStr(null); }} style={{ fontSize: 11, fontWeight: 600 }}>
+              Today
+            </button>
+            <button className="page-btn" onClick={nextMonth}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Days of week header */}
+        <div className="calendar-weekday-row">
+          {WEEKDAYS.map(day => <div key={day}>{day}</div>)}
+        </div>
+
+        {/* Grid Cells */}
+        {loading ? (
+          <div className="loading-wrap" style={{ minHeight: 280 }}><div className="spinner" /></div>
+        ) : (
+          <div className="calendar-grid">
+            {cells.map((cell, idx) => {
+              if (cell.isEmpty) {
+                return <div key={`empty-${idx}`} className="calendar-day empty" />;
+              }
+
+              const stats = calendarStats[cell.dateStr];
+              const statsExist = !!stats && stats.tradesCount > 0;
+              const isProfit = statsExist && stats.pnl >= 0;
+
+              return (
+                <div
+                  key={cell.dateStr}
+                  className={`calendar-day ${statsExist ? 'active-day' : ''} ${statsExist ? (isProfit ? 'profit-day' : 'loss-day') : ''}`}
+                  onClick={() => handleDayClick(cell.dateStr, statsExist)}
+                >
+                  <span className="day-num">{cell.day}</span>
+                  
+                  {statsExist && (
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
+                      <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
+                      <span className="day-pnl">
+                        {stats.pnl >= 0 ? '+' : ''}${Math.abs(stats.pnl).toFixed(0)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════
+         DAILY TRADES VIEWER PANEL (MODAL DRAWER)
+      ══════════════════════════════ */}
+      {selectedDateStr && (
+        <>
+          <div className="drawer-overlay" onClick={() => setSelectedDateStr(null)} />
+          <div className="drawer" style={{ width: 500 }}>
+            <div className="drawer-header">
+              <div>
+                <h3>Daily Closed Trades</h3>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  Date: {new Date(selectedDateStr).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </span>
+              </div>
+              <button className="drawer-close" onClick={() => setSelectedDateStr(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="drawer-body" style={{ padding: 20 }}>
+              {loadingTrades ? (
+                <div className="loading-wrap" style={{ minHeight: 200 }}><div className="spinner" /></div>
+              ) : dailyTrades.length === 0 ? (
+                <div className="empty-state" style={{ minHeight: 180 }}>
+                  <div className="empty-icon"><CalendarIcon size={20} /></div>
+                  <h3>No trades found</h3>
+                  <p>There are no recorded trades closed on this specific date.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div className="drawer-section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Info size={12} /> Closed Trades Count: {dailyTrades.length}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {dailyTrades.map((t) => {
+                      const isProfit = t.pnlUSD >= 0;
+                      return (
+                        <div 
+                          key={t._id} 
+                          className="session-summary-row"
+                          style={{ borderLeft: `3px solid ${isProfit ? 'var(--green)' : 'var(--red)'}`, background: '#fff' }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                              {t.symbol} · <span className={`badge ${t.direction.toLowerCase()}`} style={{ fontSize: 9, padding: '1px 5px' }}>{t.direction}</span>
+                              {t.grade && <span className={`grade-pill-tag ${t.grade}`} style={{ marginLeft: 6, transform: 'scale(0.85)', transformOrigin: 'left center' }}>{t.grade}</span>}
+                            </span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              Lots: {t.lotSize.toFixed(2)} · Close: {new Date(t.closeTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          
+                          <div className="session-stats-group" style={{ alignItems: 'flex-end', flexDirection: 'column', gap: 2 }}>
+                            <span className={`pnl ${isProfit ? 'positive' : 'negative'}`} style={{ fontSize: 14, fontWeight: 700 }}>
+                              {isProfit ? '+' : ''}${t.pnlUSD.toFixed(2)}
+                            </span>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                              {t.durationMinutes} mins duration
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="drawer-footer">
+              <button className="btn btn-ghost" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedDateStr(null)}>
+                Close Panel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

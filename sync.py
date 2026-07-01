@@ -430,7 +430,10 @@ def main(once=False, full=False):
                 from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
             trades = fetch_deals(from_date)
-            account_events = fetch_account_events(from_date)
+            # Cash-flow operations are sparse and deduped by MT5 ticket, so scan
+            # the full history every cycle to avoid missing withdrawals that do
+            # not line up neatly with the latest trade close time.
+            account_events = fetch_account_events(datetime(2000, 1, 1, tzinfo=timezone.utc))
             inserted, skipped = sync_trades(trades)
             events_inserted, events_skipped = sync_account_events(account_events)
             if inserted > 0 or skipped > 0:

@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
 const Trade = require('../models/Trade');
+const SyncRequest = require('../models/SyncRequest');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -10,6 +11,7 @@ const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 
 // Load initial n-memory trades from local file f exists
 let inMemoryTrades = [];
+const inMemorySyncRequests = {};
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
     inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
@@ -31,6 +33,10 @@ function isOfflineTradeVisibleToUser(trade, userId) {
   if (String(userId) === 'mocked_admin_user_id') return true;
   if (!trade.user) return true;
   return String(trade.user) === String(userId);
+}
+
+function sameTradeOwnerAndDealId(trade, userId, dealId) {
+  return isOfflineTradeVisibleToUser(trade, userId) && String(trade.dealId) === String(dealId);
 }
 
 // Sync/Backup MongoDB trades to local persistent database file
@@ -66,6 +72,152 @@ mongoose.connection.on('connected', () => {
   setTimeout(backupMongoToLocal, 5000);
 });
 
+// POST /api/maintenance/resync-request  ask the local MT5 sync script to run a full sync
+router.post('/maintenance/resync-request', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
+      inMemorySyncRequests[String(req.user.userId)] = {
+        forceFullSync: true,
+        requestedAt: new Date().toISOString(),
+        completedAt: null,
+      };
+      return res.json({ ok: true, forceFullSync: true, requestedAt: inMemorySyncRequests[String(req.user.userId)].requestedAt });
+    }
+
+    const request = await SyncRequest.findOneAndUpdate(
+      { user: req.user.userId },
+      { forceFullSync: true, requestedAt: new Date(), completedAt: null },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    res.json({ ok: true, forceFullSync: request.forceFullSync, requestedAt: request.requestedAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/maintenance/resync-request  consumed by sync.py
+router.get('/maintenance/resync-request', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
+      const request = inMemorySyncRequests[String(req.user.userId)] || {};
+      return res.json({
+        forceFullSync: Boolean(request.forceFullSync),
+        requestedAt: request.requestedAt || null,
+        completedAt: request.completedAt || null,
+      });
+    }
+
+    const request = await SyncRequest.findOne({ user: req.user.userId }).lean();
+    res.json({
+      forceFullSync: Boolean(request?.forceFullSync),
+      requestedAt: request?.requestedAt || null,
+      completedAt: request?.completedAt || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/maintenance/resync-complete  called by sync.py after a forced full sync
+router.post('/maintenance/resync-complete', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
+      inMemorySyncRequests[String(req.user.userId)] = {
+        ...(inMemorySyncRequests[String(req.user.userId)] || {}),
+        forceFullSync: false,
+        completedAt: new Date().toISOString(),
+      };
+      return res.json({ ok: true });
+    }
+
+    await SyncRequest.findOneAndUpdate(
+      { user: req.user.userId },
+      { forceFullSync: false, completedAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/maintenance/trades  clear this user's trade database
+router.delete('/maintenance/trades', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      const before = inMemoryTrades.length;
+      inMemoryTrades = inMemoryTrades.filter(t => !isOfflineTradeVisibleToUser(t, req.user.userId));
+      saveLocalDatabase();
+      return res.json({ deleted: before - inMemoryTrades.length });
+    }
+
+    const result = await Trade.deleteMany({ user: req.user.userId });
+    inMemoryTrades = inMemoryTrades.filter(t => String(t.user) !== String(req.user.userId));
+    saveLocalDatabase();
+    res.json({ deleted: result.deletedCount || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/maintenance/dedupe-trades  remove repeated deal IDs for this user
+router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      const seen = new Set();
+      const deduped = [];
+      let removed = 0;
+      for (const trade of inMemoryTrades) {
+        if (!isOfflineTradeVisibleToUser(trade, req.user.userId)) {
+          deduped.push(trade);
+          continue;
+        }
+        const key = `${String(trade.user || req.user.userId)}:${String(trade.dealId)}`;
+        if (seen.has(key)) {
+          removed++;
+          continue;
+        }
+        seen.add(key);
+        deduped.push(trade);
+      }
+      inMemoryTrades = deduped;
+      if (removed > 0) saveLocalDatabase();
+      return res.json({ removed });
+    }
+
+    const duplicateGroups = await Trade.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(req.user.userId) } },
+      { $sort: { createdAt: 1, _id: 1 } },
+      {
+        $group: {
+          _id: '$dealId',
+          ids: { $push: '$_id' },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+
+    const duplicateIds = duplicateGroups.flatMap(group => group.ids.slice(1));
+    let removed = 0;
+    if (duplicateIds.length > 0) {
+      const result = await Trade.deleteMany({ _id: { $in: duplicateIds }, user: req.user.userId });
+      removed = result.deletedCount || 0;
+    }
+
+    inMemoryTrades = inMemoryTrades.filter(t => {
+      if (String(t.user) !== String(req.user.userId)) return true;
+      return !duplicateIds.some(id => String(id) === String(t._id));
+    });
+    if (removed > 0) saveLocalDatabase();
+
+    res.json({ removed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 //  GET /api/performance  equty curve + full rsk metrics 
 router.get('/performance', auth, async (req, res) => {
@@ -320,7 +472,7 @@ router.post('/sync', auth, async (req, res) => {
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       for (const t of trades) {
-        const exists = inMemoryTrades.some(x => String(x.dealId) === String(t.dealId));
+        const exists = inMemoryTrades.some(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId));
         if (exists) {
           skipped++;
           continue;
@@ -359,6 +511,16 @@ router.post('/sync', auth, async (req, res) => {
 
     for (const t of trades) {
       try {
+        const existing = await Trade.findOne({
+          user: req.user.userId,
+          dealId: String(t.dealId),
+        }).select('_id');
+
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
         const created = await Trade.create({
           dealId:     String(t.dealId),
           positionId: String(t.positionId || ''),
@@ -380,7 +542,7 @@ router.post('/sync', auth, async (req, res) => {
         });
 
         // Mrror to inMemoryTrades
-        const exists = inMemoryTrades.some(x => String(x.dealId) === String(t.dealId));
+        const exists = inMemoryTrades.some(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId));
         if (!exists) {
           inMemoryTrades.push({
             ...created.toObject(),

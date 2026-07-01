@@ -1,5 +1,5 @@
 ﻿'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,7 +7,8 @@ import {
 } from 'recharts';
 import {
   DollarSign, TrendingUp, TrendingDown, Activity,
-  Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar
+  Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
+  Database, RefreshCw, Trash2
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
@@ -71,6 +72,41 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
+  const [maintenanceBusy, setMaintenanceBusy] = useState<string | null>(null);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const headers = { 'Authorization': `Bearer ${token}` };
+
+      const [s, b] = await Promise.all([
+        fetch(`${API}/stats?range=${range}`, { headers }).then(r => {
+          if (r.status === 401) {
+            localStorage.removeItem('token');
+            router.push('/login');
+            throw new Error('Unauthorized');
+          }
+          return r.json();
+        }),
+        fetch(`${API}/balance`, { headers }).then(r => {
+          if (r.status === 401) {
+            localStorage.removeItem('token');
+            router.push('/login');
+            throw new Error('Unauthorized');
+          }
+          return r.json();
+        }),
+      ]);
+      setStats(s);
+      setBal(b);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [range, router]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -79,42 +115,60 @@ export default function DashboardPage() {
       return;
     }
     setHasToken(true);
-
-    async function load() {
-      try {
-        const token = localStorage.getItem('token');
-        const headers = { 'Authorization': `Bearer ${token}` };
-
-        const [s, b] = await Promise.all([
-          fetch(`${API}/stats?range=${range}`, { headers }).then(r => {
-            if (r.status === 401) {
-              localStorage.removeItem('token');
-              router.push('/login');
-              throw new Error('Unauthorized');
-            }
-            return r.json();
-          }),
-          fetch(`${API}/balance`, { headers }).then(r => {
-            if (r.status === 401) {
-              localStorage.removeItem('token');
-              router.push('/login');
-              throw new Error('Unauthorized');
-            }
-            return r.json();
-          }),
-        ]);
-        setStats(s);
-        setBal(b);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-    const t = setInterval(load, 30000);
+    loadDashboard();
+    const t = setInterval(loadDashboard, 30000);
     return () => clearInterval(t);
-  }, [range, router]);
+  }, [loadDashboard, router]);
+
+  const callMaintenance = async (action: 'dedupe' | 'resync' | 'clear') => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    if (action === 'clear') {
+      const confirmed = window.confirm(
+        'Clear all synced trades from the database? Your MT5 history stays safe, but the dashboard will be empty until sync.py imports again.'
+      );
+      if (!confirmed) return;
+    }
+
+    setMaintenanceBusy(action);
+    setMaintenanceMessage('');
+    try {
+      const headers = { 'Authorization': `Bearer ${token}` };
+      let res: Response;
+
+      if (action === 'dedupe') {
+        res = await fetch(`${API}/maintenance/dedupe-trades`, { method: 'POST', headers });
+      } else if (action === 'resync') {
+        res = await fetch(`${API}/maintenance/resync-request`, { method: 'POST', headers });
+      } else {
+        res = await fetch(`${API}/maintenance/trades`, { method: 'DELETE', headers });
+      }
+
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Maintenance action failed');
+
+      if (action === 'dedupe') {
+        setMaintenanceMessage(`Removed ${data.removed || 0} duplicate trade row(s).`);
+      } else if (action === 'resync') {
+        setMaintenanceMessage('Full resync requested. Keep sync.py running so it can pull MT5 history.');
+      } else {
+        setMaintenanceMessage(`Cleared ${data.deleted || 0} trade row(s). Run resync with sync.py active to rebuild cleanly.`);
+      }
+
+      await loadDashboard();
+    } catch (e) {
+      setMaintenanceMessage(e instanceof Error ? e.message : 'Maintenance action failed');
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  };
 
   if (loading) return (
     <div className="loading-wrap">
@@ -213,31 +267,51 @@ export default function DashboardPage() {
             <p>Live performance synced from your MT5 · Exness account</p>
           </div>
 
-          {/* Time Range Selector Tool */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)', marginTop: 8 }}>
-            <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
-            <select
-              value={range}
-              onChange={e => { setRange(e.target.value); setLoading(true); }}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--text-secondary)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="all">All Time History</option>
-              <option value="today">Today (UTC)</option>
-              <option value="7d">Last 7 Days</option>
-              <option value="30d">Last 30 Days</option>
-              <option value="3m">Last 3 Months</option>
-              <option value="6m">Last 6 Months</option>
-            </select>
+          <div className="dashboard-actions">
+            <button className="btn btn-ghost" onClick={() => callMaintenance('dedupe')} disabled={Boolean(maintenanceBusy)}>
+              <Database size={14} />
+              {maintenanceBusy === 'dedupe' ? 'Cleaning...' : 'Remove duplicates'}
+            </button>
+            <button className="btn btn-primary" onClick={() => callMaintenance('resync')} disabled={Boolean(maintenanceBusy)}>
+              <RefreshCw size={14} />
+              {maintenanceBusy === 'resync' ? 'Requesting...' : 'Resync'}
+            </button>
+            <button className="btn btn-danger" onClick={() => callMaintenance('clear')} disabled={Boolean(maintenanceBusy)}>
+              <Trash2 size={14} />
+              {maintenanceBusy === 'clear' ? 'Clearing...' : 'Clear database'}
+            </button>
+
+            {/* Time Range Selector Tool */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+              <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
+              <select
+                value={range}
+                onChange={e => { setRange(e.target.value); setLoading(true); }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="all">All Time History</option>
+                <option value="today">Today (UTC)</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="3m">Last 3 Months</option>
+                <option value="6m">Last 6 Months</option>
+              </select>
+            </div>
           </div>
         </div>
+        {maintenanceMessage && (
+          <div className="maintenance-status">
+            {maintenanceMessage}
+          </div>
+        )}
       </div>
 
       <div className="stat-grid">

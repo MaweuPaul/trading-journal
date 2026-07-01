@@ -2,6 +2,7 @@
 const router = express.Router();
 const Trade = require('../models/Trade');
 const SyncRequest = require('../models/SyncRequest');
+const AccountEvent = require('../models/AccountEvent');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -9,6 +10,7 @@ const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
+const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
   process.env.CLOUDINARY_API_KEY &&
@@ -25,11 +27,16 @@ if (CLOUDINARY_READY) {
 
 // Load initial n-memory trades from local file f exists
 let inMemoryTrades = [];
+let inMemoryAccountEvents = [];
 const inMemorySyncRequests = {};
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
     inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
     console.log(` Loaded ${inMemoryTrades.length} trades from local persistent database file.`);
+  }
+  if (fs.existsSync(LOCAL_EVENTS_PATH)) {
+    inMemoryAccountEvents = JSON.parse(fs.readFileSync(LOCAL_EVENTS_PATH, 'utf8'));
+    console.log(` Loaded ${inMemoryAccountEvents.length} account events from local persistent database file.`);
   }
 } catch (e) {
   console.error("Failed to load local persistent database:", e.message);
@@ -43,14 +50,70 @@ function saveLocalDatabase() {
   }
 }
 
+function saveLocalAccountEvents() {
+  try {
+    fs.writeFileSync(LOCAL_EVENTS_PATH, JSON.stringify(inMemoryAccountEvents, null, 2), 'utf8');
+  } catch (e) {
+    console.error("Failed to save local account events:", e.message);
+  }
+}
+
 function isOfflineTradeVisibleToUser(trade, userId) {
   if (String(userId) === 'mocked_admin_user_id') return true;
   if (!trade.user) return true;
   return String(trade.user) === String(userId);
 }
 
+function isOfflineAccountEventVisibleToUser(event, userId) {
+  if (String(userId) === 'mocked_admin_user_id') return true;
+  if (!event.user) return true;
+  return String(event.user) === String(userId);
+}
+
 function sameTradeOwnerAndDealId(trade, userId, dealId) {
   return isOfflineTradeVisibleToUser(trade, userId) && String(trade.dealId) === String(dealId);
+}
+
+function sameEventOwnerAndExternalId(event, userId, externalId) {
+  return isOfflineAccountEventVisibleToUser(event, userId) && String(event.externalId || '') === String(externalId || '');
+}
+
+function accountEventNetAmount(event) {
+  const amount = Number(event.amount || 0);
+  if (event.type === 'withdrawal') return -Math.abs(amount);
+  if (event.type === 'deposit') return Math.abs(amount);
+  return amount;
+}
+
+function summarizeAccountEvents(events) {
+  return events.reduce((summary, event) => {
+    const amount = Number(event.amount || 0);
+    if (event.type === 'deposit') summary.deposits += Math.abs(amount);
+    else if (event.type === 'withdrawal') summary.withdrawals += Math.abs(amount);
+    else summary.adjustments += amount;
+    summary.netCashFlow += accountEventNetAmount(event);
+    summary.totalEvents += 1;
+    return summary;
+  }, { deposits: 0, withdrawals: 0, adjustments: 0, netCashFlow: 0, totalEvents: 0 });
+}
+
+function getRangeStart(range) {
+  if (!range || range === 'all') return null;
+  const now = new Date();
+  if (range === 'today') return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (range === '7d') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  if (range === '30d') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (range === '3m') {
+    const d = new Date();
+    d.setMonth(now.getMonth() - 3);
+    return d;
+  }
+  if (range === '6m') {
+    const d = new Date();
+    d.setMonth(now.getMonth() - 6);
+    return d;
+  }
+  return null;
 }
 
 function syncLocalTrade(updatedTrade) {
@@ -76,7 +139,10 @@ async function backupMongoToLocal() {
   try {
     if (mongoose.connection.readyState === 1) {
       console.log(' Backing up MongoDB trades to local persistent database file...');
-      const allTrades = await Trade.find({}).sort({ closeTime: -1 }).lean();
+      const [allTrades, allEvents] = await Promise.all([
+        Trade.find({}).sort({ closeTime: -1 }).lean(),
+        AccountEvent.find({}).sort({ occurredAt: -1 }).lean(),
+      ]);
       
       // Map MongoDB _id to string for consstency
       const formattedTrades = allTrades.map(t => ({
@@ -92,6 +158,17 @@ async function backupMongoToLocal() {
       inMemoryTrades = formattedTrades;
       saveLocalDatabase();
       console.log(` Successfully backed up ${inMemoryTrades.length} trades from MongoDB to local JSON.`);
+
+      inMemoryAccountEvents = allEvents.map(e => ({
+        ...e,
+        _id: String(e._id),
+        user: e.user ? String(e.user) : null,
+        occurredAt: e.occurredAt ? new Date(e.occurredAt).toISOString() : null,
+        createdAt: e.createdAt ? new Date(e.createdAt).toISOString() : null,
+        updatedAt: e.updatedAt ? new Date(e.updatedAt).toISOString() : null,
+      }));
+      saveLocalAccountEvents();
+      console.log(` Successfully backed up ${inMemoryAccountEvents.length} account events from MongoDB to local JSON.`);
     }
   } catch (err) {
     console.error(' Failed to backup MongoDB trades to local JSON:', err.message);
@@ -246,6 +323,214 @@ router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
     if (removed > 0) saveLocalDatabase();
 
     res.json({ removed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/account-events  deposits, withdrawals, and account adjustments
+router.get('/account-events', auth, async (req, res) => {
+  try {
+    const { range, limit = 25 } = req.query;
+    const fromDate = getRangeStart(range);
+    const max = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+
+    if (mongoose.connection.readyState !== 1) {
+      let events = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId));
+      if (fromDate) events = events.filter(e => new Date(e.occurredAt) >= fromDate);
+      events.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
+      return res.json({
+        events: events.slice(0, max),
+        summary: summarizeAccountEvents(events),
+      });
+    }
+
+    const query = { user: req.user.userId };
+    if (fromDate) query.occurredAt = { $gte: fromDate };
+    const events = await AccountEvent.find(query).sort({ occurredAt: -1 }).limit(max).lean();
+    const summaryEvents = await AccountEvent.find(query).select('type amount').lean();
+
+    res.json({
+      events,
+      summary: summarizeAccountEvents(summaryEvents),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/account-events  manually record a deposit, withdrawal, or adjustment
+router.post('/account-events', auth, async (req, res) => {
+  try {
+    const type = String(req.body.type || '').toLowerCase();
+    const amount = Number(req.body.amount);
+    const occurredAt = req.body.occurredAt ? new Date(req.body.occurredAt) : new Date();
+    const note = String(req.body.note || '').trim();
+
+    if (!['deposit', 'withdrawal', 'adjustment'].includes(type)) {
+      return res.status(400).json({ error: 'type must be deposit, withdrawal, or adjustment' });
+    }
+    if (!Number.isFinite(amount) || amount === 0) {
+      return res.status(400).json({ error: 'amount must be a non-zero number' });
+    }
+    if (Number.isNaN(occurredAt.getTime())) {
+      return res.status(400).json({ error: 'occurredAt must be a valid date' });
+    }
+
+    const normalizedAmount = type === 'adjustment' ? amount : Math.abs(amount);
+
+    if (mongoose.connection.readyState !== 1) {
+      const event = {
+        _id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type,
+        amount: normalizedAmount,
+        currency: 'USD',
+        occurredAt: occurredAt.toISOString(),
+        note,
+        source: 'manual',
+        externalId: '',
+        balanceAfter: req.body.balanceAfter == null ? null : Number(req.body.balanceAfter),
+        user: req.user.userId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      inMemoryAccountEvents.push(event);
+      saveLocalAccountEvents();
+      return res.status(201).json({ event });
+    }
+
+    const event = await AccountEvent.create({
+      type,
+      amount: normalizedAmount,
+      currency: 'USD',
+      occurredAt,
+      note,
+      source: 'manual',
+      balanceAfter: req.body.balanceAfter == null ? null : Number(req.body.balanceAfter),
+      user: req.user.userId,
+    });
+
+    inMemoryAccountEvents.push({
+      ...event.toObject(),
+      _id: String(event._id),
+      user: String(event.user),
+      occurredAt: event.occurredAt ? new Date(event.occurredAt).toISOString() : null,
+      createdAt: event.createdAt ? new Date(event.createdAt).toISOString() : null,
+      updatedAt: event.updatedAt ? new Date(event.updatedAt).toISOString() : null,
+    });
+    saveLocalAccountEvents();
+
+    res.status(201).json({ event });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/account-events/:id  remove a manual cash-flow entry
+router.delete('/account-events/:id', auth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      const before = inMemoryAccountEvents.length;
+      inMemoryAccountEvents = inMemoryAccountEvents.filter(e => {
+        if (String(e._id) !== String(req.params.id)) return true;
+        return !isOfflineAccountEventVisibleToUser(e, req.user.userId);
+      });
+      const deleted = before - inMemoryAccountEvents.length;
+      if (deleted > 0) saveLocalAccountEvents();
+      return res.json({ deleted });
+    }
+
+    const result = await AccountEvent.deleteOne({ _id: req.params.id, user: req.user.userId });
+    inMemoryAccountEvents = inMemoryAccountEvents.filter(e => String(e._id) !== String(req.params.id));
+    if (result.deletedCount > 0) saveLocalAccountEvents();
+    res.json({ deleted: result.deletedCount || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/sync-account-events  receive MT5 balance operations from sync.py
+router.post('/sync-account-events', auth, async (req, res) => {
+  try {
+    const { events } = req.body;
+    if (!Array.isArray(events)) {
+      return res.status(400).json({ error: 'events array is required' });
+    }
+
+    let inserted = 0;
+    let skipped = 0;
+
+    if (mongoose.connection.readyState !== 1) {
+      for (const e of events) {
+        const externalId = String(e.externalId || '');
+        if (!externalId || inMemoryAccountEvents.some(x => sameEventOwnerAndExternalId(x, req.user.userId, externalId))) {
+          skipped++;
+          continue;
+        }
+
+        const type = ['deposit', 'withdrawal', 'adjustment'].includes(String(e.type)) ? String(e.type) : 'adjustment';
+        const amount = type === 'adjustment' ? Number(e.amount || 0) : Math.abs(Number(e.amount || 0));
+        const event = {
+          _id: externalId,
+          type,
+          amount,
+          currency: e.currency || 'USD',
+          occurredAt: e.occurredAt || new Date().toISOString(),
+          note: String(e.note || ''),
+          source: 'mt5',
+          externalId,
+          balanceAfter: e.balanceAfter == null ? null : Number(e.balanceAfter),
+          user: req.user.userId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        inMemoryAccountEvents.push(event);
+        inserted++;
+      }
+      if (inserted > 0) saveLocalAccountEvents();
+      return res.json({ inserted, skipped, total: events.length });
+    }
+
+    for (const e of events) {
+      const externalId = String(e.externalId || '');
+      if (!externalId) {
+        skipped++;
+        continue;
+      }
+
+      const existing = await AccountEvent.findOne({ user: req.user.userId, externalId }).select('_id');
+      if (existing) {
+        skipped++;
+        continue;
+      }
+
+      const type = ['deposit', 'withdrawal', 'adjustment'].includes(String(e.type)) ? String(e.type) : 'adjustment';
+      const amount = type === 'adjustment' ? Number(e.amount || 0) : Math.abs(Number(e.amount || 0));
+      const created = await AccountEvent.create({
+        type,
+        amount,
+        currency: e.currency || 'USD',
+        occurredAt: e.occurredAt ? new Date(e.occurredAt) : new Date(),
+        note: String(e.note || ''),
+        source: 'mt5',
+        externalId,
+        balanceAfter: e.balanceAfter == null ? null : Number(e.balanceAfter),
+        user: req.user.userId,
+      });
+
+      inMemoryAccountEvents.push({
+        ...created.toObject(),
+        _id: String(created._id),
+        user: String(created.user),
+        occurredAt: created.occurredAt ? new Date(created.occurredAt).toISOString() : null,
+        createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
+        updatedAt: created.updatedAt ? new Date(created.updatedAt).toISOString() : null,
+      });
+      inserted++;
+    }
+
+    if (inserted > 0) saveLocalAccountEvents();
+    res.json({ inserted, skipped, total: events.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1053,11 +1338,32 @@ router.get('/balance', auth, async (req, res) => {
         .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
         .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
       const latest = sorted[0];
-      return res.json({ balance: latest?.runningBalance || 0, asOf: latest?.closeTime || null });
+      const latestTradeTime = latest?.closeTime ? new Date(latest.closeTime) : null;
+      const laterEvents = inMemoryAccountEvents.filter(e => {
+        if (!isOfflineAccountEventVisibleToUser(e, req.user.userId)) return false;
+        if (!latestTradeTime) return true;
+        return new Date(e.occurredAt) > latestTradeTime;
+      });
+      const eventsNet = laterEvents.reduce((sum, e) => sum + accountEventNetAmount(e), 0);
+      const latestEvent = laterEvents.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))[0];
+      return res.json({
+        balance: (latest?.runningBalance || 0) + eventsNet,
+        asOf: latestEvent?.occurredAt || latest?.closeTime || null,
+        tradeAsOf: latest?.closeTime || null,
+      });
     }
 
-    const latest = await Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 });
-    res.json({ balance: latest?.runningBalance || 0, asOf: latest?.closeTime || null });
+    const latest = await Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 }).lean();
+    const eventQuery = { user: req.user.userId };
+    if (latest?.closeTime) eventQuery.occurredAt = { $gt: latest.closeTime };
+    const laterEvents = await AccountEvent.find(eventQuery).sort({ occurredAt: -1 }).lean();
+    const eventsNet = laterEvents.reduce((sum, e) => sum + accountEventNetAmount(e), 0);
+    const latestEvent = laterEvents[0];
+    res.json({
+      balance: (latest?.runningBalance || 0) + eventsNet,
+      asOf: latestEvent?.occurredAt || latest?.closeTime || null,
+      tradeAsOf: latest?.closeTime || null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

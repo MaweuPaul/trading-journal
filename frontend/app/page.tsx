@@ -8,7 +8,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, Activity,
   Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
-  Database, RefreshCw, Trash2
+  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
 } from 'lucide-react';
 
 const API = '/api';
@@ -34,6 +34,27 @@ interface Stats {
 }
 
 interface BalanceData { balance: number; asOf: string | null }
+
+interface AccountEvent {
+  _id: string;
+  type: 'deposit' | 'withdrawal' | 'adjustment';
+  amount: number;
+  currency: string;
+  occurredAt: string;
+  note?: string;
+  source: 'manual' | 'mt5';
+}
+
+interface AccountEventsData {
+  events: AccountEvent[];
+  summary: {
+    deposits: number;
+    withdrawals: number;
+    adjustments: number;
+    netCashFlow: number;
+    totalEvents: number;
+  };
+}
 
 function fmtUSD(n: number) {
   const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -69,11 +90,18 @@ export default function DashboardPage() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [bal, setBal] = useState<BalanceData | null>(null);
+  const [cashFlow, setCashFlow] = useState<AccountEventsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
   const [maintenanceBusy, setMaintenanceBusy] = useState<string | null>(null);
   const [maintenanceMessage, setMaintenanceMessage] = useState('');
+  const [eventType, setEventType] = useState<'deposit' | 'withdrawal' | null>(null);
+  const [eventAmount, setEventAmount] = useState('');
+  const [eventDate, setEventDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [eventNote, setEventNote] = useState('');
+  const [eventBusy, setEventBusy] = useState(false);
+  const [eventMessage, setEventMessage] = useState('');
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -81,7 +109,7 @@ export default function DashboardPage() {
       if (!token) return;
       const headers = { 'Authorization': `Bearer ${token}` };
 
-      const [s, b] = await Promise.all([
+      const [s, b, c] = await Promise.all([
         fetch(`${API}/stats?range=${range}`, { headers }).then(r => {
           if (r.status === 401) {
             localStorage.removeItem('token');
@@ -98,9 +126,18 @@ export default function DashboardPage() {
           }
           return r.json();
         }),
+        fetch(`${API}/account-events?range=${range}`, { headers }).then(r => {
+          if (r.status === 401) {
+            localStorage.removeItem('token');
+            router.push('/login');
+            throw new Error('Unauthorized');
+          }
+          return r.json();
+        }),
       ]);
       setStats(s);
       setBal(b);
+      setCashFlow(c);
     } catch (e) {
       console.error(e);
     } finally {
@@ -167,6 +204,93 @@ export default function DashboardPage() {
       setMaintenanceMessage(e instanceof Error ? e.message : 'Maintenance action failed');
     } finally {
       setMaintenanceBusy(null);
+    }
+  };
+
+  const openEventForm = (type: 'deposit' | 'withdrawal') => {
+    setEventType(type);
+    setEventAmount('');
+    setEventDate(new Date().toISOString().slice(0, 10));
+    setEventNote('');
+    setEventMessage('');
+  };
+
+  const submitAccountEvent = async () => {
+    const token = localStorage.getItem('token');
+    if (!token || !eventType) return;
+
+    const amount = Number(eventAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setEventMessage('Enter an amount greater than 0.');
+      return;
+    }
+
+    setEventBusy(true);
+    setEventMessage('');
+    try {
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const res = await fetch(`${API}/account-events`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          type: eventType,
+          amount,
+          occurredAt: eventDate,
+          note: eventNote,
+        }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save cash-flow event');
+
+      setEventMessage(`${eventType === 'deposit' ? 'Deposit' : 'Withdrawal'} recorded.`);
+      setEventType(null);
+      setEventAmount('');
+      setEventNote('');
+      await loadDashboard();
+    } catch (e) {
+      setEventMessage(e instanceof Error ? e.message : 'Could not save cash-flow event');
+    } finally {
+      setEventBusy(false);
+    }
+  };
+
+  const deleteAccountEvent = async (event: AccountEvent) => {
+    if (event.source !== 'manual') return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const confirmed = window.confirm('Remove this manually recorded cash-flow event?');
+    if (!confirmed) return;
+
+    setEventBusy(true);
+    setEventMessage('');
+    try {
+      const res = await fetch(`${API}/account-events/${event._id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not delete cash-flow event');
+      setEventMessage(`Removed ${data.deleted || 0} event.`);
+      await loadDashboard();
+    } catch (e) {
+      setEventMessage(e instanceof Error ? e.message : 'Could not delete cash-flow event');
+    } finally {
+      setEventBusy(false);
     }
   };
 
@@ -258,6 +382,15 @@ export default function DashboardPage() {
     },
   ];
 
+  const cashSummary = cashFlow?.summary || {
+    deposits: 0,
+    withdrawals: 0,
+    adjustments: 0,
+    netCashFlow: 0,
+    totalEvents: 0,
+  };
+  const recentEvents = cashFlow?.events || [];
+
   return (
     <div>
       <div className="page-header">
@@ -325,6 +458,117 @@ export default function DashboardPage() {
             <div className="stat-sub">{c.sub}</div>
           </div>
         ))}
+      </div>
+
+      <div className="card cash-flow-card">
+        <div className="card-header">
+          <div>
+            <div className="card-title">Cash Flow</div>
+            <div className="card-subtitle">Deposits, withdrawals, and broker account movements</div>
+          </div>
+          <div className="cash-flow-actions">
+            <button className="btn btn-ghost" onClick={() => openEventForm('deposit')} disabled={eventBusy}>
+              <ArrowDownCircle size={14} />
+              Deposit
+            </button>
+            <button className="btn btn-ghost" onClick={() => openEventForm('withdrawal')} disabled={eventBusy}>
+              <ArrowUpCircle size={14} />
+              Withdrawal
+            </button>
+          </div>
+        </div>
+
+        <div className="cash-flow-grid">
+          <div className="cash-flow-metric">
+            <div className="stat-icon green"><ArrowDownCircle size={14} /></div>
+            <span>Deposits</span>
+            <strong className="green">{fmtUSD(cashSummary.deposits)}</strong>
+          </div>
+          <div className="cash-flow-metric">
+            <div className="stat-icon red"><ArrowUpCircle size={14} /></div>
+            <span>Withdrawals</span>
+            <strong className="red">{fmtUSD(cashSummary.withdrawals)}</strong>
+          </div>
+          <div className="cash-flow-metric">
+            <div className="stat-icon blue"><Wallet size={14} /></div>
+            <span>Net Cash Flow</span>
+            <strong className={cashSummary.netCashFlow >= 0 ? 'green' : 'red'}>
+              {cashSummary.netCashFlow >= 0 ? '+' : ''}{fmtUSD(cashSummary.netCashFlow)}
+            </strong>
+          </div>
+        </div>
+
+        {eventType && (
+          <div className="cash-flow-form">
+            <div className="cash-flow-form-title">
+              <Plus size={14} />
+              {eventType === 'deposit' ? 'Record deposit' : 'Record withdrawal'}
+            </div>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Amount"
+              value={eventAmount}
+              onChange={e => setEventAmount(e.target.value)}
+            />
+            <input
+              type="date"
+              value={eventDate}
+              onChange={e => setEventDate(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Optional note"
+              value={eventNote}
+              onChange={e => setEventNote(e.target.value)}
+            />
+            <button className="btn btn-primary" onClick={submitAccountEvent} disabled={eventBusy}>
+              {eventBusy ? 'Saving...' : 'Save'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setEventType(null)} disabled={eventBusy} aria-label="Cancel cash-flow entry">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {eventMessage && <div className="maintenance-status">{eventMessage}</div>}
+
+        <div className="cash-flow-events">
+          {recentEvents.length === 0 ? (
+            <div className="cash-flow-empty">No deposits or withdrawals recorded for this range.</div>
+          ) : recentEvents.slice(0, 5).map(event => {
+            const isWithdrawal = event.type === 'withdrawal';
+            const signedAmount = event.type === 'deposit' ? event.amount : event.type === 'withdrawal' ? -event.amount : event.amount;
+            return (
+              <div className="cash-flow-event" key={event._id}>
+                <div className={`cash-flow-event-icon ${isWithdrawal ? 'red' : signedAmount >= 0 ? 'green' : 'red'}`}>
+                  {isWithdrawal ? <ArrowUpCircle size={14} /> : <ArrowDownCircle size={14} />}
+                </div>
+                <div className="cash-flow-event-main">
+                  <strong>{event.type}</strong>
+                  <span>
+                    {new Date(event.occurredAt).toLocaleDateString()} · {event.source.toUpperCase()}
+                    {event.note ? ` · ${event.note}` : ''}
+                  </span>
+                </div>
+                <div className={`cash-flow-event-amount ${signedAmount >= 0 ? 'green' : 'red'}`}>
+                  {signedAmount >= 0 ? '+' : ''}{fmtUSD(signedAmount)}
+                </div>
+                {event.source === 'manual' && (
+                  <button
+                    className="cash-flow-delete"
+                    onClick={() => deleteAccountEvent(event)}
+                    disabled={eventBusy}
+                    aria-label="Delete cash-flow event"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Equity Curve */}

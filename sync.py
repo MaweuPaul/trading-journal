@@ -155,7 +155,7 @@ def get_latest_trade_time():
         resp = requests.get(f"{API_BASE}/balance", headers=headers, timeout=API_TIMEOUT)
         if resp.ok:
             data = resp.json()
-            as_of = data.get("asOf")
+            as_of = data.get("tradeAsOf") or data.get("asOf")
             if as_of:
                 clean_ts = as_of.split(".")[0].replace("Z", "+00:00")
                 return datetime.fromisoformat(clean_ts)
@@ -266,6 +266,61 @@ def fetch_deals(from_date=None):
     return result
 
 
+def fetch_account_events(from_date=None):
+    """
+    Fetch MT5 balance operations such as deposits and withdrawals.
+    Returns account event dicts ready to POST to the API.
+    """
+    if from_date is None:
+        from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+    to_date = datetime.now(tz=timezone.utc)
+    deals = mt5.history_deals_get(from_date, to_date)
+    if deals is None:
+        log.warning("[MT5] history_deals_get returned None for account events: %s", mt5.last_error())
+        return []
+
+    balance_types = {
+        getattr(mt5, "DEAL_TYPE_BALANCE", None),
+        getattr(mt5, "DEAL_TYPE_CREDIT", None),
+        getattr(mt5, "DEAL_TYPE_CORRECTION", None),
+        getattr(mt5, "DEAL_TYPE_BONUS", None),
+        getattr(mt5, "DEAL_TYPE_CHARGE", None),
+    }
+    balance_types.discard(None)
+
+    events = []
+    for deal in deals:
+        if deal.type not in balance_types:
+            continue
+
+        amount = float(getattr(deal, "profit", 0.0) or 0.0)
+        if amount == 0:
+            continue
+
+        if amount > 0:
+            event_type = "deposit"
+        elif getattr(mt5, "DEAL_TYPE_BALANCE", None) == deal.type:
+            event_type = "withdrawal"
+        else:
+            event_type = "adjustment"
+
+        note = getattr(deal, "comment", "") or ""
+        occurred_at = datetime.fromtimestamp(deal.time, tz=timezone.utc)
+        events.append({
+            "externalId": str(deal.ticket),
+            "type": event_type,
+            "amount": abs(amount) if event_type != "adjustment" else amount,
+            "currency": "USD",
+            "occurredAt": occurred_at.isoformat(),
+            "note": note,
+            "balanceAfter": None,
+        })
+
+    log.info("[MT5] Fetched %d account cash-flow event(s) from history", len(events))
+    return events
+
+
 def sync_trades(trades):
     """POST trades to the Node.js API. Returns (inserted, skipped)."""
     global JWT_TOKEN
@@ -306,6 +361,46 @@ def sync_trades(trades):
         return 0, 0
 
 
+def sync_account_events(events):
+    """POST MT5 deposits/withdrawals to the Node.js API. Returns (inserted, skipped)."""
+    global JWT_TOKEN
+    if not events:
+        return 0, 0
+
+    if not JWT_TOKEN:
+        if not get_jwt_token():
+            log.error("[CASHFLOW] Sync aborted -- unauthenticated.")
+            return 0, 0
+
+    try:
+        headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+        resp = requests.post(
+            f"{API_BASE}/sync-account-events",
+            json={"events": events},
+            headers=headers,
+            timeout=API_TIMEOUT,
+        )
+        if resp.status_code == 401:
+            log.warning("[CASHFLOW] JWT token expired. Re-authenticating...")
+            if get_jwt_token():
+                headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+                resp = requests.post(
+                    f"{API_BASE}/sync-account-events",
+                    json={"events": events},
+                    headers=headers,
+                    timeout=API_TIMEOUT,
+                )
+            else:
+                return 0, 0
+
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("inserted", 0), data.get("skipped", 0)
+    except requests.RequestException as e:
+        log.error("[CASHFLOW] Failed to POST account events to API: %s", e)
+        return 0, 0
+
+
 def main(once=False, full=False):
     log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
 
@@ -335,11 +430,15 @@ def main(once=False, full=False):
                 from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
             trades = fetch_deals(from_date)
+            account_events = fetch_account_events(from_date)
             inserted, skipped = sync_trades(trades)
+            events_inserted, events_skipped = sync_account_events(account_events)
             if inserted > 0 or skipped > 0:
                 log.info("[SYNC] Complete -> inserted: %d, skipped (dup): %d", inserted, skipped)
             else:
                 log.info("[SYNC] Complete -> no new trades")
+            if events_inserted > 0 or events_skipped > 0:
+                log.info("[CASHFLOW] Complete -> inserted: %d, skipped (dup): %d", events_inserted, events_skipped)
 
             if force_full_sync and not full:
                 mark_resync_complete()

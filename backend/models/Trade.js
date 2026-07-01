@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const tradeSchema = new mongoose.Schema({
-  dealId:     { type: String, required: true, unique: true }, // MT5 close deal ticket
+  dealId:     { type: String, required: true }, // MT5 close deal ticket
   positionId: { type: String, default: '' },
   symbol: { type: String, required: true },
   direction: { type: String, enum: ['BUY', 'SELL'], required: true },
@@ -29,5 +29,6 @@ tradeSchema.index({ symbol: 1 });
 tradeSchema.index({ closeTime: -1 });
 tradeSchema.index({ pnlUSD: 1 });
 tradeSchema.index({ user: 1, closeTime: -1 });
+tradeSchema.index({ user: 1, dealId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Trade', tradeSchema);

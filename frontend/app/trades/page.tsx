@@ -3,7 +3,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   SlidersHorizontal, ChevronLeft, ChevronRight, List, 
-  X, Smile, Award, Tag, CheckSquare, Save, Info
+  X, Smile, Award, Tag, CheckSquare, Save, Info,
+  Upload, Image as ImageIcon, Trash2
 } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
@@ -13,6 +14,14 @@ interface ChecklistItem {
   rule: string;
   complied: boolean;
   _id?: string;
+}
+
+interface TradeScreenshot {
+  _id: string;
+  url: string;
+  publicId: string;
+  caption?: string;
+  uploadedAt?: string;
 }
 
 interface Trade {
@@ -36,6 +45,7 @@ interface Trade {
   emotion?: string;
   grade?: string;
   checklist?: ChecklistItem[];
+  screenshots?: TradeScreenshot[];
 }
 
 const EMOTIONS = [
@@ -104,6 +114,9 @@ export default function TradesPage() {
   const [tagInput, setTagInput] = useState('');
   const [draftChecklist, setDraftChecklist] = useState<ChecklistItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [screenshotCaption, setScreenshotCaption] = useState('');
+  const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+  const [previewScreenshot, setPreviewScreenshot] = useState<TradeScreenshot | null>(null);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -160,6 +173,8 @@ export default function TradesPage() {
         : DEFAULT_CHECKLIST.map(c => ({ ...c }))
     );
     setTagInput('');
+    setScreenshotCaption('');
+    setPreviewScreenshot(null);
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -220,6 +235,123 @@ export default function TradesPage() {
       alert('Error saving journal notes');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const updateTradeInState = (updatedTrade: Trade) => {
+    setTrades(prev => prev.map(t => t._id === updatedTrade._id ? updatedTrade : t));
+    setSelectedTrade(updatedTrade);
+  };
+
+  const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Could not read screenshot file'));
+    reader.readAsDataURL(file);
+  });
+
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!selectedTrade || !file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.');
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Please keep screenshots under 8MB.');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    setUploadingScreenshot(true);
+    try {
+      const imageData = await fileToDataUrl(file);
+      const res = await fetch(`${API}/trades/${selectedTrade._id}/screenshots`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          imageData,
+          caption: screenshotCaption,
+        }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        router.push('/login');
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Screenshot upload failed');
+      updateTradeInState(data);
+      setScreenshotCaption('');
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Screenshot upload failed');
+    } finally {
+      setUploadingScreenshot(false);
+    }
+  };
+
+  const handleScreenshotCaptionChange = async (screenshotId: string, caption: string) => {
+    if (!selectedTrade) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/trades/${selectedTrade._id}/screenshots/${screenshotId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ caption }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Could not update screenshot caption');
+      }
+
+      updateTradeInState(await res.json());
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Could not update screenshot caption');
+    }
+  };
+
+  const handleScreenshotDelete = async (screenshotId: string) => {
+    if (!selectedTrade) return;
+    const confirmed = window.confirm('Delete this screenshot from the trade?');
+    if (!confirmed) return;
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/trades/${selectedTrade._id}/screenshots/${screenshotId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Could not delete screenshot');
+      }
+
+      updateTradeInState(await res.json());
+      setPreviewScreenshot(null);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Could not delete screenshot');
     }
   };
 
@@ -498,6 +630,66 @@ export default function TradesPage() {
                 </form>
               </div>
 
+              {/* Chart Screenshots */}
+              <div className="drawer-section">
+                <span className="drawer-section-title"><ImageIcon size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Chart Screenshots</span>
+                <div className="screenshot-upload-panel">
+                  <input
+                    type="text"
+                    className="screenshot-caption-input"
+                    placeholder="Optional caption, e.g. entry trigger or HTF context"
+                    value={screenshotCaption}
+                    onChange={e => setScreenshotCaption(e.target.value)}
+                    maxLength={180}
+                  />
+                  <label className={`btn btn-ghost screenshot-upload-btn ${uploadingScreenshot ? 'disabled' : ''}`}>
+                    <Upload size={14} />
+                    {uploadingScreenshot ? 'Uploading...' : 'Upload'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleScreenshotUpload}
+                      disabled={uploadingScreenshot}
+                      hidden
+                    />
+                  </label>
+                </div>
+
+                {selectedTrade.screenshots && selectedTrade.screenshots.length > 0 ? (
+                  <div className="screenshot-grid">
+                    {selectedTrade.screenshots.map(shot => (
+                      <div className="screenshot-tile" key={shot._id}>
+                        <button className="screenshot-thumb-btn" onClick={() => setPreviewScreenshot(shot)}>
+                          <img src={shot.url} alt={shot.caption || `${selectedTrade.symbol} trade screenshot`} loading="lazy" />
+                        </button>
+                        <input
+                          className="screenshot-inline-caption"
+                          value={shot.caption || ''}
+                          placeholder="Add caption..."
+                          maxLength={180}
+                          onChange={e => {
+                            const caption = e.target.value;
+                            const updatedScreenshots = (selectedTrade.screenshots || []).map(s =>
+                              s._id === shot._id ? { ...s, caption } : s
+                            );
+                            updateTradeInState({ ...selectedTrade, screenshots: updatedScreenshots });
+                          }}
+                          onBlur={e => handleScreenshotCaptionChange(shot._id, e.target.value)}
+                        />
+                        <button className="screenshot-delete-btn" onClick={() => handleScreenshotDelete(shot._id)} aria-label="Delete screenshot">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="screenshot-empty">
+                    <ImageIcon size={16} />
+                    <span>No screenshots attached yet</span>
+                  </div>
+                )}
+              </div>
+
               {/* Journal Notes */}
               <div className="drawer-section">
                 <span className="drawer-section-title">Journal Notes</span>
@@ -529,6 +721,35 @@ export default function TradesPage() {
               </button>
             </div>
           </div>
+
+          {previewScreenshot && (
+            <div className="screenshot-preview-overlay" onClick={() => setPreviewScreenshot(null)}>
+              <div className="screenshot-preview-modal" onClick={e => e.stopPropagation()}>
+                <div className="screenshot-preview-header">
+                  <div>
+                    <div className="card-title">Chart Screenshot</div>
+                    {previewScreenshot.caption && (
+                      <div className="card-subtitle">{previewScreenshot.caption}</div>
+                    )}
+                  </div>
+                  <button className="drawer-close" onClick={() => setPreviewScreenshot(null)}>
+                    <X size={16} />
+                  </button>
+                </div>
+                <img
+                  src={previewScreenshot.url}
+                  alt={previewScreenshot.caption || `${selectedTrade.symbol} trade screenshot`}
+                  className="screenshot-preview-image"
+                />
+                <div className="screenshot-preview-footer">
+                  <button className="btn btn-danger" onClick={() => handleScreenshotDelete(previewScreenshot._id)}>
+                    <Trash2 size={14} />
+                    Delete Screenshot
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

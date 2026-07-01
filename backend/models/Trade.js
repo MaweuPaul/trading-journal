@@ -21,6 +21,12 @@ const tradeSchema = new mongoose.Schema({
   emotion: { type: String, enum: ['Calm', 'Anxious', 'Greedy', 'Fearful', 'Disciplined', 'FOMO', ''], default: '' },
   grade: { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' },
   checklist: [{ rule: String, complied: Boolean }], // rule compliance checklist
+  screenshots: [{
+    url: { type: String, required: true },
+    publicId: { type: String, required: true },
+    caption: { type: String, default: '' },
+    uploadedAt: { type: Date, default: Date.now },
+  }],
   synced: { type: Date, default: Date.now },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
 }, { timestamps: true });

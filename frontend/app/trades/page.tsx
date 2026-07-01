@@ -243,12 +243,12 @@ export default function TradesPage() {
     setSelectedTrade(updatedTrade);
   };
 
-  const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const fileToDataUrl = useCallback((file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error('Could not read screenshot file'));
     reader.readAsDataURL(file);
-  });
+  }), []);
 
   const uploadScreenshotDataUrl = useCallback(async (imageData: string) => {
     if (!selectedTrade) return;
@@ -287,11 +287,7 @@ export default function TradesPage() {
     }
   }, [router, screenshotCaption, selectedTrade]);
 
-  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
+  const uploadScreenshotFile = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert('Please choose an image file.');
       return;
@@ -308,6 +304,29 @@ export default function TradesPage() {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Screenshot upload failed');
     }
+  }, [fileToDataUrl, uploadScreenshotDataUrl]);
+
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    await uploadScreenshotFile(file);
+  };
+
+  const handleScreenshotPaste = async (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (uploadingScreenshot) return;
+
+    const items = Array.from(event.clipboardData.items || []);
+    const imageItem = items.find(item => item.type.startsWith('image/'));
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    await uploadScreenshotFile(file);
   };
 
   useEffect(() => {
@@ -329,17 +348,12 @@ export default function TradesPage() {
       }
 
       event.preventDefault();
-      try {
-        await uploadScreenshotDataUrl(await fileToDataUrl(file));
-      } catch (err) {
-        console.error(err);
-        alert(err instanceof Error ? err.message : 'Screenshot upload failed');
-      }
+      await uploadScreenshotFile(file);
     };
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [selectedTrade, uploadScreenshotDataUrl, uploadingScreenshot]);
+  }, [selectedTrade, uploadScreenshotFile, uploadingScreenshot]);
 
   const handleScreenshotCaptionChange = async (screenshotId: string, caption: string) => {
     if (!selectedTrade) return;
@@ -673,11 +687,24 @@ export default function TradesPage() {
               {/* Chart Screenshots */}
               <div className="drawer-section">
                 <span className="drawer-section-title"><ImageIcon size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Chart Screenshots</span>
+                <div
+                  className={`screenshot-paste-zone ${uploadingScreenshot ? 'uploading' : ''}`}
+                  tabIndex={0}
+                  role="button"
+                  aria-label="Paste chart screenshot here"
+                  onPaste={handleScreenshotPaste}
+                >
+                  <ImageIcon size={18} />
+                  <div>
+                    <strong>{uploadingScreenshot ? 'Uploading screenshot...' : 'Paste screenshot here'}</strong>
+                    <span>Click this box, then press Ctrl+V</span>
+                  </div>
+                </div>
                 <div className="screenshot-upload-panel">
                   <input
                     type="text"
                     className="screenshot-caption-input"
-                    placeholder="Optional caption, e.g. entry trigger or HTF context"
+                    placeholder="Optional caption for pasted or uploaded screenshot"
                     value={screenshotCaption}
                     onChange={e => setScreenshotCaption(e.target.value)}
                     maxLength={180}

@@ -250,27 +250,13 @@ export default function TradesPage() {
     reader.readAsDataURL(file);
   });
 
-  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!selectedTrade || !file) return;
-
-    if (!file.type.startsWith('image/')) {
-      alert('Please choose an image file.');
-      return;
-    }
-
-    if (file.size > 8 * 1024 * 1024) {
-      alert('Please keep screenshots under 8MB.');
-      return;
-    }
-
+  const uploadScreenshotDataUrl = useCallback(async (imageData: string) => {
+    if (!selectedTrade) return;
     const token = localStorage.getItem('token');
     if (!token) return;
 
     setUploadingScreenshot(true);
     try {
-      const imageData = await fileToDataUrl(file);
       const res = await fetch(`${API}/trades/${selectedTrade._id}/screenshots`, {
         method: 'POST',
         headers: {
@@ -299,7 +285,61 @@ export default function TradesPage() {
     } finally {
       setUploadingScreenshot(false);
     }
+  }, [router, screenshotCaption, selectedTrade]);
+
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.');
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Please keep screenshots under 8MB.');
+      return;
+    }
+
+    try {
+      await uploadScreenshotDataUrl(await fileToDataUrl(file));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Screenshot upload failed');
+    }
   };
+
+  useEffect(() => {
+    if (!selectedTrade) return;
+
+    const handlePaste = async (event: ClipboardEvent) => {
+      if (uploadingScreenshot) return;
+
+      const items = Array.from(event.clipboardData?.items || []);
+      const imageItem = items.find(item => item.type.startsWith('image/'));
+      if (!imageItem) return;
+
+      const file = imageItem.getAsFile();
+      if (!file) return;
+
+      if (file.size > 8 * 1024 * 1024) {
+        alert('Please keep screenshots under 8MB.');
+        return;
+      }
+
+      event.preventDefault();
+      try {
+        await uploadScreenshotDataUrl(await fileToDataUrl(file));
+      } catch (err) {
+        console.error(err);
+        alert(err instanceof Error ? err.message : 'Screenshot upload failed');
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [selectedTrade, uploadScreenshotDataUrl, uploadingScreenshot]);
 
   const handleScreenshotCaptionChange = async (screenshotId: string, caption: string) => {
     if (!selectedTrade) return;

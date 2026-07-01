@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Mail, Lock, TrendingUp, Loader2, AlertCircle } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+const API = '/api';
 
 export default function LoginPage() {
   const router = useRouter();

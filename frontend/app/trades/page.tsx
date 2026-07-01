@@ -7,7 +7,7 @@ import {
   Upload, Image as ImageIcon, Trash2
 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+const API = '/api';
 const PAGE_SIZE = 50;
 
 interface ChecklistItem {

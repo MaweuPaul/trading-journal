@@ -1338,30 +1338,33 @@ router.get('/balance', auth, async (req, res) => {
         .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
         .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
       const latest = sorted[0];
-      const latestTradeTime = latest?.closeTime ? new Date(latest.closeTime) : null;
+      const latestBalanceSyncTime = latest?.synced || latest?.updatedAt || latest?.createdAt || latest?.closeTime || null;
+      const latestBalanceTime = latestBalanceSyncTime ? new Date(latestBalanceSyncTime) : null;
       const laterEvents = inMemoryAccountEvents.filter(e => {
         if (!isOfflineAccountEventVisibleToUser(e, req.user.userId)) return false;
-        if (!latestTradeTime) return true;
-        return new Date(e.occurredAt) > latestTradeTime;
+        if (e.source !== 'manual') return false;
+        if (!latestBalanceTime) return true;
+        return new Date(e.createdAt || e.occurredAt) > latestBalanceTime;
       });
       const eventsNet = laterEvents.reduce((sum, e) => sum + accountEventNetAmount(e), 0);
-      const latestEvent = laterEvents.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))[0];
+      const latestEvent = laterEvents.sort((a, b) => new Date(b.createdAt || b.occurredAt) - new Date(a.createdAt || a.occurredAt))[0];
       return res.json({
         balance: (latest?.runningBalance || 0) + eventsNet,
-        asOf: latestEvent?.occurredAt || latest?.closeTime || null,
+        asOf: latestEvent?.createdAt || latest?.synced || latest?.updatedAt || latest?.closeTime || null,
         tradeAsOf: latest?.closeTime || null,
       });
     }
 
     const latest = await Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 }).lean();
-    const eventQuery = { user: req.user.userId };
-    if (latest?.closeTime) eventQuery.occurredAt = { $gt: latest.closeTime };
-    const laterEvents = await AccountEvent.find(eventQuery).sort({ occurredAt: -1 }).lean();
+    const latestBalanceSyncTime = latest?.synced || latest?.updatedAt || latest?.createdAt || latest?.closeTime || null;
+    const eventQuery = { user: req.user.userId, source: 'manual' };
+    if (latestBalanceSyncTime) eventQuery.createdAt = { $gt: latestBalanceSyncTime };
+    const laterEvents = await AccountEvent.find(eventQuery).sort({ createdAt: -1 }).lean();
     const eventsNet = laterEvents.reduce((sum, e) => sum + accountEventNetAmount(e), 0);
     const latestEvent = laterEvents[0];
     res.json({
       balance: (latest?.runningBalance || 0) + eventsNet,
-      asOf: latestEvent?.occurredAt || latest?.closeTime || null,
+      asOf: latestEvent?.createdAt || latest?.synced || latest?.updatedAt || latest?.closeTime || null,
       tradeAsOf: latest?.closeTime || null,
     });
   } catch (err) {

@@ -291,22 +291,37 @@ def fetch_account_events(from_date=None):
 
     events = []
     for deal in deals:
-        if deal.type not in balance_types:
-            continue
-
         amount = float(getattr(deal, "profit", 0.0) or 0.0)
         if amount == 0:
             continue
 
+        symbol = (getattr(deal, "symbol", "") or "").strip()
+        volume = float(getattr(deal, "volume", 0.0) or 0.0)
+        position_id = int(getattr(deal, "position_id", 0) or 0)
+        comment = getattr(deal, "comment", "") or ""
+        external_id = getattr(deal, "external_id", "") or ""
+        is_known_balance_type = deal.type in balance_types
+        is_balance_like_row = volume == 0 and position_id == 0 and symbol.lower() in {"", "balance", "credit", "withdrawal", "deposit"}
+
+        if not is_known_balance_type and not is_balance_like_row:
+            continue
+
         if amount > 0:
             event_type = "deposit"
-        elif getattr(mt5, "DEAL_TYPE_BALANCE", None) == deal.type:
+        elif is_known_balance_type or is_balance_like_row:
             event_type = "withdrawal"
         else:
             event_type = "adjustment"
 
-        note = getattr(deal, "comment", "") or ""
+        note = comment or external_id
         occurred_at = datetime.fromtimestamp(deal.time, tz=timezone.utc)
+        log.info(
+            "[MT5] Cash-flow detected | ticket=%s | type=%s | amount=%.2f | note=%s",
+            deal.ticket,
+            deal.type,
+            amount,
+            note or "-",
+        )
         events.append({
             "externalId": str(deal.ticket),
             "type": event_type,

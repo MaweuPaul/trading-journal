@@ -1,0 +1,47 @@
+[
+  {
+    "_id": "6a45f8756cb30e229511a299",
+    "type": "withdrawal",
+    "amount": 10,
+    "currency": "USD",
+    "occurredAt": "2026-07-02T05:34:12.000Z",
+    "note": "W-KETDXMPE-USD-1436492414982",
+    "source": "mt5",
+    "externalId": "514445934",
+    "balanceAfter": null,
+    "user": "6a1eee5706ed670d978060f1",
+    "createdAt": "2026-07-02T05:34:45.406Z",
+    "updatedAt": "2026-07-02T05:34:45.406Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a44e5dc116f3f9bc1b033d1",
+    "type": "withdrawal",
+    "amount": 10,
+    "currency": "USD",
+    "occurredAt": "2026-07-01T01:20:53.000Z",
+    "note": "W-KETDXMPE-USD-1433086332934",
+    "source": "mt5",
+    "externalId": "513657752",
+    "balanceAfter": null,
+    "user": "6a1eee5706ed670d978060f1",
+    "createdAt": "2026-07-01T10:03:08.395Z",
+    "updatedAt": "2026-07-01T10:03:08.395Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a44e5dc116f3f9bc1b033ce",
+    "type": "deposit",
+    "amount": 612.17,
+    "currency": "USD",
+    "occurredAt": "2026-06-29T13:56:17.000Z",
+    "note": "D-KETDXMPE-USD-1429255458822",
+    "source": "mt5",
+    "externalId": "512712650",
+    "balanceAfter": null,
+    "user": "6a1eee5706ed670d978060f1",
+    "createdAt": "2026-07-01T10:03:08.386Z",
+    "updatedAt": "2026-07-01T10:03:08.386Z",
+    "__v": 0
+  }
+]

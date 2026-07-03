@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const Trade = require('../models/Trade');
 const SyncRequest = require('../models/SyncRequest');
@@ -11,11 +11,17 @@ const { v2: cloudinary } = require('cloudinary');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
+const OFFLINE_SCREENSHOTS_DIR = path.join(__dirname, '../public/screenshots');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
   process.env.CLOUDINARY_API_KEY &&
   process.env.CLOUDINARY_API_SECRET
 );
+
+// Ensure offline screenshots directory exists
+if (!fs.existsSync(OFFLINE_SCREENSHOTS_DIR)) {
+  fs.mkdirSync(OFFLINE_SCREENSHOTS_DIR, { recursive: true });
+}
 
 if (CLOUDINARY_READY) {
   cloudinary.config({
@@ -175,11 +181,179 @@ async function backupMongoToLocal() {
   }
 }
 
-// Subscrbe to mongoose connection events to trgger backup when connection is establshed
+// Subscribe to mongoose connection events to trigger backup when connection is established
 mongoose.connection.on('connected', () => {
-  // Wat 5 seconds to let any seedng/mgratons complete frst
+  // Wait 5 seconds to let any seeding/migrations complete first
   setTimeout(backupMongoToLocal, 5000);
+  // After backup, auto-upload any offline screenshots that were saved to disk
+  setTimeout(uploadOfflineScreenshots, 10000);
 });
+
+// Periodic 24-hour auto-backup of MongoDB → local JSON
+setInterval(async () => {
+  if (mongoose.connection.readyState === 1) {
+    console.log(' [Scheduled] Running 24-hour auto-backup of MongoDB → local JSON...');
+    await backupMongoToLocal();
+  }
+}, 24 * 60 * 60 * 1000);
+
+// ── Offline Screenshot Auto-Upload ──────────────────────────────────────────
+// When we saved screenshots to disk because MongoDB was offline, this function
+// picks them up, uploads them to Cloudinary, updates the trade in MongoDB, and
+// removes the local file (cleanup).
+async function uploadOfflineScreenshots() {
+  if (!CLOUDINARY_READY) return;
+  if (mongoose.connection.readyState !== 1) return;
+
+  try {
+    // Each offline screenshot is stored at:
+    //   OFFLINE_SCREENSHOTS_DIR/{tradeId}/{timestamp}_{screenshotId}.jpg
+    // and a companion .meta.json file holds { tradeId, caption, userId }
+    if (!fs.existsSync(OFFLINE_SCREENSHOTS_DIR)) return;
+
+    const tradeDirs = fs.readdirSync(OFFLINE_SCREENSHOTS_DIR);
+    for (const tradeId of tradeDirs) {
+      const tradeDir = path.join(OFFLINE_SCREENSHOTS_DIR, tradeId);
+      if (!fs.statSync(tradeDir).isDirectory()) continue;
+
+      const files = fs.readdirSync(tradeDir);
+      const metaFiles = files.filter(f => f.endsWith('.meta.json'));
+
+      for (const metaFile of metaFiles) {
+        const metaPath = path.join(tradeDir, metaFile);
+        const imgFile = metaFile.replace('.meta.json', '');
+        const imgPath = path.join(tradeDir, imgFile);
+
+        if (!fs.existsSync(imgPath)) {
+          // Image missing, clean up orphan meta
+          fs.unlinkSync(metaPath);
+          continue;
+        }
+
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          const trade = await Trade.findOne({ _id: meta.tradeId });
+          if (!trade) {
+            // Trade gone from MongoDB — remove the offline files
+            fs.unlinkSync(imgPath);
+            fs.unlinkSync(metaPath);
+            continue;
+          }
+
+          // Build context tags with full trade metadata for reconstruction
+          const contextTags = buildCloudinaryContext(trade, meta.caption);
+
+          // Upload image from disk to Cloudinary
+          const upload = await cloudinary.uploader.upload(imgPath, {
+            folder: `trade-journal/${meta.userId}/${meta.tradeId}`,
+            resource_type: 'image',
+            context: contextTags,
+            overwrite: false,
+          });
+
+          // Upload sidecar metadata.json to Cloudinary (as raw file)
+          const sidecarData = JSON.stringify(buildSidecarMetadata(trade, meta.caption, upload.secure_url), null, 2);
+          await cloudinary.uploader.upload(
+            `data:application/json;base64,${Buffer.from(sidecarData).toString('base64')}`,
+            {
+              folder: `trade-journal/${meta.userId}/${meta.tradeId}`,
+              public_id: `${upload.public_id.split('/').pop()}_metadata`,
+              resource_type: 'raw',
+              overwrite: true,
+            }
+          );
+
+          // Remove the offline placeholder from trade and add Cloudinary URL
+          trade.screenshots = trade.screenshots.filter(
+            s => s.publicId !== `offline:${meta.tradeId}:${imgFile}`
+          );
+          trade.screenshots.push({
+            url: upload.secure_url,
+            publicId: upload.public_id,
+            caption: meta.caption || '',
+            uploadedAt: new Date(),
+          });
+          await trade.save();
+          syncLocalTrade(trade);
+
+          // Remove local files after successful upload
+          fs.unlinkSync(imgPath);
+          fs.unlinkSync(metaPath);
+          console.log(` [OfflineSync] Uploaded offline screenshot for trade ${meta.tradeId} → Cloudinary`);
+
+          // If trade dir is now empty, remove it
+          const remaining = fs.readdirSync(tradeDir);
+          if (remaining.length === 0) fs.rmdirSync(tradeDir);
+        } catch (err) {
+          console.error(` [OfflineSync] Failed to upload offline screenshot ${metaFile}:`, err.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(' [OfflineSync] Failed to process offline screenshots:', err.message);
+  }
+}
+
+// Build Cloudinary context string with full trade metadata
+function buildCloudinaryContext(trade, caption) {
+  const t = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+  return [
+    `dealId=${t.dealId}`,
+    `positionId=${t.positionId || ''}`,
+    `symbol=${t.symbol}`,
+    `direction=${t.direction}`,
+    `entryPrice=${t.entryPrice}`,
+    `exitPrice=${t.exitPrice}`,
+    `lotSize=${t.lotSize}`,
+    `pnlUSD=${t.pnlUSD}`,
+    `pnlPct=${t.pnlPct || 0}`,
+    `commission=${t.commission || 0}`,
+    `swap=${t.swap || 0}`,
+    `openTime=${t.openTime instanceof Date ? t.openTime.toISOString() : t.openTime}`,
+    `closeTime=${t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime}`,
+    `durationMinutes=${t.durationMinutes || 0}`,
+    `runningBalance=${t.runningBalance || 0}`,
+    `emotion=${t.emotion || ''}`,
+    `grade=${t.grade || ''}`,
+    `tags=${(t.tags || []).join(',')}`,
+    `caption=${(caption || '').replace(/[|=]/g, ' ').slice(0, 200)}`,
+    `journalVersion=1`,
+  ].join('|');
+}
+
+// Build sidecar metadata object for the companion metadata.json file
+function buildSidecarMetadata(trade, caption, imageUrl) {
+  const t = typeof trade.toObject === 'function' ? trade.toObject() : trade;
+  return {
+    _schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    imageUrl,
+    caption: caption || '',
+    trade: {
+      _id: String(t._id),
+      dealId: t.dealId,
+      positionId: t.positionId || '',
+      symbol: t.symbol,
+      direction: t.direction,
+      entryPrice: t.entryPrice,
+      exitPrice: t.exitPrice,
+      lotSize: t.lotSize,
+      pnlUSD: t.pnlUSD,
+      pnlPct: t.pnlPct || 0,
+      commission: t.commission || 0,
+      swap: t.swap || 0,
+      openTime: t.openTime instanceof Date ? t.openTime.toISOString() : t.openTime,
+      closeTime: t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime,
+      durationMinutes: t.durationMinutes || 0,
+      runningBalance: t.runningBalance || 0,
+      notes: t.notes || '',
+      tags: t.tags || [],
+      emotion: t.emotion || '',
+      grade: t.grade || '',
+      checklist: t.checklist || [],
+    },
+  };
+}
 
 // POST /api/maintenance/resync-request  ask the local MT5 sync script to run a full sync
 router.post('/maintenance/resync-request', auth, async (req, res) => {
@@ -778,17 +952,92 @@ router.put('/trades/:id', auth, async (req, res) => {
 // POST /api/trades/:id/screenshots  upload a manually captured chart screenshot
 router.post('/trades/:id/screenshots', auth, async (req, res) => {
   try {
-    if (!CLOUDINARY_READY) {
-      return res.status(500).json({ error: 'Cloudinary is not configured on the backend.' });
-    }
-
     const { imageData, caption = '' } = req.body;
     if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:image/')) {
       return res.status(400).json({ error: 'imageData must be a base64 data URL image.' });
     }
 
+    // ── OFFLINE MODE: Save screenshot to disk ────────────────────────────────
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'Screenshot uploads require MongoDB to be connected.' });
+      const offlineTrade = inMemoryTrades.find(
+        t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId)
+      );
+      if (!offlineTrade) {
+        return res.status(404).json({ error: 'Trade not found' });
+      }
+
+      const tradeDir = path.join(OFFLINE_SCREENSHOTS_DIR, String(req.params.id));
+      if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
+
+      // Decode base64 and write raw image to disk
+      const matches = imageData.match(/^data:image\/(\w+);base64,(.+)$/);
+      const ext = matches ? matches[1] : 'jpg';
+      const rawBase64 = matches ? matches[2] : imageData.split(',')[1];
+      const timestamp = Date.now();
+      const imgFileName = `${timestamp}_offline.${ext}`;
+      const imgPath = path.join(tradeDir, imgFileName);
+      fs.writeFileSync(imgPath, Buffer.from(rawBase64, 'base64'));
+
+      // Write companion .meta.json sidecar for auto-upload later
+      const metaPath = path.join(tradeDir, `${imgFileName}.meta.json`);
+      const offlineMeta = {
+        tradeId: String(req.params.id),
+        userId: String(req.user.userId),
+        caption: String(caption).trim().slice(0, 180),
+        savedAt: new Date().toISOString(),
+        trade: {
+          dealId: offlineTrade.dealId,
+          positionId: offlineTrade.positionId || '',
+          symbol: offlineTrade.symbol,
+          direction: offlineTrade.direction,
+          entryPrice: offlineTrade.entryPrice,
+          exitPrice: offlineTrade.exitPrice,
+          lotSize: offlineTrade.lotSize,
+          pnlUSD: offlineTrade.pnlUSD,
+          pnlPct: offlineTrade.pnlPct || 0,
+          commission: offlineTrade.commission || 0,
+          swap: offlineTrade.swap || 0,
+          openTime: offlineTrade.openTime,
+          closeTime: offlineTrade.closeTime,
+          durationMinutes: offlineTrade.durationMinutes || 0,
+          runningBalance: offlineTrade.runningBalance || 0,
+          notes: offlineTrade.notes || '',
+          tags: offlineTrade.tags || [],
+          emotion: offlineTrade.emotion || '',
+          grade: offlineTrade.grade || '',
+        },
+      };
+      fs.writeFileSync(metaPath, JSON.stringify(offlineMeta, null, 2), 'utf8');
+
+      // Add a local-file placeholder entry to the trade so UI can preview it
+      const localUrl = `/public/screenshots/${req.params.id}/${imgFileName}`;
+      const localPublicId = `offline:${req.params.id}:${imgFileName}`;
+      const tradeIdx = inMemoryTrades.findIndex(t => String(t._id) === String(req.params.id));
+      if (tradeIdx !== -1) {
+        if (!Array.isArray(inMemoryTrades[tradeIdx].screenshots)) {
+          inMemoryTrades[tradeIdx].screenshots = [];
+        }
+        inMemoryTrades[tradeIdx].screenshots.push({
+          url: localUrl,
+          publicId: localPublicId,
+          caption: String(caption).trim().slice(0, 180),
+          uploadedAt: new Date().toISOString(),
+          offlinePending: true,
+        });
+        saveLocalDatabase();
+      }
+
+      return res.json({
+        ...offlineTrade,
+        screenshots: inMemoryTrades[tradeIdx]?.screenshots || [],
+        _offlineScreenshot: true,
+        _message: 'Screenshot saved locally. Will be uploaded to Cloudinary when MongoDB reconnects.',
+      });
+    }
+
+    // ── ONLINE MODE: Upload to Cloudinary with full metadata ─────────────────
+    if (!CLOUDINARY_READY) {
+      return res.status(500).json({ error: 'Cloudinary is not configured on the backend.' });
     }
 
     const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
@@ -796,11 +1045,32 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
       return res.status(404).json({ error: 'Trade not found' });
     }
 
+    // Build Cloudinary context tags with all trade metadata for reconstruction
+    const contextTags = buildCloudinaryContext(trade, caption);
+
     const upload = await cloudinary.uploader.upload(imageData, {
       folder: `trade-journal/${req.user.userId}/${trade._id}`,
       resource_type: 'image',
+      context: contextTags,
       overwrite: false,
     });
+
+    // Upload sidecar metadata.json to Cloudinary alongside the image (as raw)
+    const sidecarData = JSON.stringify(buildSidecarMetadata(trade, caption, upload.secure_url), null, 2);
+    try {
+      await cloudinary.uploader.upload(
+        `data:application/json;base64,${Buffer.from(sidecarData).toString('base64')}`,
+        {
+          folder: `trade-journal/${req.user.userId}/${trade._id}`,
+          public_id: `${upload.public_id.split('/').pop()}_metadata`,
+          resource_type: 'raw',
+          overwrite: true,
+        }
+      );
+    } catch (sidecarErr) {
+      // Non-fatal — image already uploaded, sidecar failure should not block
+      console.warn('Sidecar metadata upload failed (non-fatal):', sidecarErr.message);
+    }
 
     trade.screenshots.push({
       url: upload.secure_url,
@@ -1366,6 +1636,187 @@ router.get('/balance', auth, async (req, res) => {
       balance: (latest?.runningBalance || 0) + eventsNet,
       asOf: latestEvent?.createdAt || latest?.synced || latest?.updatedAt || latest?.closeTime || null,
       tradeAsOf: latest?.closeTime || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── EXPORT ROUTES ─────────────────────────────────────────────────────────
+
+// GET /api/export/json  Full backup download: all trades + account events
+router.get('/export/json', auth, async (req, res) => {
+  try {
+    let trades, events;
+
+    if (mongoose.connection.readyState === 1) {
+      [trades, events] = await Promise.all([
+        Trade.find({ user: req.user.userId }).sort({ closeTime: -1 }).lean(),
+        AccountEvent.find({ user: req.user.userId }).sort({ occurredAt: -1 }).lean(),
+      ]);
+    } else {
+      trades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      events = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId));
+    }
+
+    const payload = {
+      _schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      source: mongoose.connection.readyState === 1 ? 'mongodb' : 'local_cache',
+      tradeCount: trades.length,
+      accountEventCount: events.length,
+      trades: trades.map(t => ({
+        ...t,
+        _id: String(t._id),
+        user: t.user ? String(t.user) : null,
+      })),
+      accountEvents: events.map(e => ({
+        ...e,
+        _id: String(e._id),
+        user: e.user ? String(e.user) : null,
+      })),
+    };
+
+    const filename = `trade-journal-backup-${new Date().toISOString().split('T')[0]}.json`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/export/csv  All trades as a flat CSV
+router.get('/export/csv', auth, async (req, res) => {
+  try {
+    let trades;
+
+    if (mongoose.connection.readyState === 1) {
+      trades = await Trade.find({ user: req.user.userId }).sort({ closeTime: -1 }).lean();
+    } else {
+      trades = inMemoryTrades
+        .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
+        .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
+    }
+
+    const CSV_HEADERS = [
+      'dealId', 'positionId', 'symbol', 'direction',
+      'entryPrice', 'exitPrice', 'lotSize',
+      'pnlUSD', 'pnlPct', 'commission', 'swap',
+      'openTime', 'closeTime', 'durationMinutes', 'runningBalance',
+      'emotion', 'grade', 'tags', 'notes',
+      'screenshotCount', 'screenshotUrls',
+    ];
+
+    function escapeCsv(val) {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    }
+
+    const rows = trades.map(t => [
+      escapeCsv(t.dealId),
+      escapeCsv(t.positionId || ''),
+      escapeCsv(t.symbol),
+      escapeCsv(t.direction),
+      escapeCsv(t.entryPrice),
+      escapeCsv(t.exitPrice),
+      escapeCsv(t.lotSize),
+      escapeCsv(t.pnlUSD),
+      escapeCsv(t.pnlPct || 0),
+      escapeCsv(t.commission || 0),
+      escapeCsv(t.swap || 0),
+      escapeCsv(t.openTime instanceof Date ? t.openTime.toISOString() : t.openTime),
+      escapeCsv(t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime),
+      escapeCsv(t.durationMinutes || 0),
+      escapeCsv(t.runningBalance || 0),
+      escapeCsv(t.emotion || ''),
+      escapeCsv(t.grade || ''),
+      escapeCsv((t.tags || []).join('; ')),
+      escapeCsv(t.notes || ''),
+      escapeCsv((t.screenshots || []).length),
+      escapeCsv((t.screenshots || []).map(s => s.url).join(' | ')),
+    ].join(','));
+
+    const csvContent = [CSV_HEADERS.join(','), ...rows].join('\n');
+    const filename = `trade-journal-${new Date().toISOString().split('T')[0]}.csv`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'text/csv');
+    res.send(csvContent);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/export/status  Export/backup status metadata
+router.get('/export/status', auth, async (req, res) => {
+  try {
+    let tradeCount = 0;
+    let eventCount = 0;
+    let oldestTrade = null;
+    let newestTrade = null;
+    let dbMode = 'offline';
+
+    if (mongoose.connection.readyState === 1) {
+      dbMode = 'mongodb';
+      [tradeCount, eventCount] = await Promise.all([
+        Trade.countDocuments({ user: req.user.userId }),
+        AccountEvent.countDocuments({ user: req.user.userId }),
+      ]);
+      const [oldest, newest] = await Promise.all([
+        Trade.findOne({ user: req.user.userId }).sort({ closeTime: 1 }).select('closeTime').lean(),
+        Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 }).select('closeTime').lean(),
+      ]);
+      oldestTrade = oldest?.closeTime || null;
+      newestTrade = newest?.closeTime || null;
+    } else {
+      const userTrades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      tradeCount = userTrades.length;
+      eventCount = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId)).length;
+      if (userTrades.length > 0) {
+        const sorted = [...userTrades].sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+        oldestTrade = sorted[0]?.closeTime || null;
+        newestTrade = sorted[sorted.length - 1]?.closeTime || null;
+      }
+    }
+
+    // Check for pending offline screenshots
+    let pendingOfflineScreenshots = 0;
+    if (fs.existsSync(OFFLINE_SCREENSHOTS_DIR)) {
+      const tradeDirs = fs.readdirSync(OFFLINE_SCREENSHOTS_DIR);
+      for (const d of tradeDirs) {
+        const files = fs.readdirSync(path.join(OFFLINE_SCREENSHOTS_DIR, d)).catch(() => []);
+        if (Array.isArray(files)) {
+          pendingOfflineScreenshots += files.filter(f => !f.endsWith('.meta.json')).length;
+        }
+      }
+    }
+
+    // Local JSON backup file info
+    let localBackupInfo = null;
+    try {
+      if (fs.existsSync(LOCAL_DB_PATH)) {
+        const stat = fs.statSync(LOCAL_DB_PATH);
+        localBackupInfo = {
+          path: LOCAL_DB_PATH,
+          sizeBytes: stat.size,
+          lastModified: stat.mtime.toISOString(),
+        };
+      }
+    } catch (e) { /* ignore */ }
+
+    res.json({
+      dbMode,
+      tradeCount,
+      eventCount,
+      oldestTrade,
+      newestTrade,
+      pendingOfflineScreenshots,
+      localBackupInfo,
+      exportedAt: new Date().toISOString(),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

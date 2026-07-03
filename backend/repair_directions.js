@@ -1,95 +1,54 @@
-require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
 
-const LOCAL_DB_PATH = path.join(__dirname, 'local_trades.json');
+const file = path.join(__dirname, 'routes/trades.js');
+let content = fs.readFileSync(file, 'utf8');
 
-// 1. Repair local persistent JSON database
-function repairLocalJson() {
-  try {
-    if (fs.existsSync(LOCAL_DB_PATH)) {
-      const raw = fs.readFileSync(LOCAL_DB_PATH, 'utf8');
-      const trades = JSON.parse(raw);
-      
-      let correctedCount = 0;
-      const repaired = trades.map(t => {
-        const original = t.direction;
-        let corrected = original;
-        if (original === 'BUY') {
-          corrected = 'SELL';
-        } else if (original === 'SELL') {
-          corrected = 'BUY';
-        }
-        
-        if (corrected !== original) {
-          correctedCount++;
-        }
-        
-        return {
-          ...t,
-          direction: corrected
-        };
-      });
+const replacements = [
+  // Fix arrow function parameters that were messed up
+  [/\bit =>\b/g, 't =>'],
+  [/\bis =>\b/g, 's =>'],
+  [/\bin =>\b/g, 'n =>'],
+  [/\bid =>\b/g, 'd =>'],
 
-      fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(repaired, null, 2), 'utf8');
-      console.log(`✅ Repaired local JSON database: Inverted direction for ${correctedCount} trades.`);
-    } else {
-      console.log('ℹ️ No local persistent JSON database found to repair.');
-    }
-  } catch (err) {
-    console.error('❌ Failed to repair local JSON database:', err.message);
-  }
+  // Fix missing i's in specific variables
+  [/\bbggestWn\b/g, 'biggestWin'],
+  [/\bbggestLoss\b/g, 'biggestLoss'],
+  [/\bequtyCurve\b/g, 'equityCurve'],
+  [/\bavgDuratonMn\b/g, 'avgDurationMin'],
+  [/\bsharpeRato\b/g, 'sharpeRatio'],
+  [/\bnfnty\b/g, 'Infinity'],
+  [/\bFrday\b/g, 'Friday'],
+  [/\bvarance\b/g, 'variance'],
+  [/\bmetrcs\b/g, 'metrics'],
+  [/\bsesson\b/g, 'session'],
+  [/\bcomplance\b/g, 'compliance'],
+  [/\bproftFactor\b/g, 'profitFactor'],
+  [/\bwnLossRato\b/g, 'winLossRatio'],
+  [/\bavgWnUSD\b/g, 'avgWinUSD'],
+  [/\bmaxWnStreak\b/g, 'maxWinStreak'],
+  [/\bavgWn\b/g, 'avgWin'],
+  [/\bavgLoss\b/g, 'avgLoss'],
+  [/\brrRato\b/g, 'rrRatio'],
+  [/\bmaxConsecWns\b/g, 'maxConsecWins'],
+  [/\blargestWn\b/g, 'largestWin'],
+  [/\bsplt\b/g, 'split'],
+  [/\bgetTme\b/g, 'getTime'],
+  [/\bthrtyDaysAgo\b/g, 'thirtyDaysAgo'],
+  [/\bsxMonthsAgo\b/g, 'sixMonthsAgo'],
+  [/\bstartWth\b/g, 'startsWith'],
+  [/\bstartsWth\b/g, 'startsWith'],
+  [/\bMath\.mn\b/g, 'Math.min'],
+  [/\blotSze\b/g, 'lotSize'],
+  [/\bcommsson\b/g, 'commission']
+];
+
+for (const [pattern, replacement] of replacements) {
+  content = content.replace(pattern, replacement);
 }
 
-// 2. Repair MongoDB database
-async function repairMongo() {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) {
-    console.log('ℹ️ No MONGODB_URI found in env. Skipping MongoDB direction repair.');
-    return;
-  }
+// Special case: is + Number -> s + Number (since reduce(s, t) => s + ...)
+content = content.replace(/\bis \+/g, 's +');
 
-  try {
-    console.log('🔄 Connecting to MongoDB to repair trade directions...');
-    await mongoose.connect(mongoUri);
-    console.log('✅ Connected to MongoDB.');
-
-    const Trade = require('./models/Trade');
-    const allTrades = await Trade.find({});
-    console.log(`Fetched ${allTrades.length} trades from MongoDB.`);
-
-    let correctedCount = 0;
-    for (const trade of allTrades) {
-      const original = trade.direction;
-      let corrected = original;
-      if (original === 'BUY') {
-        corrected = 'SELL';
-      } else if (original === 'SELL') {
-        corrected = 'BUY';
-      }
-
-      if (corrected !== original) {
-        trade.direction = corrected;
-        await trade.save();
-        correctedCount++;
-      }
-    }
-
-    console.log(`✅ Repaired MongoDB database: Inverted direction for ${correctedCount} trades.`);
-  } catch (err) {
-    console.error('❌ Failed to repair MongoDB database:', err.message);
-  } finally {
-    await mongoose.disconnect();
-    console.log('🔌 Disconnected from MongoDB.');
-  }
-}
-
-// Run repairs
-async function run() {
-  repairLocalJson();
-  await repairMongo();
-  console.log('🎉 Direction repair process finished!');
-}
-
-run();
+fs.writeFileSync(file, content, 'utf8');
+console.log('Fixed trades.js with Node script');

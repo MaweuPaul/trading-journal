@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 
 const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
@@ -21,6 +22,9 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '25mb' }));
 
 app.use(morgan('dev'));
+
+// Serve offline screenshots as static files (for preview before Cloudinary upload)
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Routes
 app.use('/api/auth', authRouter);

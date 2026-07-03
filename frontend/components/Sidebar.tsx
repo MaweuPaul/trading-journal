@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive } from 'lucide-react';
 
 const navItems = [
   { href: '/',            label: 'Dashboard',    icon: LayoutDashboard },
@@ -10,6 +10,7 @@ const navItems = [
   { href: '/calendar',    label: 'Calendar',     icon: Calendar },
   { href: '/stats',       label: 'Analytics',    icon: BarChart2 },
   { href: '/performance', label: 'Performance',  icon: LineChart },
+  { href: '/archive',     label: 'Backup',       icon: HardDrive },
 ];
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {

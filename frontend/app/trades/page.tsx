@@ -44,6 +44,17 @@ interface Trade {
   tags?: string[];
   emotion?: string;
   grade?: string;
+  // Edge Coach
+  analysisGrade?: string;
+  executionGrade?: string;
+  plannedRR?: number | null;
+  exitReason?: string;
+  manuallyIntervened?: boolean | null;
+  confidenceRating?: number | null;
+  accountType?: string;
+  primarySetup?: string;
+  setupConfirmations?: string[];
+  executionChecklist?: ChecklistItem[];
   checklist?: ChecklistItem[];
   screenshots?: TradeScreenshot[];
 }
@@ -117,6 +128,17 @@ export default function TradesPage() {
   const [screenshotCaption, setScreenshotCaption] = useState('');
   const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
   const [previewScreenshot, setPreviewScreenshot] = useState<TradeScreenshot | null>(null);
+  // Edge Coach draft state
+  const [draftAnalysisGrade, setDraftAnalysisGrade] = useState('');
+  const [draftExecutionGrade, setDraftExecutionGrade] = useState('');
+  const [draftPlannedRR, setDraftPlannedRR] = useState('');
+  const [draftExitReason, setDraftExitReason] = useState('');
+  const [draftManuallyIntervened, setDraftManuallyIntervened] = useState<boolean | null>(null);
+  const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
+  const [draftAccountType, setDraftAccountType] = useState('');
+  const [draftPrimarySetup, setDraftPrimarySetup] = useState('');
+  const [draftSetupConfirmations, setDraftSetupConfirmations] = useState<string[]>([]);
+  const [draftExecChecklist, setDraftExecChecklist] = useState<ChecklistItem[]>([]);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -175,6 +197,27 @@ export default function TradesPage() {
     setTagInput('');
     setScreenshotCaption('');
     setPreviewScreenshot(null);
+    // Edge Coach
+    setDraftAnalysisGrade(trade.analysisGrade || '');
+    setDraftExecutionGrade(trade.executionGrade || '');
+    setDraftPlannedRR(trade.plannedRR != null ? String(trade.plannedRR) : '');
+    setDraftExitReason(trade.exitReason || '');
+    setDraftManuallyIntervened(trade.manuallyIntervened ?? null);
+    setDraftConfidence(trade.confidenceRating ?? null);
+    setDraftAccountType(trade.accountType || '');
+    setDraftPrimarySetup(trade.primarySetup || '');
+    setDraftSetupConfirmations(trade.setupConfirmations || []);
+    setDraftExecChecklist(
+      trade.executionChecklist && trade.executionChecklist.length > 0
+        ? trade.executionChecklist
+        : [
+            { rule: 'Entry as planned', complied: false },
+            { rule: 'Stop not moved', complied: false },
+            { rule: 'Target respected', complied: false },
+            { rule: 'Position size correct', complied: false },
+            { rule: 'No manual close out of fear', complied: false },
+          ]
+    );
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -213,7 +256,18 @@ export default function TradesPage() {
           emotion: draftEmotion,
           grade: draftGrade,
           tags: draftTags,
-          checklist: draftChecklist
+          checklist: draftChecklist,
+          // Edge Coach
+          analysisGrade: draftAnalysisGrade,
+          executionGrade: draftExecutionGrade,
+          plannedRR: draftPlannedRR === '' ? null : parseFloat(draftPlannedRR),
+          exitReason: draftExitReason,
+          manuallyIntervened: draftManuallyIntervened,
+          confidenceRating: draftConfidence,
+          accountType: draftAccountType,
+          primarySetup: draftPrimarySetup,
+          setupConfirmations: draftSetupConfirmations,
+          executionChecklist: draftExecChecklist,
         })
       });
       if (res.status === 401) {
@@ -614,7 +668,7 @@ export default function TradesPage() {
 
               {/* Trading Checklist Grade */}
               <div className="drawer-section">
-                <span className="drawer-section-title"><Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Setup Quality Grade</span>
+                <span className="drawer-section-title"><Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Setup Quality Grade (Legacy)</span>
                 <div className="grade-grid">
                   {GRADES.map(g => (
                     <button
@@ -627,6 +681,200 @@ export default function TradesPage() {
                   ))}
                 </div>
               </div>
+
+              {/* ── EDGE COACH: Execution Review ────────────────────────────── */}
+              <div className="drawer-section" style={{ background: 'var(--bg-elevated)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
+                <span className="drawer-section-title" style={{ color: '#8b5cf6' }}>
+                  <Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                  Edge Coach — Execution Review
+                </span>
+
+                {/* Account Type */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Account Type</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {(['', 'live', 'demo'] as const).map(v => (
+                      <button key={v} onClick={() => setDraftAccountType(v)}
+                        style={{
+                          padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                          border: '1px solid var(--border)', cursor: 'pointer',
+                          background: draftAccountType === v ? (v === 'live' ? '#10b981' : v === 'demo' ? '#8b5cf6' : 'var(--accent)') : 'var(--bg-surface)',
+                          color: draftAccountType === v ? '#fff' : 'var(--text-muted)',
+                          fontFamily: 'var(--font-sans)',
+                        }}>
+                        {v === '' ? 'Not Set' : v === 'live' ? '📊 Live' : '🎮 Demo'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Analysis Grade + Execution Grade */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  {[
+                    { label: 'Analysis Grade', val: draftAnalysisGrade, set: setDraftAnalysisGrade },
+                    { label: 'Execution Grade', val: draftExecutionGrade, set: setDraftExecutionGrade },
+                  ].map(({ label, val, set }) => (
+                    <div key={label}>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>{label}</div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {GRADES.map(g => (
+                          <button key={g} onClick={() => set(val === g ? '' : g)}
+                            style={{
+                              flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                              border: '1px solid var(--border)', cursor: 'pointer',
+                              background: val === g ? ({ A: '#10b981', B: '#3b82f6', C: '#f59e0b', D: '#f97316', F: '#ef4444' }[g] || 'var(--accent)') : 'var(--bg-surface)',
+                              color: val === g ? '#fff' : 'var(--text-muted)',
+                              fontFamily: 'var(--font-sans)',
+                            }}>{g}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Primary Setup */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Primary Setup</div>
+                  <select
+                    value={draftPrimarySetup}
+                    onChange={e => setDraftPrimarySetup(e.target.value)}
+                    style={{
+                      width: '100%', padding: '7px 10px', borderRadius: 8,
+                      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                      color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
+                    }}
+                  >
+                    <option value="">— Select setup —</option>
+                    {['HTF Supply', 'HTF Demand', 'Liquidity Sweep', 'Trendline Break', 'IFVG', 'FVG', 'ORB', 'MSS', 'BOS', 'Displacement', 'Other'].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Setup Confirmations */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Setup Confirmations</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {['IFVG', 'FVG', 'Liquidity Sweep', 'Trendline Break', 'MSS', 'BOS', 'HTF Zone', 'Displacement', 'Session', 'News Catalyst'].map(c => {
+                      const active = draftSetupConfirmations.includes(c);
+                      return (
+                        <button key={c} onClick={() => setDraftSetupConfirmations(
+                          active ? draftSetupConfirmations.filter(x => x !== c) : [...draftSetupConfirmations, c]
+                        )} style={{
+                          padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                          border: `1px solid ${active ? '#6366f1' : 'var(--border)'}`,
+                          background: active ? '#6366f120' : 'var(--bg-surface)',
+                          color: active ? '#818cf8' : 'var(--text-muted)',
+                          cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                        }}>{c}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Planned R:R + Confidence */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Planned R:R</div>
+                    <input
+                      type="number" step="0.1" min="0" placeholder="e.g. 3.5"
+                      value={draftPlannedRR}
+                      onChange={e => setDraftPlannedRR(e.target.value)}
+                      style={{
+                        width: '100%', padding: '7px 10px', borderRadius: 8,
+                        background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                        color: 'var(--text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    {/* Missed profit display */}
+                    {draftPlannedRR && !['TP', 'SL', ''].includes(draftExitReason) && draftExitReason && selectedTrade.pnlUSD > 0 && (
+                      <div style={{ marginTop: 5, padding: '6px 8px', background: '#ef444415', borderRadius: 6, fontSize: 11, color: '#ef4444' }}>
+                        ⚠️ Planned {draftPlannedRR}R · Missed ~{(parseFloat(draftPlannedRR) - (selectedTrade.pnlPct / 1)).toFixed(1)}R
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Pre-Trade Confidence: {draftConfidence ?? '—'}/10</div>
+                    <input
+                      type="range" min="1" max="10" step="1"
+                      value={draftConfidence ?? 5}
+                      onChange={e => setDraftConfidence(Number(e.target.value))}
+                      style={{ width: '100%', accentColor: '#6366f1' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)' }}>
+                      <span>1 – Uncertain</span><span>10 – Confident</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Exit Reason + Manual Intervention */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Exit Reason</div>
+                    <select
+                      value={draftExitReason}
+                      onChange={e => setDraftExitReason(e.target.value)}
+                      style={{
+                        width: '100%', padding: '7px 10px', borderRadius: 8,
+                        background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                        color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
+                      }}
+                    >
+                      <option value="">— Select —</option>
+                      {['TP', 'SL', 'Fear', 'Revenge', 'News', 'ManualClose', 'FOMO', 'PartialClose', 'Other'].map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Manually Intervened?</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {([{ v: true, label: 'Yes', color: '#ef4444' }, { v: false, label: 'No', color: '#10b981' }, { v: null, label: '?', color: 'var(--text-muted)' }] as const).map(({ v, label, color }) => (
+                        <button key={label} onClick={() => setDraftManuallyIntervened(v as any)}
+                          style={{
+                            flex: 1, padding: '6px 0', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                            border: `1px solid ${draftManuallyIntervened === v ? color : 'var(--border)'}`,
+                            background: draftManuallyIntervened === v ? `${color}20` : 'var(--bg-surface)',
+                            color: draftManuallyIntervened === v ? color : 'var(--text-muted)',
+                            cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                          }}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Execution Checklist */}
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Execution Checklist (post-trade)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {draftExecChecklist.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className={`checklist-item ${item.complied ? 'checked' : ''}`}
+                        onClick={() => {
+                          const copy = [...draftExecChecklist];
+                          copy[idx] = { ...copy[idx], complied: !copy[idx].complied };
+                          setDraftExecChecklist(copy);
+                        }}
+                      >
+                        <div className="checklist-checkbox">
+                          {item.complied && <span style={{ fontSize: 10 }}>✓</span>}
+                        </div>
+                        <span className="checklist-label">{item.rule}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {draftExecChecklist.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                      Plan adherence: <strong style={{ color: (() => { const pct = (draftExecChecklist.filter(i => i.complied).length / draftExecChecklist.length) * 100; return pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'; })() }}>
+                        {Math.round((draftExecChecklist.filter(i => i.complied).length / draftExecChecklist.length) * 100)}%
+                      </strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* ── END EDGE COACH ──────────────────────────────────────────── */}
 
               {/* Trader Emotion / Mindset */}
               <div className="drawer-section">

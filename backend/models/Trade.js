@@ -16,15 +16,41 @@ const tradeSchema = new mongoose.Schema({
   closeTime: { type: Date, required: true },
   durationMinutes: { type: Number, default: 0 },
   runningBalance: { type: Number, default: 0 },     // account balance after trade
-  notes: { type: String, default: "" },             // trader journal notes
-  tags: [{ type: String }],                         // custom tags, e.g. #FOMO, #double-top
+  notes: { type: String, default: '' },             // trader journal notes
+  tags: [{ type: String }],                         // custom tags e.g. #FOMO, #double-top
   emotion: { type: String, enum: ['Calm', 'Anxious', 'Greedy', 'Fearful', 'Disciplined', 'FOMO', ''], default: '' },
-  grade: { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' },
-  checklist: [{ rule: String, complied: Boolean }], // rule compliance checklist
+  grade: { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' }, // legacy - kept for backward compat
+
+  // -- Edge Coach: Grades ---------------------------------------------------
+  analysisGrade:    { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' }, // quality of setup reading
+  executionGrade:   { type: String, enum: ['A', 'B', 'C', 'D', 'F', ''], default: '' }, // quality of execution vs plan
+
+  // -- Edge Coach: Exit Analysis --------------------------------------------
+  plannedRR:          { type: Number, default: null },  // planned R:R before entry (e.g. 3.5)
+  exitReason:         { type: String, enum: ['TP', 'SL', 'Fear', 'Revenge', 'News', 'ManualClose', 'FOMO', 'PartialClose', 'Other', ''], default: '' },
+  manuallyIntervened: { type: Boolean, default: null }, // did you modify SL/TP or close manually after entry?
+
+  // -- Edge Coach: Pre-Trade Self-Assessment --------------------------------
+  confidenceRating: { type: Number, min: 1, max: 10, default: null }, // 1-10 pre-trade confidence
+  accountType:      { type: String, enum: ['live', 'demo', ''], default: '' }, // demo vs live tracking
+
+  // -- Edge Coach: Setup Builder --------------------------------------------
+  primarySetup:       { type: String, default: '' }, // e.g. 'HTF Supply', 'HTF Demand', 'ORB'
+  setupConfirmations: [{ type: String }],            // e.g. ['IFVG', 'Liquidity Sweep', 'Trendline Break']
+
+  // -- Edge Coach: Post-Trade Execution Checklist ---------------------------
+  executionChecklist: [{
+    rule:     String,   // e.g. 'Entry as planned', 'Stop not moved', 'Target respected'
+    complied: Boolean,
+  }],
+
+  // -- Pre-trade entry checklist --------------------------------------------
+  checklist: [{ rule: String, complied: Boolean }],
+
   screenshots: [{
-    url: { type: String, required: true },
-    publicId: { type: String, required: true },
-    caption: { type: String, default: '' },
+    url:        { type: String, required: true },
+    publicId:   { type: String, required: true },
+    caption:    { type: String, default: '' },
     uploadedAt: { type: Date, default: Date.now },
   }],
   synced: { type: Date, default: Date.now },

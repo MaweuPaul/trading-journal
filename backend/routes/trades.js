@@ -889,28 +889,47 @@ router.get('/trades', auth, async (req, res) => {
   }
 });
 
-// PUT /api/trades/:d  update journal data (notes, tags, emotion, grade, checklist)
+// PUT /api/trades/:id  update journal data (notes, tags, emotion, grade, checklist + Edge Coach fields)
 router.put('/trades/:id', auth, async (req, res) => {
   try {
-    const { notes, tags, emotion, grade, checklist } = req.body;
+    const {
+      notes, tags, emotion, grade, checklist,
+      // Edge Coach fields
+      analysisGrade, executionGrade,
+      plannedRR, exitReason, manuallyIntervened,
+      confidenceRating, accountType,
+      primarySetup, setupConfirmations,
+      executionChecklist,
+    } = req.body;
 
-    // Database Offlne Fallback
-    if (mongoose.connection.readyState !== 1) {
-      const tradeIdx = inMemoryTrades.findIndex(t => t._id === req.params.id);
-      if (tradeIdx === -1) {
-        return res.status(404).json({ error: 'Trade not found' });
-      }
-
-      const t = inMemoryTrades[tradeIdx];
+    // Helper to apply all fields to a trade object
+    function applyFields(t) {
       if (notes !== undefined) t.notes = notes;
       if (tags !== undefined) t.tags = Array.isArray(tags) ? tags : [];
       if (emotion !== undefined) t.emotion = emotion;
       if (grade !== undefined) t.grade = grade;
       if (checklist !== undefined) t.checklist = Array.isArray(checklist) ? checklist : [];
+      // Edge Coach
+      if (analysisGrade !== undefined) t.analysisGrade = analysisGrade;
+      if (executionGrade !== undefined) t.executionGrade = executionGrade;
+      if (plannedRR !== undefined) t.plannedRR = plannedRR === '' ? null : Number(plannedRR) || null;
+      if (exitReason !== undefined) t.exitReason = exitReason;
+      if (manuallyIntervened !== undefined) t.manuallyIntervened = manuallyIntervened === null ? null : Boolean(manuallyIntervened);
+      if (confidenceRating !== undefined) t.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
+      if (accountType !== undefined) t.accountType = accountType;
+      if (primarySetup !== undefined) t.primarySetup = primarySetup;
+      if (setupConfirmations !== undefined) t.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
+      if (executionChecklist !== undefined) t.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
+      return t;
+    }
 
-      inMemoryTrades[tradeIdx] = t;
+    // Database Offline Fallback
+    if (mongoose.connection.readyState !== 1) {
+      const tradeIdx = inMemoryTrades.findIndex(t => t._id === req.params.id);
+      if (tradeIdx === -1) return res.status(404).json({ error: 'Trade not found' });
+      inMemoryTrades[tradeIdx] = applyFields(inMemoryTrades[tradeIdx]);
       saveLocalDatabase();
-      return res.json(t);
+      return res.json(inMemoryTrades[tradeIdx]);
     }
 
     const update = {};
@@ -919,31 +938,32 @@ router.put('/trades/:id', auth, async (req, res) => {
     if (emotion !== undefined) update.emotion = emotion;
     if (grade !== undefined) update.grade = grade;
     if (checklist !== undefined) update.checklist = Array.isArray(checklist) ? checklist : [];
+    if (analysisGrade !== undefined) update.analysisGrade = analysisGrade;
+    if (executionGrade !== undefined) update.executionGrade = executionGrade;
+    if (plannedRR !== undefined) update.plannedRR = plannedRR === '' ? null : Number(plannedRR) || null;
+    if (exitReason !== undefined) update.exitReason = exitReason;
+    if (manuallyIntervened !== undefined) update.manuallyIntervened = manuallyIntervened === null ? null : Boolean(manuallyIntervened);
+    if (confidenceRating !== undefined) update.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
+    if (accountType !== undefined) update.accountType = accountType;
+    if (primarySetup !== undefined) update.primarySetup = primarySetup;
+    if (setupConfirmations !== undefined) update.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
+    if (executionChecklist !== undefined) update.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
 
     const updated = await Trade.findOneAndUpdate(
       { _id: req.params.id, user: req.user.userId },
       update,
       { new: true }
     );
-    if (!updated) {
-      return res.status(404).json({ error: 'Trade not found' });
-    }
+    if (!updated) return res.status(404).json({ error: 'Trade not found' });
 
-    // Mrror to inMemoryTrades and local JSON
+    // Mirror to inMemoryTrades and local JSON
     const tradeIdx = inMemoryTrades.findIndex(t => String(t._id) === String(req.params.id));
     if (tradeIdx !== -1) {
-      const t = inMemoryTrades[tradeIdx];
-      if (notes !== undefined) t.notes = notes;
-      if (tags !== undefined) t.tags = Array.isArray(tags) ? tags : [];
-      if (emotion !== undefined) t.emotion = emotion;
-      if (grade !== undefined) t.grade = grade;
-      if (checklist !== undefined) t.checklist = Array.isArray(checklist) ? checklist : [];
-      inMemoryTrades[tradeIdx] = t;
+      inMemoryTrades[tradeIdx] = applyFields(inMemoryTrades[tradeIdx]);
       saveLocalDatabase();
     }
 
     res.json(updated);
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1819,6 +1839,246 @@ router.get('/export/status', auth, async (req, res) => {
       exportedAt: new Date().toISOString(),
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── EDGE COACH ROUTE ─────────────────────────────────────────────────────────
+// GET /api/coach  behavioral analytics: missed profit, grade gap, exit reasons,
+//                confidence vs win rate, plan adherence, manual intervention, demo vs live
+router.get('/coach', auth, async (req, res) => {
+  try {
+    const { range } = req.query;
+    const fromDate = getRangeStart(range);
+    let trades;
+
+    if (mongoose.connection.readyState === 1) {
+      const q = { user: req.user.userId };
+      if (fromDate) q.closeTime = { $gte: fromDate };
+      trades = await Trade.find(q).sort({ closeTime: -1 }).lean();
+    } else {
+      trades = inMemoryTrades
+        .filter(t => {
+          if (!isOfflineTradeVisibleToUser(t, req.user.userId)) return false;
+          if (fromDate && new Date(t.closeTime) < fromDate) return false;
+          return true;
+        })
+        .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
+    }
+
+    if (trades.length === 0) {
+      return res.json({
+        earlyExits: { count: 0, totalMissedRR: 0, estimatedMissedUSD: 0, trades: [] },
+        gradeGap: { avgAnalysisGrade: null, avgExecutionGrade: null, gapScore: 0 },
+        exitReasonBreakdown: [],
+        confidenceVsWinRate: [],
+        planAdherence: { score: null, trades: 0 },
+        manualIntervention: { interventionCount: 0, cleanCount: 0, interventionAvgPnL: 0, cleanAvgPnL: 0, interventionAvgRR: 0, cleanAvgRR: 0 },
+        demoVsLive: { demo: null, live: null },
+        setupAnalytics: [],
+        totalTrades: 0,
+      });
+    }
+
+    const GRADE_POINTS = { 'A': 5, 'B': 4, 'C': 3, 'D': 2, 'F': 1, '': null };
+    function gradeAvg(arr) {
+      const valid = arr.filter(g => g && GRADE_POINTS[g] != null);
+      if (!valid.length) return null;
+      const avg = valid.reduce((s, g) => s + GRADE_POINTS[g], 0) / valid.length;
+      if (avg >= 4.5) return 'A';
+      if (avg >= 3.5) return 'B';
+      if (avg >= 2.5) return 'C';
+      if (avg >= 1.5) return 'D';
+      return 'F';
+    }
+    function gradeScore(arr) {
+      const valid = arr.filter(g => g && GRADE_POINTS[g] != null);
+      if (!valid.length) return null;
+      return parseFloat((valid.reduce((s, g) => s + GRADE_POINTS[g], 0) / valid.length).toFixed(2));
+    }
+
+    // ── 1. Early Exits / Missed Profit ───────────────────────────────────────
+    const earlyExitTrades = trades.filter(t =>
+      t.plannedRR != null &&
+      !['TP', 'SL', ''].includes(t.exitReason || '') &&
+      t.exitReason
+    );
+    // Calculate actual RR from pnlPct (pnlPct is % of balance)
+    // Missed RR = plannedRR - actualRR (estimated from pnlPct / avg risk %)
+    // We estimate actualRR from pnlPct. For USD missed we use (missedRR / actualRR) * actualPnL
+    let totalMissedRR = 0;
+    let estimatedMissedUSD = 0;
+    const earlyExitDetails = earlyExitTrades.map(t => {
+      // Estimate actual RR: if trade is profitable, actual RR = pnlUSD / (pnlUSD / pnlPct * risk%) - rough estimate
+      // Better: compare pnlPct to planned RR to estimate the % achieved
+      const actualRR = t.pnlUSD > 0 && t.plannedRR > 0
+        ? parseFloat((t.pnlPct > 0 ? (t.pnlPct / (Math.abs(t.pnlPct) / t.plannedRR || 1)) : 0).toFixed(2))
+        : null;
+      const missedRR = t.plannedRR - (actualRR || 0);
+      // Estimate missed USD: missedRR / plannedRR * plannedUSD (if we had hit target)
+      const estimatedTargetUSD = t.pnlUSD > 0 ? (t.pnlUSD / (actualRR || t.plannedRR)) * t.plannedRR : 0;
+      const missedUSD = Math.max(0, estimatedTargetUSD - t.pnlUSD);
+      totalMissedRR += missedRR > 0 ? missedRR : 0;
+      estimatedMissedUSD += missedUSD;
+      return {
+        _id: String(t._id),
+        symbol: t.symbol,
+        direction: t.direction,
+        closeTime: t.closeTime,
+        pnlUSD: t.pnlUSD,
+        plannedRR: t.plannedRR,
+        exitReason: t.exitReason,
+        missedRR: parseFloat(Math.max(0, missedRR).toFixed(2)),
+        estimatedMissedUSD: parseFloat(missedUSD.toFixed(2)),
+      };
+    });
+
+    // ── 2. Grade Gap ─────────────────────────────────────────────────────────
+    const analysisGrades = trades.map(t => t.analysisGrade).filter(Boolean);
+    const executionGrades = trades.map(t => t.executionGrade).filter(Boolean);
+    const avgAnalysisScore = gradeScore(analysisGrades);
+    const avgExecutionScore = gradeScore(executionGrades);
+    const gapScore = avgAnalysisScore != null && avgExecutionScore != null
+      ? parseFloat((avgAnalysisScore - avgExecutionScore).toFixed(2))
+      : null;
+
+    // ── 3. Exit Reason Breakdown ──────────────────────────────────────────────
+    const exitMap = {};
+    for (const t of trades) {
+      const r = t.exitReason || 'Not Set';
+      if (!exitMap[r]) exitMap[r] = { reason: r, count: 0, wins: 0, totalMissedRR: 0 };
+      exitMap[r].count++;
+      if (t.pnlUSD > 0) exitMap[r].wins++;
+    }
+    const exitReasonBreakdown = Object.values(exitMap)
+      .map(r => ({ ...r, winRate: r.count > 0 ? parseFloat(((r.wins / r.count) * 100).toFixed(1)) : 0 }))
+      .sort((a, b) => b.count - a.count);
+
+    // ── 4. Confidence vs Win Rate ─────────────────────────────────────────────
+    const confidenceMap = {};
+    for (const t of trades) {
+      if (t.confidenceRating == null) continue;
+      const c = String(t.confidenceRating);
+      if (!confidenceMap[c]) confidenceMap[c] = { confidence: t.confidenceRating, count: 0, wins: 0 };
+      confidenceMap[c].count++;
+      if (t.pnlUSD > 0) confidenceMap[c].wins++;
+    }
+    const confidenceVsWinRate = Object.values(confidenceMap)
+      .map(c => ({ ...c, winRate: c.count > 0 ? parseFloat(((c.wins / c.count) * 100).toFixed(1)) : 0 }))
+      .sort((a, b) => a.confidence - b.confidence);
+
+    // ── 5. Plan Adherence (execution checklist compliance) ────────────────────
+    let execTotal = 0, execComplied = 0;
+    const tradesWithExecChecklist = trades.filter(t => t.executionChecklist && t.executionChecklist.length > 0);
+    for (const t of tradesWithExecChecklist) {
+      for (const item of t.executionChecklist) {
+        execTotal++;
+        if (item.complied) execComplied++;
+      }
+    }
+    const planAdherenceScore = execTotal > 0 ? parseFloat(((execComplied / execTotal) * 100).toFixed(1)) : null;
+
+    // ── 6. Manual Intervention Stats ─────────────────────────────────────────
+    const intervened = trades.filter(t => t.manuallyIntervened === true);
+    const clean      = trades.filter(t => t.manuallyIntervened === false);
+    const avgPnL = arr => arr.length > 0 ? parseFloat((arr.reduce((s, t) => s + t.pnlUSD, 0) / arr.length).toFixed(2)) : 0;
+    const avgRROf = arr => {
+      const valid = arr.filter(t => t.plannedRR != null && t.plannedRR > 0);
+      return valid.length > 0
+        ? parseFloat((valid.reduce((s, t) => s + (t.pnlPct / (t.pnlPct / t.plannedRR || 1)), 0) / valid.length).toFixed(2))
+        : null;
+    };
+    const winRateOf = arr => arr.length > 0 ? parseFloat(((arr.filter(t => t.pnlUSD > 0).length / arr.length) * 100).toFixed(1)) : 0;
+
+    // ── 7. Demo vs Live Comparison ────────────────────────────────────────────
+    function buildAccountStats(arr) {
+      if (!arr.length) return null;
+      const wins = arr.filter(t => t.pnlUSD > 0);
+      const grossProfit = wins.reduce((s, t) => s + t.pnlUSD, 0);
+      const grossLoss = Math.abs(arr.filter(t => t.pnlUSD < 0).reduce((s, t) => s + t.pnlUSD, 0));
+      return {
+        tradeCount: arr.length,
+        winRate: parseFloat(((wins.length / arr.length) * 100).toFixed(1)),
+        avgPnL: parseFloat((arr.reduce((s, t) => s + t.pnlUSD, 0) / arr.length).toFixed(2)),
+        profitFactor: grossLoss > 0 ? parseFloat((grossProfit / grossLoss).toFixed(2)) : grossProfit > 0 ? 999 : 0,
+        planAdherence: (() => {
+          let tot = 0, ok = 0;
+          for (const t of arr) {
+            if (!t.executionChecklist) continue;
+            for (const item of t.executionChecklist) { tot++; if (item.complied) ok++; }
+          }
+          return tot > 0 ? parseFloat(((ok / tot) * 100).toFixed(1)) : null;
+        })(),
+      };
+    }
+    const liveArr  = trades.filter(t => t.accountType === 'live');
+    const demoArr  = trades.filter(t => t.accountType === 'demo');
+    const mixedArr = trades.filter(t => !t.accountType || t.accountType === '');
+
+    // ── 8. Setup Analytics ────────────────────────────────────────────────────
+    const setupMap = {};
+    for (const t of trades) {
+      const key = t.primarySetup || 'Untagged';
+      if (!setupMap[key]) setupMap[key] = { setup: key, count: 0, wins: 0, totalPnL: 0, totalRR: 0, rrCount: 0 };
+      setupMap[key].count++;
+      if (t.pnlUSD > 0) setupMap[key].wins++;
+      setupMap[key].totalPnL += t.pnlUSD;
+      if (t.plannedRR) { setupMap[key].totalRR += t.plannedRR; setupMap[key].rrCount++; }
+    }
+    const setupAnalytics = Object.values(setupMap)
+      .map(s => ({
+        setup: s.setup,
+        tradeCount: s.count,
+        winRate: parseFloat(((s.wins / s.count) * 100).toFixed(1)),
+        totalPnL: parseFloat(s.totalPnL.toFixed(2)),
+        avgPnL: parseFloat((s.totalPnL / s.count).toFixed(2)),
+        avgPlannedRR: s.rrCount > 0 ? parseFloat((s.totalRR / s.rrCount).toFixed(2)) : null,
+      }))
+      .filter(s => s.setup !== 'Untagged')
+      .sort((a, b) => b.winRate - a.winRate);
+
+    res.json({
+      totalTrades: trades.length,
+      earlyExits: {
+        count: earlyExitDetails.length,
+        totalMissedRR: parseFloat(totalMissedRR.toFixed(2)),
+        estimatedMissedUSD: parseFloat(estimatedMissedUSD.toFixed(2)),
+        trades: earlyExitDetails.slice(0, 10), // last 10 early exits
+      },
+      gradeGap: {
+        avgAnalysisGrade: gradeAvg(analysisGrades),
+        avgExecutionGrade: gradeAvg(executionGrades),
+        avgAnalysisScore,
+        avgExecutionScore,
+        gapScore,
+        analysisCount: analysisGrades.length,
+        executionCount: executionGrades.length,
+      },
+      exitReasonBreakdown,
+      confidenceVsWinRate,
+      planAdherence: {
+        score: planAdherenceScore,
+        tradesAssessed: tradesWithExecChecklist.length,
+        totalRules: execTotal,
+        compliedRules: execComplied,
+      },
+      manualIntervention: {
+        interventionCount: intervened.length,
+        cleanCount: clean.length,
+        untaggedCount: mixedArr.length,
+        interventionWinRate: winRateOf(intervened),
+        cleanWinRate: winRateOf(clean),
+        interventionAvgPnL: avgPnL(intervened),
+        cleanAvgPnL: avgPnL(clean),
+      },
+      demoVsLive: {
+        live: buildAccountStats(liveArr),
+        demo: buildAccountStats(demoArr),
+      },
+      setupAnalytics,
+    });
+  } catch (err) {
+    console.error('Coach route error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

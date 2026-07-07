@@ -102,6 +102,7 @@ export default function DashboardPage() {
   const [eventNote, setEventNote] = useState('');
   const [eventBusy, setEventBusy] = useState(false);
   const [eventMessage, setEventMessage] = useState('');
+  const [groupBySetup, setGroupBySetup] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -110,7 +111,7 @@ export default function DashboardPage() {
       const headers = { 'Authorization': `Bearer ${token}` };
 
       const [s, b, c] = await Promise.all([
-        fetch(`${API}/stats?range=${range}`, { headers }).then(r => {
+        fetch(`${API}/stats?range=${range}&groupBySetup=${groupBySetup}`, { headers }).then(r => {
           if (r.status === 401) {
             localStorage.removeItem('token');
             router.push('/login');
@@ -143,15 +144,17 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, router]);
+  }, [range, groupBySetup, router]);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      router.push('/login');
-      return;
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        router.push('/login');
+        return;
+      }
+      setHasToken(true);
     }
-    setHasToken(true);
     loadDashboard();
     const t = setInterval(loadDashboard, 30000);
     return () => clearInterval(t);
@@ -477,6 +480,21 @@ export default function DashboardPage() {
             </button>
 
             {/* Time Range Selector Tool */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
+              <select
+                value={String(groupBySetup)}
+                onChange={e => { setGroupBySetup(e.target.value === 'true'); setLoading(true); }}
+                style={{
+                  border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                  color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
+                }}
+              >
+                <option value="false">🎫 Tickets (Individual)</option>
+                <option value="true">🔁 Setups (Grouped Re-Entries)</option>
+              </select>
+            </div>
+
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
               <select

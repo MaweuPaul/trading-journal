@@ -1537,16 +1537,63 @@ router.get('/stats', auth, async (req, res) => {
         }
       }
       trades = await Trade.find(query).sort({ closeTime: 1 });
-    } if (trades.length === 0) {
-      return res.json({
-        totalTrades: 0, winRate: 0, profitFactor: 0, netPnL: 0,
-        biggestWin: 0, biggestLoss: 0, currentDrawdown: 0,
-        equityCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
-        avgDurationMin: 0,
-        avgWinUSD: 0, avgLossUSD: 0, winLossRatio: 0, expectancyUSD: 0,
-        maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
-        bySession: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0
-      });
+    }
+
+    // Optional grouping by trade setup
+    const groupBySetup = req.query.groupBySetup === 'true';
+    if (groupBySetup) {
+      const groups = new Map();
+      for (const t of trades) {
+        const plain = typeof t.toObject === 'function' ? t.toObject() : t;
+        // Group trades by their tradeGroup ID, fallback to using their own _id
+        const key = plain.tradeGroup || String(plain._id);
+        if (!groups.has(key)) {
+          groups.set(key, []);
+        }
+        groups.get(key).push(plain);
+      }
+
+      const groupedTrades = [];
+      for (const [key, items] of groups.entries()) {
+        // Sort items inside group chronologically
+        items.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+        const first = items[0];
+        const last = items[items.length - 1];
+
+        // Sum values across group
+        const totalPnl = items.reduce((s, x) => s + (x.pnlUSD || 0), 0);
+        const totalComm = items.reduce((s, x) => s + (x.commission || 0), 0);
+        const totalSwap = items.reduce((s, x) => s + (x.swap || 0), 0);
+        const totalDuration = items.reduce((s, x) => s + (x.durationMinutes || 0), 0);
+
+        // Group acts as a single combined trade setup
+        groupedTrades.push({
+          _id: key,
+          dealId: first.dealId,
+          symbol: first.symbol,
+          direction: first.direction,
+          entryPrice: first.entryPrice,
+          exitPrice: last.exitPrice,
+          lotSize: items.reduce((s, x) => s + (x.lotSize || 0), 0),
+          pnlUSD: totalPnl,
+          commission: totalComm,
+          swap: totalSwap,
+          openTime: first.openTime,
+          closeTime: last.closeTime,
+          durationMinutes: totalDuration,
+          runningBalance: last.runningBalance,
+          notes: first.notes,
+          grade: first.grade,
+          analysisGrade: first.analysisGrade,
+          executionGrade: first.executionGrade,
+          tags: Array.from(new Set(items.flatMap(x => x.tags || []))),
+          emotion: first.emotion,
+          checklist: first.checklist,
+        });
+      }
+      // Re-sort chronologically by latest closeTime in each group
+      groupedTrades.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+      trades = groupedTrades;
     }
 
     const wins = trades.filter(t => t.pnlUSD > 0);

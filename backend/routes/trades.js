@@ -584,6 +584,108 @@ router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
   }
 });
 
+// POST /api/maintenance/recover-screenshots
+// After a clear + resync, re-attach Cloudinary screenshots to freshly-created trades
+// by matching on the dealId stored in each image's Cloudinary context tags.
+router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
+  if (!CLOUDINARY_READY) {
+    return res.status(400).json({ error: 'Cloudinary is not configured on this server.' });
+  }
+
+  try {
+    const userId = String(req.user.userId);
+    const prefix = `trade-journal/${userId}/`;
+
+    // Collect all image resources for this user from Cloudinary (paginate with next_cursor)
+    let allResources = [];
+    let nextCursor = null;
+    do {
+      const params = {
+        type: 'upload',
+        prefix,
+        max_results: 500,
+        context: true,       // include context metadata (dealId lives here)
+        ...(nextCursor ? { next_cursor: nextCursor } : {}),
+      };
+      const result = await cloudinary.api.resources(params);
+      allResources = allResources.concat(result.resources || []);
+      nextCursor = result.next_cursor || null;
+    } while (nextCursor);
+
+    if (allResources.length === 0) {
+      return res.json({ recovered: 0, skipped: 0, errors: 0, total: 0, message: 'No images found in Cloudinary for this account.' });
+    }
+
+    let recovered = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const resource of allResources) {
+      try {
+        // Extract dealId from context tags (stored as `dealId=xxx` pipe-separated string)
+        const ctx = resource.context?.custom || {};
+        const dealId = ctx.dealId || null;
+        if (!dealId) { skipped++; continue; }
+
+        const imageUrl = resource.secure_url;
+        const publicId = resource.public_id;
+        const caption = ctx.caption || '';
+
+        if (mongoose.connection.readyState !== 1) {
+          // Offline mode: update inMemoryTrades
+          const idx = inMemoryTrades.findIndex(
+            t => isOfflineTradeVisibleToUser(t, userId) && String(t.dealId) === String(dealId)
+          );
+          if (idx === -1) { skipped++; continue; }
+
+          if (!Array.isArray(inMemoryTrades[idx].screenshots)) inMemoryTrades[idx].screenshots = [];
+          const alreadyLinked = inMemoryTrades[idx].screenshots.some(s => s.publicId === publicId);
+          if (alreadyLinked) { skipped++; continue; }
+
+          inMemoryTrades[idx].screenshots.push({
+            url: imageUrl,
+            publicId,
+            caption,
+            uploadedAt: resource.created_at || new Date().toISOString(),
+          });
+          recovered++;
+        } else {
+          // MongoDB mode
+          const trade = await Trade.findOne({ user: req.user.userId, dealId: String(dealId) });
+          if (!trade) { skipped++; continue; }
+
+          const alreadyLinked = trade.screenshots.some(s => s.publicId === publicId);
+          if (alreadyLinked) { skipped++; continue; }
+
+          trade.screenshots.push({
+            url: imageUrl,
+            publicId,
+            caption,
+            uploadedAt: resource.created_at ? new Date(resource.created_at) : new Date(),
+          });
+          await trade.save();
+          syncLocalTrade(trade);
+          recovered++;
+        }
+      } catch (itemErr) {
+        console.error('[RecoverScreenshots] Error processing resource:', resource.public_id, itemErr.message);
+        errors++;
+      }
+    }
+
+    if (recovered > 0 && mongoose.connection.readyState !== 1) saveLocalDatabase();
+
+    const message = recovered > 0
+      ? `Recovered ${recovered} screenshot(s). ${skipped} already linked or no matching trade. ${errors > 0 ? `${errors} error(s).` : ''}`
+      : `No screenshots needed recovery. ${skipped} already linked or no matching trade found.`;
+
+    res.json({ recovered, skipped, errors, total: allResources.length, message });
+  } catch (err) {
+    console.error('[RecoverScreenshots] Fatal error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/account-events  deposits, withdrawals, and account adjustments
 router.get('/account-events', auth, async (req, res) => {
   try {

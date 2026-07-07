@@ -8,7 +8,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, Activity,
   Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
-  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
+  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X, Image
 } from 'lucide-react';
 
 const API = '/api';
@@ -157,7 +157,7 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, [loadDashboard, router]);
 
-  const callMaintenance = async (action: 'dedupe' | 'resync' | 'clear' | 'fixbalances') => {
+  const callMaintenance = async (action: 'dedupe' | 'resync' | 'clear' | 'fixbalances' | 'recoverscreenshots') => {
     const token = localStorage.getItem('token');
     if (!token) return;
 
@@ -166,6 +166,29 @@ export default function DashboardPage() {
         'Clear all synced trades from the database? Your MT5 history stays safe, but the dashboard will be empty until sync.py imports again.'
       );
       if (!confirmed) return;
+    }
+
+    if (action === 'recoverscreenshots') {
+      const ok = window.confirm(
+        'Scan Cloudinary for all your uploaded screenshots and re-link any that are missing from trades?\n\nThis is safe to run at any time — it never deletes or overwrites anything.'
+      );
+      if (!ok) return;
+      setMaintenanceBusy('recoverscreenshots');
+      setMaintenanceMessage('');
+      try {
+        const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+        const res = await fetch(`${API}/maintenance/recover-screenshots`, { method: 'POST', headers });
+        if (res.status === 401) { localStorage.removeItem('token'); router.push('/login'); return; }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Recovery failed');
+        setMaintenanceMessage(data.message || `✅ Recovered ${data.recovered} screenshot(s) from Cloudinary.`);
+        await loadDashboard();
+      } catch (e) {
+        setMaintenanceMessage(e instanceof Error ? e.message : 'Screenshot recovery failed');
+      } finally {
+        setMaintenanceBusy(null);
+      }
+      return;
     }
 
     if (action === 'fixbalances') {
@@ -432,6 +455,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-actions">
+            <button className="btn btn-ghost" onClick={() => callMaintenance('recoverscreenshots')} disabled={Boolean(maintenanceBusy)} title="Re-link Cloudinary screenshots to trades after a database clear">
+              <Image size={14} />
+              {maintenanceBusy === 'recoverscreenshots' ? 'Scanning...' : 'Recover Screenshots'}
+            </button>
             <button className="btn btn-ghost" onClick={() => callMaintenance('dedupe')} disabled={Boolean(maintenanceBusy)}>
               <Database size={14} />
               {maintenanceBusy === 'dedupe' ? 'Cleaning...' : 'Remove duplicates'}

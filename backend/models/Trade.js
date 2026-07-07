@@ -36,7 +36,8 @@ const tradeSchema = new mongoose.Schema({
 
   // -- Edge Coach: Setup Builder --------------------------------------------
   isReEntry:          { type: Boolean, default: false }, // was this a re-entry on the same setup/idea?
-  tradeGroup:         { type: String, default: '' },     // manual group label e.g. "Jul7-XAU", "session-1"
+  parentTradeId:      { type: String, default: '' },     // _id of the parent trade this re-entry is based on
+  tradeGroup:         { type: String, default: '' },     // auto-set to parentTradeId when a parent is chosen (or manual group name)
   primarySetup:       { type: String, default: '' }, // e.g. 'HTF Supply', 'HTF Demand', 'ORB'
   setupConfirmations: [{ type: String }],            // e.g. ['IFVG', 'Liquidity Sweep', 'Trendline Break']
 

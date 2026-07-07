@@ -1082,7 +1082,7 @@ router.put('/trades/:id', auth, async (req, res) => {
       analysisGrade, executionGrade,
       plannedRR, exitReason, manuallyIntervened,
       confidenceRating, accountType,
-      isReEntry, tradeGroup,
+      isReEntry, parentTradeId, tradeGroup,
       primarySetup, setupConfirmations,
       executionChecklist,
     } = req.body;
@@ -1103,7 +1103,13 @@ router.put('/trades/:id', auth, async (req, res) => {
       if (confidenceRating !== undefined) t.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
       if (accountType !== undefined) t.accountType = accountType;
       if (isReEntry !== undefined) t.isReEntry = Boolean(isReEntry);
-      if (tradeGroup !== undefined) t.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
+      if (parentTradeId !== undefined) {
+        t.parentTradeId = String(parentTradeId || '');
+        // Auto-group under parentTradeId if set, otherwise fallback to own _id if isReEntry is true
+        t.tradeGroup = t.parentTradeId ? t.parentTradeId : (t.isReEntry ? String(t._id) : '');
+      } else if (tradeGroup !== undefined) {
+        t.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
+      }
       if (primarySetup !== undefined) t.primarySetup = primarySetup;
       if (setupConfirmations !== undefined) t.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
       if (executionChecklist !== undefined) t.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
@@ -1133,7 +1139,13 @@ router.put('/trades/:id', auth, async (req, res) => {
     if (confidenceRating !== undefined) update.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
     if (accountType !== undefined) update.accountType = accountType;
     if (isReEntry !== undefined) update.isReEntry = Boolean(isReEntry);
-    if (tradeGroup !== undefined) update.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
+    if (parentTradeId !== undefined) {
+      update.parentTradeId = String(parentTradeId || '');
+      // Auto-group under parentTradeId if set, otherwise fallback to own ID if isReEntry is true
+      update.tradeGroup = update.parentTradeId ? update.parentTradeId : (isReEntry ? String(req.params.id) : '');
+    } else if (tradeGroup !== undefined) {
+      update.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
+    }
     if (primarySetup !== undefined) update.primarySetup = primarySetup;
     if (setupConfirmations !== undefined) update.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
     if (executionChecklist !== undefined) update.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];

@@ -60,6 +60,7 @@ interface Trade {
   isReEntry?: boolean;
   positionId?: string;
   tradeGroup?: string;
+  parentTradeId?: string;
 }
 
 const EMOTIONS = [
@@ -144,6 +145,7 @@ export default function TradesPage() {
   const [draftExecChecklist, setDraftExecChecklist] = useState<ChecklistItem[]>([]);
   const [draftIsReEntry, setDraftIsReEntry] = useState(false);
   const [draftTradeGroup, setDraftTradeGroup] = useState('');
+  const [draftParentTradeId, setDraftParentTradeId] = useState('');
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -225,6 +227,7 @@ export default function TradesPage() {
     );
     setDraftIsReEntry(trade.isReEntry ?? false);
     setDraftTradeGroup(trade.tradeGroup || '');
+    setDraftParentTradeId(trade.parentTradeId || '');
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -277,6 +280,7 @@ export default function TradesPage() {
           executionChecklist: draftExecChecklist,
           isReEntry: draftIsReEntry,
           tradeGroup: draftTradeGroup.trim(),
+          parentTradeId: draftParentTradeId,
         })
       });
       if (res.status === 401) {
@@ -591,14 +595,18 @@ export default function TradesPage() {
                           <span className={`badge ${t.direction.toLowerCase()}`}>{t.direction}</span>
                         </td>
                         <td>
-                          {t.isReEntry && (
-                            <span style={{
-                              display: 'inline-block', fontSize: 9, fontWeight: 700,
-                              background: '#6366f120', color: '#818cf8',
-                              border: '1px solid #6366f140', borderRadius: 4,
-                              padding: '1px 5px', marginRight: 4, letterSpacing: '0.02em'
-                            }}>RE-ENT</span>
-                          )}
+                          {t.isReEntry && (() => {
+                            const parent = t.parentTradeId ? trades.find(pt => pt._id === t.parentTradeId) : null;
+                            const label = parent ? `RE-ENT of #${parent.dealId}` : 'RE-ENT';
+                            return (
+                              <span style={{
+                                display: 'inline-block', fontSize: 9, fontWeight: 700,
+                                background: '#6366f120', color: '#818cf8',
+                                border: '1px solid #6366f140', borderRadius: 4,
+                                padding: '1px 5px', marginRight: 4, letterSpacing: '0.02em'
+                              }}>{label}</span>
+                            );
+                          })()}
                           {t.grade ? (
                             <span className={`grade-pill-tag ${t.grade}`}>{t.grade}</span>
                           ) : (
@@ -913,19 +921,25 @@ export default function TradesPage() {
               </div>
               {/* ── END EDGE COACH ──────────────────────────────────────────── */}
 
-              {/* ── Re-Entry Toggle ─────────────────────────────────────────── */}
-              <div className="drawer-section" style={{ padding: '10px 16px', background: draftIsReEntry ? '#6366f110' : 'transparent', borderRadius: 10, border: draftIsReEntry ? '1px solid #6366f130' : '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              {/* ── Re-Entry Section ─────────────────────────────────────────── */}
+              <div className="drawer-section" style={{ padding: '12px 16px', background: draftIsReEntry ? '#6366f108' : 'transparent', borderRadius: 10, border: draftIsReEntry ? '1px solid #6366f130' : '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: draftIsReEntry ? 10 : 0 }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: draftIsReEntry ? '#818cf8' : 'var(--text-primary)' }}>
                       🔁 Re-Entry
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      Mark this as a re-entry on the same setup / idea as a previous trade
+                      Is this a re-entry on a previous trade setup?
                     </div>
                   </div>
                   <button
-                    onClick={() => setDraftIsReEntry(v => !v)}
+                    onClick={() => {
+                      const newIsReEntry = !draftIsReEntry;
+                      setDraftIsReEntry(newIsReEntry);
+                      if (!newIsReEntry) {
+                        setDraftParentTradeId('');
+                      }
+                    }}
                     style={{
                       width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
                       background: draftIsReEntry ? '#6366f1' : 'var(--border)',
@@ -940,66 +954,76 @@ export default function TradesPage() {
                     }} />
                   </button>
                 </div>
-              </div>
 
-              {/* ── Trade Group Assignment ─────────────────────────────────── */}
-              <div className="drawer-section">
-                <span className="drawer-section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  🔗 Trade Group
-                  {draftTradeGroup && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20,
-                      background: '#6366f120', color: '#818cf8', border: '1px solid #6366f140'
-                    }}>{draftTradeGroup}</span>
-                  )}
-                </span>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                  Assign this trade to a named group to visually link related trades in the table (e.g. trades 1–9 of the same session).
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                  <input
-                    type="text"
-                    placeholder='e.g. "XAU-Jul7" or "session-1"'
-                    value={draftTradeGroup}
-                    maxLength={60}
-                    onChange={e => setDraftTradeGroup(e.target.value)}
-                    style={{
-                      flex: 1, padding: '7px 10px', borderRadius: 8,
-                      background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                      color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
-                    }}
-                  />
-                  {draftTradeGroup && (
-                    <button
-                      onClick={() => setDraftTradeGroup('')}
-                      style={{
-                        padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)',
-                        background: 'var(--bg-surface)', color: 'var(--text-muted)',
-                        cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-sans)',
-                      }}
-                    >Clear</button>
-                  )}
-                </div>
-                {/* Quick-pick: existing group names already used on this page */}
-                {(() => {
-                  const existing = Array.from(new Set(
-                    trades.map(t => t.tradeGroup).filter((g): g is string => Boolean(g) && g !== draftTradeGroup)
-                  )).slice(0, 8);
-                  if (existing.length === 0) return null;
-                  return (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', alignSelf: 'center' }}>Existing:</span>
-                      {existing.map(g => (
-                        <button key={g} onClick={() => setDraftTradeGroup(g)}
-                          style={{
-                            padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                            border: '1px solid #6366f140', background: '#6366f110',
-                            color: '#818cf8', cursor: 'pointer', fontFamily: 'var(--font-sans)',
-                          }}>{g}</button>
-                      ))}
-                    </div>
-                  );
-                })()}
+                {draftIsReEntry && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Select Parent Trade (Same Symbol)</div>
+                    {(() => {
+                      // Filter trades to find potential parents: same symbol, closed before current trade
+                      const potentialParents = trades.filter(t => 
+                        t.symbol === selectedTrade.symbol && 
+                        t._id !== selectedTrade._id && 
+                        new Date(t.closeTime) <= new Date(selectedTrade.closeTime)
+                      );
+
+                      if (potentialParents.length === 0) {
+                        return <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>No previous trades found for {selectedTrade.symbol} on this page.</div>;
+                      }
+
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <select
+                            value={draftParentTradeId}
+                            onChange={e => setDraftParentTradeId(e.target.value)}
+                            style={{
+                              width: '100%', padding: '7px 10px', borderRadius: 8,
+                              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                              color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
+                            }}
+                          >
+                            <option value="">— Select Parent Trade —</option>
+                            {potentialParents.map(p => {
+                              const pnlText = p.pnlUSD >= 0 ? `+$${p.pnlUSD.toFixed(2)}` : `-$${Math.abs(p.pnlUSD).toFixed(2)}`;
+                              return (
+                                <option key={p._id} value={p._id}>
+                                  Ticket #{p.dealId} ({p.direction} lots: {p.lotSize}) · Close PnL: {pnlText}
+                                </option>
+                              );
+                            })}
+                          </select>
+
+                          {draftParentTradeId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const parent = potentialParents.find(p => p._id === draftParentTradeId);
+                                if (parent) {
+                                  if (parent.notes) setDraftNotes(parent.notes);
+                                  if (parent.emotion) setDraftEmotion(parent.emotion);
+                                  if (parent.grade) setDraftGrade(parent.grade);
+                                  if (parent.tags) setDraftTags(parent.tags);
+                                  if (parent.analysisGrade) setDraftAnalysisGrade(parent.analysisGrade);
+                                  if (parent.executionGrade) setDraftExecutionGrade(parent.executionGrade);
+                                  if (parent.primarySetup) setDraftPrimarySetup(parent.primarySetup);
+                                  if (parent.setupConfirmations) setDraftSetupConfirmations(parent.setupConfirmations);
+                                  if (parent.executionChecklist) setDraftExecChecklist(parent.executionChecklist);
+                                  alert('Details inherited from parent! You can still customize them before saving.');
+                                }
+                              }}
+                              style={{
+                                width: '100%', padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                                border: '1px solid #6366f140', background: '#6366f115', color: '#818cf8',
+                                cursor: 'pointer', fontFamily: 'var(--font-sans)', transition: 'background 0.2s'
+                              }}
+                            >
+                              📥 Inherit Parent Details (Notes, Checklist, etc.)
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
 
               {/* Trader Emotion / Mindset */}

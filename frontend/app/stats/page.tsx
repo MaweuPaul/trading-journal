@@ -95,6 +95,7 @@ export default function StatsPage() {
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
+  const [groupBySetup, setGroupBySetup] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -105,7 +106,7 @@ export default function StatsPage() {
     setHasToken(true);
 
     setLoading(true);
-    fetch(`${API}/stats?range=${range}`, {
+    fetch(`${API}/stats?range=${range}&groupBySetup=${groupBySetup}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(r => {
@@ -119,7 +120,7 @@ export default function StatsPage() {
       .then(setStats)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [range, router]);
+  }, [range, groupBySetup, router]);
 
   if (loading) return <div className="loading-wrap"><div className="spinner" /></div>;
   if (!hasToken) return null;
@@ -155,32 +156,46 @@ export default function StatsPage() {
         <div className="page-header-inner">
           <div>
             <h2>Analytics</h2>
-            <p>Performance breakdown by session, psychology, grades, and checklist confluences</p>
+            <p>Deconstruct performance distributions and session correlations</p>
           </div>
-
-          {/* Time Range Selector Tool */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)', marginTop: 8 }}>
-            <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
-            <select
-              value={range}
-              onChange={e => { setRange(e.target.value); setLoading(true); }}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--text-secondary)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="all">All Time History</option>
-              <option value="today">Today (UTC)</option>
-              <option value="7d">Last 7 Days</option>
-              <option value="30d">Last 30 Days</option>
-              <option value="3m">Last 3 Months</option>
-              <option value="6m">Last 6 Months</option>
-            </select>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
+              <select
+                value={String(groupBySetup)}
+                onChange={e => { setGroupBySetup(e.target.value === 'true'); setLoading(true); }}
+                style={{
+                  border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                  color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
+                }}
+              >
+                <option value="false">🎫 Tickets (Individual)</option>
+                <option value="true">🔁 Setups (Grouped Re-Entries)</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+              <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
+              <select
+                value={range}
+                onChange={e => { setRange(e.target.value); setLoading(true); }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="all">All-Time History</option>
+                <option value="today">Today</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="3m">Last 3 Months</option>
+                <option value="6m">Last 6 Months</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>

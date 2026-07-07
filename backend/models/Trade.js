@@ -35,6 +35,8 @@ const tradeSchema = new mongoose.Schema({
   accountType:      { type: String, enum: ['live', 'demo', ''], default: '' }, // demo vs live tracking
 
   // -- Edge Coach: Setup Builder --------------------------------------------
+  isReEntry:          { type: Boolean, default: false }, // was this a re-entry on the same setup/idea?
+  tradeGroup:         { type: String, default: '' },     // manual group label e.g. "Jul7-XAU", "session-1"
   primarySetup:       { type: String, default: '' }, // e.g. 'HTF Supply', 'HTF Demand', 'ORB'
   setupConfirmations: [{ type: String }],            // e.g. ['IFVG', 'Liquidity Sweep', 'Trendline Break']
 

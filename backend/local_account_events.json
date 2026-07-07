@@ -1,5 +1,35 @@
 [
   {
+    "_id": "6a4b1154c03b0dcb61ccd3db",
+    "type": "withdrawal",
+    "amount": 25,
+    "currency": "USD",
+    "occurredAt": "2026-07-06T01:39:29.000Z",
+    "note": "W-KETDXMPE-USD-1442276786182",
+    "source": "mt5",
+    "externalId": "515891448",
+    "balanceAfter": null,
+    "user": "6a1eee5706ed670d978060f1",
+    "createdAt": "2026-07-06T02:22:12.183Z",
+    "updatedAt": "2026-07-06T02:22:12.183Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a470f7368a8dba0bb168bb7",
+    "type": "withdrawal",
+    "amount": 30,
+    "currency": "USD",
+    "occurredAt": "2026-07-03T01:24:30.000Z",
+    "note": "W-KETDXMPE-USD-1438878453766",
+    "source": "mt5",
+    "externalId": "515119088",
+    "balanceAfter": null,
+    "user": "6a1eee5706ed670d978060f1",
+    "createdAt": "2026-07-03T01:25:07.434Z",
+    "updatedAt": "2026-07-03T01:25:07.434Z",
+    "__v": 0
+  },
+  {
     "_id": "6a45f8756cb30e229511a299",
     "type": "withdrawal",
     "amount": 10,

@@ -923,7 +923,54 @@ router.get('/performance', auth, async (req, res) => {
           return true;
         })
         .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
-    } if (trades.length === 0) {
+    }
+
+    // Optional grouping by trade setup
+    const groupBySetup = req.query.groupBySetup === 'true';
+    if (groupBySetup) {
+      const groups = new Map();
+      for (const t of trades) {
+        const plain = typeof t.toObject === 'function' ? t.toObject() : t;
+        const key = plain.tradeGroup || String(plain._id);
+        if (!groups.has(key)) {
+          groups.set(key, []);
+        }
+        groups.get(key).push(plain);
+      }
+
+      const groupedTrades = [];
+      for (const [key, items] of groups.entries()) {
+        items.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+        const first = items[0];
+        const last = items[items.length - 1];
+
+        const totalPnl = items.reduce((s, x) => s + (x.pnlUSD || 0), 0);
+        const totalComm = items.reduce((s, x) => s + (x.commission || 0), 0);
+        const totalSwap = items.reduce((s, x) => s + (x.swap || 0), 0);
+        const totalDuration = items.reduce((s, x) => s + (x.durationMinutes || 0), 0);
+
+        groupedTrades.push({
+          _id: key,
+          dealId: first.dealId,
+          symbol: first.symbol,
+          direction: first.direction,
+          entryPrice: first.entryPrice,
+          exitPrice: last.exitPrice,
+          lotSize: items.reduce((s, x) => s + (x.lotSize || 0), 0),
+          pnlUSD: totalPnl,
+          commission: totalComm,
+          swap: totalSwap,
+          openTime: first.openTime,
+          closeTime: last.closeTime,
+          durationMinutes: totalDuration,
+          runningBalance: last.runningBalance, // Final balance after the whole setup closes
+        });
+      }
+      groupedTrades.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
+      trades = groupedTrades;
+    }
+
+    if (trades.length === 0) {
       return res.json({ equityCurve: [], drawdownCurve: [], stats: null });
     }
 

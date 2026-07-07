@@ -2061,3 +2061,89 @@ body:has(.login-container) .main-content {
   background: rgba(232, 54, 74, 0.1);
   color: var(--red);
 }
+
+/* ══════════════════════════════
+   MOBILE RESPONSIVENESS OVERRIDES
+   ══════════════════════════════ */
+
+@media (max-width: 1024px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-3 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Layout Adjustments */
+  .sidebar {
+    display: none !important;
+  }
+  .topbar {
+    display: flex !important;
+  }
+  .main-content {
+    margin-left: 0 !important;
+    padding: 16px !important;
+    margin-top: 58px !important;
+    width: 100% !important;
+  }
+
+  /* Grid Layouts */
+  .stat-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+  .grid-2, .grid-3 {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+
+  /* Page Headers */
+  .page-header-inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .dashboard-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+  .dashboard-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Journal Slide Drawer */
+  .drawer {
+    width: 100vw !important;
+    right: 0;
+    max-width: 100% !important;
+  }
+  .detail-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  /* Tables */
+  table th.hide-sm, table td.hide-sm {
+    display: none !important;
+  }
+  table th.hide-md, table td.hide-md {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .grade-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  .emotion-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}

@@ -110,13 +110,14 @@ export default function PerformancePage() {
   const [curve, setCurve] = useState<EquityPoint[]>([]);
   const [stats, setStats] = useState<PerfStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [groupBySetup, setGroupBySetup] = useState(false);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) { router.push('/login'); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${API}/performance?range=${range}`, {
+      const res = await fetch(`${API}/performance?range=${range}&groupBySetup=${groupBySetup}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) { localStorage.removeItem('token'); router.push('/login'); return; }
@@ -128,7 +129,7 @@ export default function PerformancePage() {
     } finally {
       setLoading(false);
     }
-  }, [range, router]);
+  }, [range, groupBySetup, router]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -153,25 +154,42 @@ export default function PerformancePage() {
             <p>Equity curve, drawdown analysis & risk metrics</p>
           </div>
 
-          {/* Range pills */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-            {RANGES.map(r => (
-              <button
-                key={r.value}
-                onClick={() => setRange(r.value)}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
+              <select
+                value={String(groupBySetup)}
+                onChange={e => { setGroupBySetup(e.target.value === 'true'); setLoading(true); }}
                 style={{
-                  padding: '5px 14px',
-                  borderRadius: 20,
-                  border: range === r.value ? 'none' : '1px solid var(--border)',
-                  background: range === r.value ? 'var(--accent)' : 'var(--bg-card)',
-                  color: range === r.value ? '#fff' : 'var(--text-secondary)',
-                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                  transition: 'all 0.15s',
+                  border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                  color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
                 }}
               >
-                {r.label}
-              </button>
-            ))}
+                <option value="false">🎫 Tickets (Individual)</option>
+                <option value="true">🔁 Setups (Grouped Re-Entries)</option>
+              </select>
+            </div>
+
+            {/* Range pills */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {RANGES.map(r => (
+                <button
+                  key={r.value}
+                  onClick={() => setRange(r.value)}
+                  style={{
+                    padding: '5px 14px',
+                    borderRadius: 20,
+                    border: range === r.value ? 'none' : '1px solid var(--border)',
+                    background: range === r.value ? 'var(--accent)' : 'var(--bg-card)',
+                    color: range === r.value ? '#fff' : 'var(--text-secondary)',
+                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

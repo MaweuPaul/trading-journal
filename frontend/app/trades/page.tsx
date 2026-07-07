@@ -57,6 +57,9 @@ interface Trade {
   executionChecklist?: ChecklistItem[];
   checklist?: ChecklistItem[];
   screenshots?: TradeScreenshot[];
+  isReEntry?: boolean;
+  positionId?: string;
+  tradeGroup?: string;
 }
 
 const EMOTIONS = [
@@ -139,6 +142,8 @@ export default function TradesPage() {
   const [draftPrimarySetup, setDraftPrimarySetup] = useState('');
   const [draftSetupConfirmations, setDraftSetupConfirmations] = useState<string[]>([]);
   const [draftExecChecklist, setDraftExecChecklist] = useState<ChecklistItem[]>([]);
+  const [draftIsReEntry, setDraftIsReEntry] = useState(false);
+  const [draftTradeGroup, setDraftTradeGroup] = useState('');
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -218,6 +223,8 @@ export default function TradesPage() {
             { rule: 'No manual close out of fear', complied: false },
           ]
     );
+    setDraftIsReEntry(trade.isReEntry ?? false);
+    setDraftTradeGroup(trade.tradeGroup || '');
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -268,6 +275,8 @@ export default function TradesPage() {
           primarySetup: draftPrimarySetup,
           setupConfirmations: draftSetupConfirmations,
           executionChecklist: draftExecChecklist,
+          isReEntry: draftIsReEntry,
+          tradeGroup: draftTradeGroup.trim(),
         })
       });
       if (res.status === 401) {
@@ -545,15 +554,35 @@ export default function TradesPage() {
                 <tbody>
                   {trades.map((t, i) => {
                     const isProfit = t.pnlUSD >= 0;
+                    // Color-coded grouping: tradeGroup takes priority over shared positionId
+                    const groupKey = t.tradeGroup || (t.positionId || '');
+                    const prevGroupKey = i > 0 ? (trades[i-1].tradeGroup || trades[i-1].positionId || '') : '';
+                    const nextGroupKey = i < trades.length - 1 ? (trades[i+1].tradeGroup || trades[i+1].positionId || '') : '';
+                    const isGrouped = Boolean(groupKey && (groupKey === prevGroupKey || groupKey === nextGroupKey));
+                    const groupColors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#ec4899','#8b5cf6','#14b8a6'];
+                    const colorIdx = groupKey ? (groupKey.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0) % groupColors.length) : 0;
+                    const groupColor = isGrouped ? groupColors[colorIdx] : '';
                     return (
                       <tr 
                         key={t._id} 
                         className="clickable" 
                         onClick={() => handleRowClick(t)}
-                        title="Click to open journal drawer"
+                        title={isGrouped ? `Group: ${groupKey}` : 'Click to open journal drawer'}
+                        style={isGrouped ? { borderLeft: `3px solid ${groupColor}` } : {}}
                       >
                         <td style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
                           {(page - 1) * PAGE_SIZE + i + 1}
+                          {isGrouped && t.tradeGroup && (
+                            <span style={{
+                              display: 'inline-block', marginLeft: 5, fontSize: 9, fontWeight: 700,
+                              background: `${groupColor}20`, color: groupColor,
+                              border: `1px solid ${groupColor}40`, borderRadius: 4,
+                              padding: '1px 4px', maxWidth: 52, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle'
+                            }} title={t.tradeGroup}>
+                              {t.tradeGroup}
+                            </span>
+                          )}
                         </td>
                         <td className="text" style={{ fontWeight: 600 }}>
                           {t.symbol}
@@ -562,6 +591,14 @@ export default function TradesPage() {
                           <span className={`badge ${t.direction.toLowerCase()}`}>{t.direction}</span>
                         </td>
                         <td>
+                          {t.isReEntry && (
+                            <span style={{
+                              display: 'inline-block', fontSize: 9, fontWeight: 700,
+                              background: '#6366f120', color: '#818cf8',
+                              border: '1px solid #6366f140', borderRadius: 4,
+                              padding: '1px 5px', marginRight: 4, letterSpacing: '0.02em'
+                            }}>RE-ENT</span>
+                          )}
                           {t.grade ? (
                             <span className={`grade-pill-tag ${t.grade}`}>{t.grade}</span>
                           ) : (
@@ -875,6 +912,95 @@ export default function TradesPage() {
                 </div>
               </div>
               {/* ── END EDGE COACH ──────────────────────────────────────────── */}
+
+              {/* ── Re-Entry Toggle ─────────────────────────────────────────── */}
+              <div className="drawer-section" style={{ padding: '10px 16px', background: draftIsReEntry ? '#6366f110' : 'transparent', borderRadius: 10, border: draftIsReEntry ? '1px solid #6366f130' : '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: draftIsReEntry ? '#818cf8' : 'var(--text-primary)' }}>
+                      🔁 Re-Entry
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Mark this as a re-entry on the same setup / idea as a previous trade
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setDraftIsReEntry(v => !v)}
+                    style={{
+                      width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                      background: draftIsReEntry ? '#6366f1' : 'var(--border)',
+                      position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+                    }}
+                    aria-label="Toggle re-entry"
+                  >
+                    <span style={{
+                      position: 'absolute', top: 3, left: draftIsReEntry ? 22 : 3,
+                      width: 18, height: 18, borderRadius: '50%',
+                      background: '#fff', transition: 'left 0.2s',
+                    }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Trade Group Assignment ─────────────────────────────────── */}
+              <div className="drawer-section">
+                <span className="drawer-section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  🔗 Trade Group
+                  {draftTradeGroup && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20,
+                      background: '#6366f120', color: '#818cf8', border: '1px solid #6366f140'
+                    }}>{draftTradeGroup}</span>
+                  )}
+                </span>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                  Assign this trade to a named group to visually link related trades in the table (e.g. trades 1–9 of the same session).
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  <input
+                    type="text"
+                    placeholder='e.g. "XAU-Jul7" or "session-1"'
+                    value={draftTradeGroup}
+                    maxLength={60}
+                    onChange={e => setDraftTradeGroup(e.target.value)}
+                    style={{
+                      flex: 1, padding: '7px 10px', borderRadius: 8,
+                      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                      color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
+                    }}
+                  />
+                  {draftTradeGroup && (
+                    <button
+                      onClick={() => setDraftTradeGroup('')}
+                      style={{
+                        padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border)',
+                        background: 'var(--bg-surface)', color: 'var(--text-muted)',
+                        cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-sans)',
+                      }}
+                    >Clear</button>
+                  )}
+                </div>
+                {/* Quick-pick: existing group names already used on this page */}
+                {(() => {
+                  const existing = Array.from(new Set(
+                    trades.map(t => t.tradeGroup).filter((g): g is string => Boolean(g) && g !== draftTradeGroup)
+                  )).slice(0, 8);
+                  if (existing.length === 0) return null;
+                  return (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', alignSelf: 'center' }}>Existing:</span>
+                      {existing.map(g => (
+                        <button key={g} onClick={() => setDraftTradeGroup(g)}
+                          style={{
+                            padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                            border: '1px solid #6366f140', background: '#6366f110',
+                            color: '#818cf8', cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                          }}>{g}</button>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
 
               {/* Trader Emotion / Mindset */}
               <div className="drawer-section">

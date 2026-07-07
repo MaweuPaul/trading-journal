@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -157,7 +157,7 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, [loadDashboard, router]);
 
-  const callMaintenance = async (action: 'dedupe' | 'resync' | 'clear') => {
+  const callMaintenance = async (action: 'dedupe' | 'resync' | 'clear' | 'fixbalances') => {
     const token = localStorage.getItem('token');
     if (!token) return;
 
@@ -166,6 +166,37 @@ export default function DashboardPage() {
         'Clear all synced trades from the database? Your MT5 history stays safe, but the dashboard will be empty until sync.py imports again.'
       );
       if (!confirmed) return;
+    }
+
+    if (action === 'fixbalances') {
+      const input = window.prompt(
+        'Enter your CURRENT MT5 account balance (e.g. 627.94).\nThis is used to back-calculate each trade\'s correct running balance.\n\nLeave blank to use the latest stored balance as the anchor.'
+      );
+      if (input === null) return; // user cancelled
+      const parsed = input.trim() === '' ? null : parseFloat(input.trim());
+      if (input.trim() !== '' && (isNaN(parsed!) || parsed! <= 0)) {
+        setMaintenanceMessage('Invalid balance entered.');
+        return;
+      }
+      setMaintenanceBusy('fixbalances');
+      setMaintenanceMessage('');
+      try {
+        const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+        const res = await fetch(`${API}/maintenance/recalculate-balances`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ currentBalance: parsed }),
+        });
+        if (res.status === 401) { localStorage.removeItem('token'); router.push('/login'); return; }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Balance fix failed');
+        setMaintenanceMessage(`✅ Fixed running balance on ${data.updated || 0} trade(s). Anchor: $${(data.latestBalance || 0).toFixed(2)}`);
+        await loadDashboard();
+      } catch (e) {
+        setMaintenanceMessage(e instanceof Error ? e.message : 'Balance fix failed');
+      } finally {
+        setMaintenanceBusy(null);
+      }
+      return;
     }
 
     setMaintenanceBusy(action);
@@ -404,6 +435,10 @@ export default function DashboardPage() {
             <button className="btn btn-ghost" onClick={() => callMaintenance('dedupe')} disabled={Boolean(maintenanceBusy)}>
               <Database size={14} />
               {maintenanceBusy === 'dedupe' ? 'Cleaning...' : 'Remove duplicates'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => callMaintenance('fixbalances')} disabled={Boolean(maintenanceBusy)} title="Re-calculate running balance for all trades from your actual MT5 balance">
+              <Wallet size={14} />
+              {maintenanceBusy === 'fixbalances' ? 'Fixing...' : 'Fix Balances'}
             </button>
             <button className="btn btn-primary" onClick={() => callMaintenance('resync')} disabled={Boolean(maintenanceBusy)}>
               <RefreshCw size={14} />

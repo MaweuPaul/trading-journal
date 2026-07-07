@@ -217,6 +217,26 @@ def fetch_deals(from_date=None):
     log.info("[MT5] Fetched %d closed deal(s) from history", len(closed))
 
     current_balance = get_account_balance()
+
+    # Sort chronologically so we can compute a rolling balance per trade.
+    # The running balance after trade N = starting_balance + sum(pnl[0..N])
+    # We derive starting_balance by subtracting all profits from current balance.
+    closed_sorted = sorted(closed, key=lambda d: d.time)
+    total_profit_in_window = sum(
+        float(d.profit) + float(d.commission) + float(d.swap)
+        for d in closed_sorted
+    )
+    # Balance before the first deal in this window
+    balance_before_window = current_balance - total_profit_in_window
+
+    # Build a running balance as we walk through deals chronologically
+    running_bal = balance_before_window
+    # Map ticket -> running balance after that deal closes
+    ticket_to_running_bal = {}
+    for d in closed_sorted:
+        running_bal += float(d.profit) + float(d.commission) + float(d.swap)
+        ticket_to_running_bal[d.ticket] = running_bal
+
     result = []
 
     for deal in closed:
@@ -242,8 +262,11 @@ def fetch_deals(from_date=None):
         close_dt = datetime.fromtimestamp(deal.time, tz=timezone.utc)
         duration = int((close_dt - open_dt).total_seconds() / 60)
 
-        balance_at_close = current_balance - deal.profit
-        pnl_pct = (deal.profit / balance_at_close * 100) if balance_at_close > 0 else 0
+        # Use per-trade running balance (balance AFTER this trade closed)
+        trade_running_balance = ticket_to_running_bal.get(deal.ticket, current_balance)
+        # Balance just before this trade closed (used for % calculation)
+        balance_before_trade = trade_running_balance - float(deal.profit) - float(deal.commission) - float(deal.swap)
+        pnl_pct = (deal.profit / balance_before_trade * 100) if balance_before_trade > 0 else 0
 
         result.append({
             "dealId":          str(deal.ticket),
@@ -260,7 +283,7 @@ def fetch_deals(from_date=None):
             "openTime":        open_dt.isoformat(),
             "closeTime":       close_dt.isoformat(),
             "durationMinutes": duration,
-            "runningBalance":  float(current_balance),
+            "runningBalance":  round(trade_running_balance, 2),
         })
 
     return result

@@ -502,6 +502,88 @@ router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
   }
 });
 
+// POST /api/maintenance/recalculate-balances
+// Re-derive each trade's runningBalance from the known current balance and P&L history.
+// This fixes incorrect balances stored by old versions of sync.py without losing journal data.
+router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
+  try {
+    // The current MT5 balance is passed in from the client (or we use the latest stored balance)
+    const currentBalance = req.body.currentBalance != null ? Number(req.body.currentBalance) : null;
+
+    if (mongoose.connection.readyState !== 1) {
+      // Offline mode: work on inMemoryTrades
+      let userTrades = inMemoryTrades
+        .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
+        .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime)); // oldest first
+
+      if (userTrades.length === 0) return res.json({ updated: 0 });
+
+      // Anchor from known current balance if provided, otherwise latest stored balance
+      const latestBal = currentBalance != null
+        ? currentBalance
+        : Number(userTrades[userTrades.length - 1].runningBalance || 0);
+
+      // Walk backward from latest: latestBal is balance AFTER the last trade
+      // So balance BEFORE last trade = latestBal - (pnlUSD + commission + swap) of last trade
+      // Then walk forward to assign each trade's running balance
+      const totalNet = userTrades.reduce((s, t) => s + Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0), 0);
+      let runBal = latestBal - totalNet; // balance before first trade
+      let updated = 0;
+
+      for (const trade of userTrades) {
+        runBal += Number(trade.pnlUSD || 0) + Number(trade.commission || 0) + Number(trade.swap || 0);
+        const newBal = Math.round(runBal * 100) / 100;
+        const idx = inMemoryTrades.findIndex(t => String(t._id) === String(trade._id));
+        if (idx !== -1 && Math.abs(Number(inMemoryTrades[idx].runningBalance) - newBal) > 0.001) {
+          inMemoryTrades[idx].runningBalance = newBal;
+          updated++;
+        }
+      }
+
+      if (updated > 0) saveLocalDatabase();
+      return res.json({ updated, latestBalance: latestBal });
+    }
+
+    // MongoDB mode
+    const userTrades = await Trade.find({ user: req.user.userId })
+      .sort({ closeTime: 1 })
+      .select('_id pnlUSD commission swap runningBalance closeTime');
+
+    if (userTrades.length === 0) return res.json({ updated: 0 });
+
+    const latestBal = currentBalance != null
+      ? currentBalance
+      : Number(userTrades[userTrades.length - 1].runningBalance || 0);
+
+    const totalNet = userTrades.reduce((s, t) => s + Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0), 0);
+    let runBal = latestBal - totalNet;
+    let updated = 0;
+    const bulkOps = [];
+
+    for (const trade of userTrades) {
+      runBal += Number(trade.pnlUSD || 0) + Number(trade.commission || 0) + Number(trade.swap || 0);
+      const newBal = Math.round(runBal * 100) / 100;
+      if (Math.abs(Number(trade.runningBalance) - newBal) > 0.001) {
+        bulkOps.push({ updateOne: { filter: { _id: trade._id }, update: { $set: { runningBalance: newBal } } } });
+        updated++;
+      }
+    }
+
+    if (bulkOps.length > 0) await Trade.bulkWrite(bulkOps);
+
+    // Sync to inMemoryTrades
+    for (const op of bulkOps) {
+      const idx = inMemoryTrades.findIndex(t => String(t._id) === String(op.updateOne.filter._id));
+      if (idx !== -1) inMemoryTrades[idx].runningBalance = op.updateOne.update.$set.runningBalance;
+    }
+    if (updated > 0) saveLocalDatabase();
+
+    res.json({ updated, latestBalance: latestBal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/account-events  deposits, withdrawals, and account adjustments
 router.get('/account-events', auth, async (req, res) => {
   try {
@@ -898,6 +980,7 @@ router.put('/trades/:id', auth, async (req, res) => {
       analysisGrade, executionGrade,
       plannedRR, exitReason, manuallyIntervened,
       confidenceRating, accountType,
+      isReEntry, tradeGroup,
       primarySetup, setupConfirmations,
       executionChecklist,
     } = req.body;
@@ -917,6 +1000,8 @@ router.put('/trades/:id', auth, async (req, res) => {
       if (manuallyIntervened !== undefined) t.manuallyIntervened = manuallyIntervened === null ? null : Boolean(manuallyIntervened);
       if (confidenceRating !== undefined) t.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
       if (accountType !== undefined) t.accountType = accountType;
+      if (isReEntry !== undefined) t.isReEntry = Boolean(isReEntry);
+      if (tradeGroup !== undefined) t.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
       if (primarySetup !== undefined) t.primarySetup = primarySetup;
       if (setupConfirmations !== undefined) t.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
       if (executionChecklist !== undefined) t.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
@@ -945,6 +1030,8 @@ router.put('/trades/:id', auth, async (req, res) => {
     if (manuallyIntervened !== undefined) update.manuallyIntervened = manuallyIntervened === null ? null : Boolean(manuallyIntervened);
     if (confidenceRating !== undefined) update.confidenceRating = confidenceRating === '' ? null : Number(confidenceRating) || null;
     if (accountType !== undefined) update.accountType = accountType;
+    if (isReEntry !== undefined) update.isReEntry = Boolean(isReEntry);
+    if (tradeGroup !== undefined) update.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
     if (primarySetup !== undefined) update.primarySetup = primarySetup;
     if (setupConfirmations !== undefined) update.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
     if (executionChecklist !== undefined) update.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];

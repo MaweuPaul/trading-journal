@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { 
   SlidersHorizontal, ChevronLeft, ChevronRight, List, 
   X, Smile, Award, Tag, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2
+  Upload, Image as ImageIcon, Trash2, Copy, Check
 } from 'lucide-react';
 
 const API = '/api';
@@ -146,6 +146,9 @@ export default function TradesPage() {
   const [draftIsReEntry, setDraftIsReEntry] = useState(false);
   const [draftTradeGroup, setDraftTradeGroup] = useState('');
   const [draftParentTradeId, setDraftParentTradeId] = useState('');
+  const [parentSearchQuery, setParentSearchQuery] = useState('');
+  const [showParentDropdown, setShowParentDropdown] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -668,9 +671,26 @@ export default function TradesPage() {
             <div className="drawer-header">
               <div>
                 <h3>Trade Journal Details</h3>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  Ticket: {selectedTrade.dealId}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                  <span>Ticket: {selectedTrade.dealId}</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedTrade.dealId);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    style={{
+                      background: 'none', border: 'none', padding: '2px 4px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', color: copied ? '#10b981' : 'var(--text-muted)',
+                      borderRadius: 4, transition: 'color 0.2s, background-color 0.2s'
+                    }}
+                    title="Copy Ticket ID to Clipboard"
+                    aria-label="Copy ticket"
+                  >
+                    {copied ? <Check size={11} /> : <Copy size={11} />}
+                    {copied && <span style={{ marginLeft: 3, fontSize: 9, fontWeight: 700 }}>Copied!</span>}
+                  </button>
+                </div>
               </div>
               <button className="drawer-close" onClick={() => setSelectedTrade(null)}>
                 <X size={16} />
@@ -711,49 +731,12 @@ export default function TradesPage() {
                 </div>
               </div>
 
-              {/* Trading Checklist Grade */}
-              <div className="drawer-section">
-                <span className="drawer-section-title"><Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Setup Quality Grade (Legacy)</span>
-                <div className="grade-grid">
-                  {GRADES.map(g => (
-                    <button
-                      key={g}
-                      className={`grade-pill ${draftGrade === g ? `active ${g}` : ''}`}
-                      onClick={() => setDraftGrade(g)}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* ── EDGE COACH: Execution Review ────────────────────────────── */}
               <div className="drawer-section" style={{ background: 'var(--bg-elevated)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
                 <span className="drawer-section-title" style={{ color: '#8b5cf6' }}>
                   <Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />
                   Edge Coach — Execution Review
                 </span>
-
-                {/* Account Type */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Account Type</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {(['', 'live', 'demo'] as const).map(v => (
-                      <button key={v} onClick={() => setDraftAccountType(v)}
-                        style={{
-                          padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-                          border: '1px solid var(--border)', cursor: 'pointer',
-                          background: draftAccountType === v ? (v === 'live' ? '#10b981' : v === 'demo' ? '#8b5cf6' : 'var(--accent)') : 'var(--bg-surface)',
-                          color: draftAccountType === v ? '#fff' : 'var(--text-muted)',
-                          fontFamily: 'var(--font-sans)',
-                        }}>
-                        {v === '' ? 'Not Set' : v === 'live' ? '📊 Live' : '🎮 Demo'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Analysis Grade + Execution Grade */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                   {[
                     { label: 'Analysis Grade', val: draftAnalysisGrade, set: setDraftAnalysisGrade },
@@ -956,7 +939,7 @@ export default function TradesPage() {
                 </div>
 
                 {draftIsReEntry && (
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10, position: 'relative' }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Select Parent Trade (Same Symbol)</div>
                     {(() => {
                       // Filter trades to find potential parents: same symbol, closed before current trade
@@ -970,27 +953,122 @@ export default function TradesPage() {
                         return <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>No previous trades found for {selectedTrade.symbol} on this page.</div>;
                       }
 
+                      // Filter based on search query
+                      const filteredParents = potentialParents.filter(p => 
+                        !parentSearchQuery || 
+                        p.dealId.includes(parentSearchQuery) || 
+                        p.direction.toLowerCase().includes(parentSearchQuery.toLowerCase()) || 
+                        (p.notes || '').toLowerCase().includes(parentSearchQuery.toLowerCase())
+                      );
+
+                      const selectedParentObj = potentialParents.find(p => p._id === draftParentTradeId);
+
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <select
-                            value={draftParentTradeId}
-                            onChange={e => setDraftParentTradeId(e.target.value)}
-                            style={{
-                              width: '100%', padding: '7px 10px', borderRadius: 8,
-                              background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                              color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
-                            }}
-                          >
-                            <option value="">— Select Parent Trade —</option>
-                            {potentialParents.map(p => {
-                              const pnlText = p.pnlUSD >= 0 ? `+$${p.pnlUSD.toFixed(2)}` : `-$${Math.abs(p.pnlUSD).toFixed(2)}`;
-                              return (
-                                <option key={p._id} value={p._id}>
-                                  Ticket #{p.dealId} ({p.direction} lots: {p.lotSize}) · Close PnL: {pnlText}
-                                </option>
-                              );
-                            })}
-                          </select>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
+                          <div style={{ position: 'relative' }}>
+                            <input
+                              type="text"
+                              placeholder={selectedParentObj ? `Ticket #${selectedParentObj.dealId} selected (Type to search)` : 'Type to search ticket # or direction...'}
+                              value={parentSearchQuery}
+                              onChange={e => {
+                                setParentSearchQuery(e.target.value);
+                                setShowParentDropdown(true);
+                              }}
+                              onFocus={() => setShowParentDropdown(true)}
+                              style={{
+                                width: '100%', padding: '7px 10px', borderRadius: 8,
+                                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                                color: 'var(--text-primary)', fontSize: 12, fontFamily: 'var(--font-sans)',
+                                boxSizing: 'border-box'
+                              }}
+                            />
+                            {parentSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setParentSearchQuery('');
+                                  setDraftParentTradeId('');
+                                }}
+                                style={{
+                                  position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                                  background: 'none', border: 'none', color: 'var(--text-muted)',
+                                  cursor: 'pointer', fontSize: 11
+                                }}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Dropdown popup */}
+                          {showParentDropdown && (
+                            <>
+                              <div 
+                                onClick={() => setShowParentDropdown(false)}
+                                style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 998 }}
+                              />
+                              <div style={{
+                                position: 'absolute', top: 36, left: 0, right: 0, maxHeight: 200,
+                                overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                                borderRadius: 8, boxShadow: 'var(--shadow-lg)', zIndex: 999,
+                                display: 'flex', flexDirection: 'column'
+                              }}>
+                                {filteredParents.length === 0 ? (
+                                  <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                    No matching trades found
+                                  </div>
+                                ) : (
+                                  filteredParents.map(p => {
+                                    const pnlText = p.pnlUSD >= 0 ? `+$${p.pnlUSD.toFixed(2)}` : `-$${Math.abs(p.pnlUSD).toFixed(2)}`;
+                                    const isSelected = p._id === draftParentTradeId;
+                                    return (
+                                      <button
+                                        key={p._id}
+                                        type="button"
+                                        onClick={() => {
+                                          setDraftParentTradeId(p._id);
+                                          setParentSearchQuery(''); // reset search
+                                          setShowParentDropdown(false);
+                                        }}
+                                        style={{
+                                          width: '100%', padding: '8px 10px', textAlign: 'left', border: 'none',
+                                          background: isSelected ? '#6366f120' : 'transparent',
+                                          color: 'var(--text-primary)', fontSize: 11, cursor: 'pointer',
+                                          borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-sans)',
+                                          display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                        }}
+                                      >
+                                        <div>
+                                          <strong style={{ color: isSelected ? '#818cf8' : 'inherit' }}>Ticket #{p.dealId}</strong>
+                                          <span style={{ marginLeft: 6, color: 'var(--text-muted)' }}>({p.direction} lots: {p.lotSize})</span>
+                                        </div>
+                                        <span style={{ color: p.pnlUSD >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{pnlText}</span>
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </>
+                          )}
+
+                          {selectedParentObj && (
+                            <div style={{ 
+                              padding: '8px 12px', background: 'var(--bg-elevated)', borderRadius: 8, 
+                              border: '1px solid var(--border)', fontSize: 11, display: 'flex', 
+                              flexDirection: 'column', gap: 4 
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ fontWeight: 600 }}>Linked Parent:</span>
+                                <span style={{ fontFamily: 'var(--font-mono)' }}>Ticket #{selectedParentObj.dealId}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
+                                <span>{selectedParentObj.direction} · {selectedParentObj.lotSize} lot(s)</span>
+                                <span style={{ color: selectedParentObj.pnlUSD >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>
+                                  {selectedParentObj.pnlUSD >= 0 ? '+' : ''}${selectedParentObj.pnlUSD.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
 
                           {draftParentTradeId && (
                             <button

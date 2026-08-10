@@ -107,7 +107,7 @@ interface TradingRule {
 interface PlaybookRule {
   ruleId: string;
   label: string;
-  inputType: 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
+  inputType: 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
   options: string[];
   required: boolean;
   helpText?: string;
@@ -633,10 +633,18 @@ export default function TradesPage() {
     if (rule.inputType === 'rating') {
       return <div><input type="range" min="1" max="10" value={Number(value || 5)} onChange={event => setPlaybookResponse(rule.ruleId, Number(event.target.value))} style={{ width: '100%', accentColor: 'var(--accent)' }} /><div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>{Number(value || 5)}/10</div></div>;
     }
-    if (rule.inputType === 'number') {
-      return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}><input type="number" min={rule.validation?.min ?? undefined} max={rule.validation?.max ?? undefined} placeholder={rule.placeholder || undefined} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />{rule.unit && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{rule.unit}</span>}</div>;
+    const numericTypes = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward'];
+    if (numericTypes.includes(rule.inputType)) {
+      const defaultUnit = rule.inputType === 'percentage' ? '%' : rule.inputType === 'risk_reward' ? 'R' : '';
+      return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}><input type="number" step="any" min={rule.inputType === 'percentage' || rule.inputType === 'risk_reward' ? (rule.validation?.min ?? 0) : (rule.validation?.min ?? undefined)} max={rule.inputType === 'percentage' ? (rule.validation?.max ?? 100) : (rule.validation?.max ?? undefined)} placeholder={rule.placeholder || (rule.inputType === 'risk_reward' ? 'e.g. 2 for 1:2' : undefined)} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />{(rule.unit || defaultUnit) && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{rule.unit || defaultUnit}</span>}</div>;
     }
-    return <textarea value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={2} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
+    if (rule.inputType === 'date' || rule.inputType === 'time') {
+      return <input type={rule.inputType} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
+    }
+    if (rule.inputType === 'text') {
+      return <input type="text" value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
+    }
+    return <textarea value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={4} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
   };
 
   return (

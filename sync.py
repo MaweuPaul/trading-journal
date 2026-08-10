@@ -15,8 +15,8 @@ Configuration:
         API_BASE=http://localhost:4000/api
         API_TIMEOUT=60
         SYNC_INTERVAL=60
-        USER_EMAIL=YOUR_ADMIN_EMAIL
-        USER_PASSWORD=YOUR_ADMIN_PASSWORD
+        USER_EMAIL=YOUR_JOURNAL_OWNER_EMAIL
+        USER_PASSWORD=YOUR_JOURNAL_OWNER_PASSWORD
 """
 
 import time
@@ -66,23 +66,6 @@ def get_jwt_token():
             json={"email": USER_EMAIL, "password": USER_PASSWORD},
             timeout=API_TIMEOUT,
         )
-        if resp.status_code == 400:
-            log.warning("[AUTH] Login failed. Attempting auto-registration for %s...", USER_EMAIL)
-            reg_url = f"{API_BASE.replace('/api', '')}/api/auth/register"
-            reg_resp = requests.post(
-                reg_url,
-                json={"name": "MT5 Sync", "email": USER_EMAIL, "password": USER_PASSWORD},
-                timeout=API_TIMEOUT,
-            )
-            if reg_resp.ok:
-                data = reg_resp.json()
-                JWT_TOKEN = data.get("token")
-                log.info("[AUTH] Auto-registered and authenticated successfully.")
-                return True
-            else:
-                log.error("[AUTH] Auto-registration failed: %s", reg_resp.text)
-                return False
-
         resp.raise_for_status()
         data = resp.json()
         JWT_TOKEN = data.get("token")

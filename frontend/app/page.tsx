@@ -454,7 +454,7 @@ export default function DashboardPage() {
         <div className="page-header-inner">
           <div>
             <h2>Dashboard</h2>
-            <p>Live performance synced from your MT5 · Exness account</p>
+            <p>Live performance synced from your connected MT5 account</p>
           </div>
 
           <div className="dashboard-actions">

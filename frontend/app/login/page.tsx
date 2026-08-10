@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Mail, Lock, TrendingUp, Loader2, AlertCircle } from 'lucide-react';
 
 const API = '/api';
@@ -11,13 +12,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
 
   // If already logged in, redirect to dashboard
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
       router.push('/');
+      return;
     }
+    fetch(`${API}/auth/setup-status`)
+      .then(response => response.json())
+      .then(status => setSetupRequired(Boolean(status.setupRequired)))
+      .catch(() => undefined);
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -61,7 +68,7 @@ export default function LoginPage() {
           <div className="login-logo">
             <TrendingUp size={24} />
           </div>
-          <h2>Private TradeJournal</h2>
+          <h2>TradeJournal</h2>
           <p>Sign in to access your personal MT5 trade analytics</p>
         </div>
 
@@ -80,7 +87,7 @@ export default function LoginPage() {
               <input
                 id="email"
                 type="email"
-                placeholder="paulmaweu09@gmail.com"
+                placeholder="you@example.com"
                 className="form-input"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -116,6 +123,12 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+
+        {setupRequired && (
+          <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+            First time here? <Link href="/signup" style={{ color: 'var(--accent)', fontWeight: 700 }}>Create the owner account</Link>
+          </div>
+        )}
 
         <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
           🔒 Secure Private Session

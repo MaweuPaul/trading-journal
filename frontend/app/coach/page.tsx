@@ -146,7 +146,7 @@ export default function CoachPage() {
 
   return (
     <main className="page-content">
-      <div style={{ maxWidth: 960, margin: '0 auto', padding: '36px 24px' }}>
+      <div style={{ width: '100%', padding: '0 0 32px' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 14 }}>

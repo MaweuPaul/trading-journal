@@ -107,7 +107,7 @@ export default function ArchivePage() {
 
   return (
     <main className="page-content">
-      <div style={{ maxWidth: 820, margin: '0 auto', padding: '40px 24px' }}>
+      <div style={{ width: '100%', padding: '0 0 32px' }}>
 
         {/* Header */}
         <div style={{ marginBottom: 36 }}>

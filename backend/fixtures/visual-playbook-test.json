@@ -17,11 +17,11 @@
       "blockId": "test-context",
       "name": "Higher-timeframe context",
       "category": "context",
-      "evidence": [
-        { "evidenceId": "test-evidence-context", "url": "/playbook-test-assets/context-reference.svg", "publicId": "", "caption": "Reference context: price approaches prior-day liquidity while the higher-timeframe bias remains bullish.", "kind": "reference", "linkedRuleId": "test-bias", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 }
-      ],
+      "evidence": [],
       "rules": [
-        { "ruleId": "test-bias", "label": "Higher-timeframe bias", "inputType": "single_choice", "options": ["Bullish", "Bearish", "Neutral"], "required": true, "helpText": "Use Daily and H4 structure to establish direction.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-bias", "label": "Higher-timeframe bias", "inputType": "single_choice", "options": ["Bullish", "Bearish", "Neutral"], "required": true, "helpText": "Use Daily and H4 structure to establish direction.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {}, "exampleRequirement": { "required": true, "minimumImages": 1, "maximumImages": 4 }, "examples": [
+          { "evidenceId": "test-evidence-context", "url": "/playbook-test-assets/context-reference.svg", "publicId": "", "caption": "Reference context: price approaches prior-day liquidity while the higher-timeframe bias remains bullish.", "kind": "reference", "linkedRuleId": "test-bias", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 }
+        ] },
         { "ruleId": "test-session-date", "label": "Analysis date", "inputType": "date", "options": [], "required": true, "helpText": "Date on which the pre-market plan was prepared.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
         { "ruleId": "test-session-time", "label": "Planned entry window", "inputType": "time", "options": [], "required": true, "helpText": "Local start time of the intended execution window.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} }
       ]
@@ -30,13 +30,13 @@
       "blockId": "test-setup",
       "name": "Liquidity sweep and location",
       "category": "setup",
-      "evidence": [
-        { "evidenceId": "test-evidence-valid", "url": "/playbook-test-assets/valid-setup.svg", "publicId": "", "caption": "Valid example: liquidity is swept into the marked order block before displacement creates an entry imbalance.", "kind": "valid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 },
-        { "evidenceId": "test-evidence-invalid", "url": "/playbook-test-assets/invalid-setup.svg", "publicId": "", "caption": "Invalid example: entry occurs in the middle of the range without a liquidity sweep or higher-timeframe location.", "kind": "invalid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 1 }
-      ],
+      "evidence": [],
       "rules": [
         { "ruleId": "test-sweep", "label": "Required liquidity was swept", "inputType": "boolean", "options": [], "required": true, "helpText": "Confirm price traded through the documented liquidity objective before entry.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
-        { "ruleId": "test-confirmations", "label": "Setup confirmations", "inputType": "multi_choice", "options": ["Order Block", "Fair Value Gap", "Market Structure Shift", "Displacement", "Session Open"], "required": true, "helpText": "Select every observable confirmation present on the chart.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-confirmations", "label": "Setup confirmations", "inputType": "multi_choice", "options": ["Order Block", "Fair Value Gap", "Market Structure Shift", "Displacement", "Session Open"], "required": true, "helpText": "Select every observable confirmation present on the chart.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {}, "exampleRequirement": { "required": true, "minimumImages": 2, "maximumImages": 6 }, "examples": [
+          { "evidenceId": "test-evidence-valid", "url": "/playbook-test-assets/valid-setup.svg", "publicId": "", "caption": "Valid example: liquidity is swept into the marked order block before displacement creates an entry imbalance.", "kind": "valid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 },
+          { "evidenceId": "test-evidence-invalid", "url": "/playbook-test-assets/invalid-setup.svg", "publicId": "", "caption": "Invalid example: entry occurs in the middle of the range without a liquidity sweep or higher-timeframe location.", "kind": "invalid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 1 }
+        ] },
         { "ruleId": "test-location-note", "label": "Location explanation", "inputType": "text", "options": [], "required": false, "helpText": "Summarize why the location is meaningful.", "placeholder": "Discount H1 order block below Asian low", "unit": "", "defaultValue": null, "validation": { "minLength": 5, "maxLength": 160 } }
       ]
     },

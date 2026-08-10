@@ -5,7 +5,7 @@ import InfoHint from '@/components/InfoHint';
 import { 
   SlidersHorizontal, ChevronLeft, ChevronRight, List, 
   X, Smile, Award, Tag, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole
 } from 'lucide-react';
 
 const API = '/api';
@@ -956,15 +956,22 @@ export default function TradesPage() {
 
                 {/* Immutable strategy playbook snapshot */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center' }}>Strategy Playbook<InfoHint text="Select the published strategy used for this trade. Saving attaches an immutable snapshot, so later playbook edits cannot rewrite this trade's audit history." /></div>
-                  <select value={draftPlaybookSnapshot?.playbookId || ''} onChange={event => selectPlaybookForTrade(event.target.value)} style={{ width: '100%', minHeight: 42, padding: '0 10px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 12 }}>
-                    <option value="">— Select a published strategy —</option>
-                    {playbooks.filter(playbook => !playbook.archived || playbook.playbookId === draftPlaybookSnapshot?.playbookId).map(playbook => {
-                      const version = playbook.versions[playbook.versions.length - 1];
-                      return <option key={playbook.playbookId} value={playbook.playbookId}>{playbook.name} · v{version.versionNumber}</option>;
-                    })}
-                  </select>
-                  {draftPlaybookSnapshot && <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>Audit snapshot: {draftPlaybookSnapshot.name} v{draftPlaybookSnapshot.versionNumber}. Future changes will not alter this trade after saving.</div>}
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center' }}>Strategy Playbook<InfoHint text={selectedTrade.playbookSnapshot ? "This recorded journal is permanently attached to the exact playbook version originally saved. You can edit its answers, but you cannot replace its strategy snapshot." : "Select the published strategy used for this trade. The first save permanently attaches that exact version to this journal."} /></div>
+                  {selectedTrade.playbookSnapshot ? (
+                    <div className="journal-playbook-lock">
+                      <LockKeyhole size={16} />
+                      <div><strong>{selectedTrade.playbookSnapshot.name} · v{selectedTrade.playbookSnapshot.versionNumber}</strong><span>Immutable audit snapshot · Schema {selectedTrade.playbookSnapshot.schemaVersion || 1}</span></div>
+                    </div>
+                  ) : <>
+                    <select value={draftPlaybookSnapshot?.playbookId || ''} onChange={event => selectPlaybookForTrade(event.target.value)} style={{ width: '100%', minHeight: 42, padding: '0 10px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 12 }}>
+                      <option value="">— Select a published strategy —</option>
+                      {playbooks.filter(playbook => !playbook.archived).map(playbook => {
+                        const version = playbook.versions[playbook.versions.length - 1];
+                        return <option key={playbook.playbookId} value={playbook.playbookId}>{playbook.name} · v{version.versionNumber}</option>;
+                      })}
+                    </select>
+                    {draftPlaybookSnapshot && <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>This will attach {draftPlaybookSnapshot.name} v{draftPlaybookSnapshot.versionNumber} permanently when you save.</div>}
+                  </>}
                 </div>
 
                 {draftPlaybookSnapshot && <>

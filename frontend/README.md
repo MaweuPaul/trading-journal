@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TradeJournal Frontend
 
-## Getting Started
+The frontend is a Next.js 15 application for building versioned visual strategy playbooks and completing trade journals generated from those published rules.
 
-First, run the development server:
+## Rule-driven journal model
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+The journal form is not hard-coded. A published playbook defines:
+
+- Lifecycle stages: Concept, Context, Setup, Entry, Risk, Execution, Management, Exit, and Review.
+- Rule labels, guidance, answer types, choices, units, defaults, and validation.
+- Stage-level visual references.
+- Rule-level reference, valid, and invalid example images.
+- Which answers and instructional images are required.
+
+When a playbook is attached to a trade, the frontend renders its fields in Plan, Manage, and Review tabs. The first save stores the complete published snapshot on that trade. Later playbook versions do not rewrite the journal, and an attached trade cannot switch to another version.
+
+Rule-level instructional images are required by default for newly added rules. In **Field guidance and validation**, turn off **Require instructional image examples** when a rule does not need a chart example.
+
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `/rules` | Build and publish immutable visual playbooks |
+| `/rules/read` | Read a published playbook as a visual manual |
+| `/trades` | Filter trades and complete the rule-generated journal |
+| `/coach` | Compare versions, answers, stage compliance, and numeric evidence |
+| `/signup` | Create the single owner on an empty installation |
+
+## Local setup
+
+Create `frontend/.env.local`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:4000/api
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then run:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open `http://localhost:3000`.
 
-## Learn More
+## Verification
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+node node_modules/typescript/bin/tsc --noEmit
+node node_modules/eslint/bin/eslint.js app/rules/page.tsx app/rules/read/page.tsx
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The full credential-backed test procedure is in [`../TESTING.md`](../TESTING.md), and installation instructions are in [`../SETUP.md`](../SETUP.md).

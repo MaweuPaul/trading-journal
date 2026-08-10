@@ -551,6 +551,10 @@ Expected results:
 - Version 1 remains available in reading mode after version 2 is published.
 - The earlier trade still contains schema version 1's exact stages, screenshots, fields, and responses.
 - Edge Coach separates versions and reports stage compliance, answer effectiveness, and numeric winning/losing averages.
+- A newly added rule starts with instructional images required and a minimum of one.
+- Turning off the image-requirement toggle permits publishing that rule without an example.
+- Leaving the toggle enabled blocks publishing until the configured minimum number of captioned examples is present.
+- Editing a recorded journal permits answer corrections but does not offer a version selector or allow the backend snapshot to be replaced.
 
 ## Legacy migration test
 

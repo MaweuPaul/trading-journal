@@ -73,12 +73,81 @@ const BLOCK_CATEGORIES: Array<{ value: BlockCategory; label: string; description
   { value: 'custom', label: 'Custom stage', description: 'A user-defined stage outside the standard lifecycle.' },
 ];
 
+type TemplateCategory = Exclude<BlockCategory, 'custom'>;
+type TemplateRule = Omit<PlaybookRule, 'ruleId'>;
+
+const templateRule = (label: string, inputType: InputType, helpText: string, extra: Partial<TemplateRule> = {}): TemplateRule => ({
+  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, ...extra,
+});
+
+const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: TemplateRule[] }> = {
+  concept: { name: 'Strategy concept', rules: [
+    templateRule('Strategy thesis', 'text', 'Explain why this edge should exist and the behavior it is designed to exploit.', { required: true, validation: { minLength: 20 } }),
+    templateRule('Suitable markets', 'multi_choice', 'Select the instruments where this strategy has been tested.', { options: ['Forex', 'Indices', 'Futures', 'Crypto', 'Stocks'] }),
+    templateRule('When should this strategy be avoided?', 'text', 'Document conditions where this playbook should remain inactive.'),
+  ] },
+  context: { name: 'Market context', rules: [
+    templateRule('Higher-timeframe bias', 'single_choice', 'Record the directional context before looking for an entry.', { required: true, options: ['Bullish', 'Bearish', 'Neutral'] }),
+    templateRule('Market condition', 'single_choice', 'Classify the current market regime.', { options: ['Trending', 'Ranging', 'Expanding', 'Consolidating'] }),
+    templateRule('Key context evidence', 'text', 'Describe the liquidity, level, session, or narrative visible on the chart.', { required: true }),
+  ] },
+  setup: { name: 'Setup and location', rules: [
+    templateRule('Setup location', 'multi_choice', 'Select every location feature present before the trigger.', { required: true, options: ['Order Block', 'Fair Value Gap', 'Breaker', 'Key Level', 'Premium / Discount'] }),
+    templateRule('Liquidity swept', 'boolean', 'Confirm whether the required liquidity was taken.'),
+    templateRule('What invalidates this setup?', 'text', 'Describe the price action that makes the setup unacceptable.', { required: true }),
+  ] },
+  entry: { name: 'Entry confirmation', rules: [
+    templateRule('Entry trigger', 'multi_choice', 'Record the confirmations that authorized entry.', { required: true, options: ['Market Structure Shift', 'Displacement', 'FVG Formation', 'Retest', 'Candle Confirmation'] }),
+    templateRule('Entry timeframe', 'single_choice', 'Select the timeframe used to execute.', { required: true, options: ['1m', '5m', '15m', '30m', '1h'] }),
+    templateRule('Entry matched the model', 'boolean', 'Confirm that entry occurred only after the documented trigger.', { required: true }),
+  ] },
+  risk: { name: 'Risk plan', rules: [
+    templateRule('Planned risk', 'number', 'Enter the percentage of account equity planned for this trade.', { required: true, unit: '%', validation: { min: 0, max: 100 } }),
+    templateRule('Minimum risk-to-reward', 'number', 'Enter the minimum reward multiple required, for example 2 for 1:2.', { required: true, unit: 'R', validation: { min: 0 } }),
+    templateRule('Stop and target defined', 'boolean', 'Confirm both invalidation and profit objectives were defined before entry.', { required: true }),
+  ] },
+  execution: { name: 'Execution', rules: [
+    templateRule('Entry executed as planned', 'boolean', 'Confirm price, order type, and timing matched the plan.', { required: true }),
+    templateRule('Position size correct', 'boolean', 'Confirm the order used the planned risk and account size.', { required: true }),
+    templateRule('Execution notes', 'text', 'Record slippage, delay, or any difference between the plan and fill.'),
+  ] },
+  management: { name: 'Trade management', rules: [
+    templateRule('Management method', 'single_choice', 'Select the management plan used after entry.', { options: ['Fixed stop and target', 'Break-even', 'Partial profits', 'Trailing stop', 'Time-based'] }),
+    templateRule('Manual intervention followed the plan', 'boolean', 'Confirm every adjustment was explicitly allowed by the playbook.', { required: true }),
+    templateRule('Management notes', 'text', 'Explain stop movement, partials, or intervention decisions.'),
+  ] },
+  exit: { name: 'Exit', rules: [
+    templateRule('Exit reason', 'single_choice', 'Record the event that terminated the trade.', { required: true, options: ['Target reached', 'Stop reached', 'Invalidation', 'Time-based exit', 'Manual close'] }),
+    templateRule('Realized result', 'number', 'Record the final result as an R multiple.', { unit: 'R' }),
+    templateRule('Exit followed the playbook', 'boolean', 'Confirm the final exit complied with the documented plan.', { required: true }),
+  ] },
+  review: { name: 'Post-trade review', rules: [
+    templateRule('Execution quality', 'rating', 'Rate how closely the complete trade followed the plan.', { required: true }),
+    templateRule('Main lesson', 'text', 'Write the most important repeatable lesson from this trade.', { required: true, validation: { minLength: 10 } }),
+    templateRule('Does the playbook need revision?', 'boolean', 'Separate a strategy problem from a one-off execution mistake.'),
+  ] },
+};
+
 function uid(prefix: string) {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
 }
 
 function blankBlock(): PlaybookBlock {
   return { blockId: uid('block'), name: 'New stage', category: 'custom', rules: [] };
+}
+
+function blockFromTemplate(category: TemplateCategory): PlaybookBlock {
+  const template = CATEGORY_TEMPLATES[category];
+  return {
+    blockId: uid('block'),
+    name: template.name,
+    category,
+    rules: template.rules.map(rule => ({ ...cloneRule(rule), ruleId: uid('rule') })),
+  };
+}
+
+function cloneRule(rule: TemplateRule): TemplateRule {
+  return JSON.parse(JSON.stringify(rule)) as TemplateRule;
 }
 
 function latest(playbook: Playbook) {
@@ -176,6 +245,7 @@ export default function PlaybooksPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [newBlockCategory, setNewBlockCategory] = useState<TemplateCategory>('context');
 
   const selectPlaybook = useCallback((playbook: Playbook) => {
     const version = latest(playbook);
@@ -372,7 +442,17 @@ export default function PlaybooksPage() {
                 </section>
               ))}
 
-              <button onClick={() => { setBlocks(current => [...current, blankBlock()]); markDirty(); }} style={{ minHeight: 48, border: '1px dashed var(--accent)', borderRadius: 12, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}><CopyPlus size={16} style={{ verticalAlign: 'middle', marginRight: 7 }} />Add playbook block</button>
+              <section className="playbook-add-stage">
+                <div>
+                  <strong>Add the next lifecycle stage</strong>
+                  <span>Use recommended editable fields or begin with an empty custom stage.</span>
+                </div>
+                <select value={newBlockCategory} onChange={event => setNewBlockCategory(event.target.value as TemplateCategory)}>
+                  {BLOCK_CATEGORIES.filter(item => item.value !== 'custom').map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+                <button className="btn-primary" onClick={() => { setBlocks(current => [...current, blockFromTemplate(newBlockCategory)]); markDirty(); }}><CopyPlus size={15} />Add recommended stage</button>
+                <button className="btn-ghost" onClick={() => { setBlocks(current => [...current, blankBlock()]); markDirty(); }}><Plus size={15} />Add empty stage</button>
+              </section>
 
               <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
                 <label style={{ display: 'grid', gap: 7, color: 'var(--text-muted)', fontSize: 12 }}>

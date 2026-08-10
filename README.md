@@ -1,76 +1,116 @@
 # TradeJournal — Personal MT5 Trading Analytics Portal
 
-A self-hosted, offline-resilient trading journal that syncs closed trades from MetaTrader 5 and presents performance through a private dashboard.
+A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 trades, preserves an auditable record of strategy changes, and measures what actually contributes to performance.
 
 ## Features
 
 | Feature | Description |
 |---|---|
-| Auto MT5 Sync | Python script polls MT5 and pushes closed deals to the backend |
-| Dashboard | Live account balance, equity curve, and headline metrics |
-| Performance | Equity curve, drawdown chart, profit factor, expectancy, and R:R ratio |
-| Trading Calendar | Daily P&L heatmap with drill-down trades |
-| Analytics | Breakdown by session, symbol, emotion, setup grade, day of week, and tags |
-| Screenshot Uploads | Attach chart screenshots to any trade with Cloudinary hosting |
-| Screenshot Metadata | Every screenshot embeds full trade data as Cloudinary context tags + a sidecar JSON file for reconstruction without MongoDB |
-| Offline Screenshots | Screenshots save to server disk when MongoDB is offline; auto-upload to Cloudinary on reconnect with full cleanup |
-| Data Export | One-click JSON backup (trades + account events) and CSV export from the Backup page |
-| 24h Auto-Backup | Server mirrors MongoDB → local_trades.json every 24 hours automatically |
-| Offline Resilience | Falls back to local JSON if MongoDB is unreachable — all routes work without a live database |
-| Private by Design | Public registration disabled; single-user credential-locked access |
+| Automatic MT5 Sync | Python script polls MT5 and sends closed deals and account events to the backend |
+| Live/Demo Classification | Detects the connected MT5 account mode, labels trades automatically, and supports account-type filtering |
+| Dashboard | Account balance, equity curve, cash-flow-adjusted growth, and headline metrics |
+| Performance | Equity curve, drawdown, profit factor, expectancy, and R:R metrics |
+| Trading Calendar | Daily P&L heatmap with trade drill-down |
+| Analytics | Breakdowns by session, symbol, emotion, grade, weekday, setup, and tags |
+| Versioned Playbooks | Build custom strategies from flexible blocks and rules; every publish creates an immutable version |
+| Structured Trade Review | Record Yes/No, choice, number, rating, or text answers against the exact playbook version used |
+| Edge Coach Evidence | Compare strategy versions and rule answers by sample size, win rate, and average P&L |
+| Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
+| Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
+| Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
+| Data Export | Download full JSON backups and flat CSV exports from the Backup page |
+| Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
+| Offline Resilience | Fall back to local JSON when MongoDB is unavailable |
+| Private by Design | Public registration is disabled and trade routes require authentication |
 
-## Redundancy Architecture
+## Versioned Strategy Playbooks
 
-The journal is designed so you can **always reconstruct your data** even if you lose access to MongoDB or Cloudinary.
+Playbooks use an append-only audit model:
 
-### Data Layers (in priority order)
+1. Create a strategy such as London ORB, FVG Continuation, or a completely custom setup.
+2. Add custom blocks such as Market Context, Location, Entry Confirmation, Risk, and Execution.
+3. Add rules with answer types: Yes/No, single choice, multiple choice, number, rating, or text.
+4. Publish the strategy to create version 1.
+5. Edit and publish again to create version 2. Version 1 is never overwritten.
+6. Review a trade against a published version. The trade stores the version ID, complete rule snapshot, and structured responses.
+7. Edge Coach compares versions and answers without changing historical results.
 
-```
-1. MongoDB Atlas          — primary live database
-2. local_trades.json      — full mirror on server disk, refreshed every 24h and on startup
-3. Cloudinary images      — each screenshot has contextual metadata tags containing the
-                            full trade record (symbol, direction, P&L, prices, times, etc.)
-4. Cloudinary sidecar     — a {imageId}_metadata raw JSON file uploaded alongside each
-                            screenshot, containing the complete trade object
-5. Offline disk cache     — when MongoDB is offline, screenshots save to
-                            backend/public/screenshots/{tradeId}/ with a .meta.json sidecar;
-                            auto-uploaded to Cloudinary when MongoDB reconnects
-6. Manual exports         — JSON and CSV downloads available from the Backup page at /archive
+Removing a rule only excludes it from the next published version. Previous versions and attached trades retain the original rule. Archiving a playbook hides it from new selections without deleting its audit history.
+
+Existing flat trading rules are migrated into a starter playbook automatically.
+
+### Edge Coach Evidence
+
+For playbook-backed trades, Edge Coach reports:
+
+- Trade count, win rate, and average P&L for each strategy version.
+- Outcomes grouped by each structured rule answer.
+- Evidence labels based on sample size: insufficient (`<5`), developing (`5–19`), and strong (`20+`).
+
+Boolean, single-choice, multiple-choice, and rating answers currently feed effectiveness comparisons. Number and text answers remain preserved in the audit record for later numerical or qualitative analysis.
+
+## Live and Demo Accounts
+
+`sync.py` reads `account_info().trade_mode` from the connected MT5 terminal:
+
+- Real accounts are stored as `accountType: "live"`.
+- Demo and contest accounts are stored as `accountType: "demo"`.
+- A full resync backfills the detected type onto matching existing trades.
+- The Trades page can show both account types or filter to Live or Demo only.
+
+Set `MT5_REQUIRE_REAL_ACCOUNT=true` if the sync process must reject every non-real account. Leave it `false` to sync and compare both account types.
+
+## Data Redundancy and Reconstruction
+
+The journal stores data across several recovery layers:
+
+```text
+1. MongoDB Atlas          — primary database
+2. local_trades.json      — local mirror refreshed on startup and every 24 hours
+3. Cloudinary image       — screenshot plus core trade context metadata
+4. Cloudinary sidecar     — raw JSON with the richer journal and playbook audit record
+5. Offline disk cache     — staged image and .meta.json files while MongoDB is offline
+6. Manual exports         — JSON and CSV downloads from /archive
 ```
 
 ### Screenshot Metadata
 
-Every screenshot upload embeds trade metadata in two places on Cloudinary:
+Every Cloudinary screenshot stores:
 
-- **Contextual metadata tags**: `symbol`, `direction`, `dealId`, `entryPrice`, `exitPrice`, `pnlUSD`, `pnlPct`, `openTime`, `closeTime`, `lotSize`, `emotion`, `grade`, `tags`, `runningBalance`, `journalVersion`
-- **Sidecar `_metadata` file**: A raw JSON file stored in the same Cloudinary folder with the full trade object
+- Core context including `dealId`, `positionId`, symbol, direction, prices, size, P&L, timestamps, balance, account type, grade, emotion, and tags.
+- A raw `{imageId}_metadata` JSON sidecar containing richer journal fields, execution data, and the playbook version, snapshot, and responses.
 
-This means: even without MongoDB, you can open the Cloudinary dashboard, click any image, and immediately see which trade it belongs to and reconstruct the full record.
+`POST /api/maintenance/recover-screenshots` searches the authenticated user's Cloudinary folder. It matches screenshots to trades by `dealId`. If a matching trade is missing, the endpoint can recreate the core MT5 trade from context metadata and attach the screenshot.
+
+> Reconstruction reads metadata attached to the screenshot asset. It does not infer prices or P&L by visually reading chart pixels with OCR.
 
 ## Architecture
 
-```
+```text
 MetaTrader 5
-    -> sync.py polls closed trades every SYNC_INTERVAL seconds
-    -> POST /api/sync
+    -> sync.py polls closed deals and account events
+    -> POST /api/sync and /api/sync-account-events
 
-Backend (Express :4000)
-    -> saves to MongoDB Atlas (primary)
-    -> mirrors to local_trades.json (fallback, refreshed every 24h)
-    -> serves static offline screenshots at /public/screenshots/
+Express backend (:4000)
+    -> MongoDB Atlas primary storage
+    -> local JSON offline mirror
+    -> Cloudinary screenshot and sidecar storage
 
-Frontend (Next.js :3000)
-    -> fetches via JWT-authenticated API
-    -> /archive — Backup & Export page with JSON/CSV download
+Next.js frontend (:3000)
+    -> JWT-authenticated API proxy
+    -> /trades  trade list, filters, journal, and playbook review
+    -> /rules   versioned playbook builder
+    -> /coach   behavior and playbook evidence
+    -> /archive backup, export, and recovery controls
 ```
 
 ## Tech Stack
 
-- **Frontend**: Next.js 15, React 19, Recharts, Vanilla CSS
-- **Backend**: Node.js, Express, Mongoose, JWT, Cloudinary SDK
-- **Sync**: Python 3, MetaTrader5 SDK, python-dotenv
-- **Database**: MongoDB Atlas + local JSON fallback
-- **Images**: Cloudinary (with embedded trade metadata)
+- **Frontend:** Next.js 15, React 19, Recharts, Vanilla CSS
+- **Backend:** Node.js, Express, Mongoose, JWT, Cloudinary SDK
+- **Sync:** Python 3, MetaTrader5 SDK, Requests, python-dotenv
+- **Database:** MongoDB Atlas with local JSON fallback
+- **Images:** Cloudinary with context metadata and raw JSON sidecars
 
 ## Setup
 
@@ -80,7 +120,7 @@ Frontend (Next.js :3000)
 cd backend
 npm install
 cp .env.example .env
-# Fill in .env (see Environment Variables below)
+# Fill in the backend variables below
 node server.js
 ```
 
@@ -93,50 +133,66 @@ echo "NEXT_PUBLIC_API_URL=http://localhost:4000/api" > .env.local
 npm run dev
 ```
 
-### Python Sync Script
+### MT5 Sync
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
+# Fill in the MT5 and journal credentials
 python sync.py
 ```
 
+Use `python sync.py --once` for one sync cycle. A full resync can also be requested from the journal maintenance controls.
+
 ## Project Structure
 
-```
+```text
 backend/
   middleware/auth.js
-  models/Trade.js
-  models/User.js
-  routes/auth.js
-  routes/trades.js          <- all API routes incl. export + screenshot metadata
+  models/
+    Trade.js
+    User.js
+    AccountEvent.js
+    SyncRequest.js
+  routes/
+    auth.js
+    trades.js              # trades, playbooks, analytics, exports, screenshots
+  local_trades.json        # generated local trade mirror
+  local_account_events.json
+  local_playbooks.json     # generated offline playbook storage
+  public/screenshots/      # offline screenshot staging area
   server.js
-  local_trades.json         <- auto-generated MongoDB mirror
-  local_account_events.json <- auto-generated account events mirror
-  public/
-    screenshots/            <- offline screenshot staging area (auto-cleaned)
 frontend/
   app/
-    page.tsx                <- dashboard
-    trades/                 <- trade list + screenshot upload
-    calendar/               <- daily P&L calendar
-    stats/                  <- analytics breakdown
-    performance/            <- equity curve + risk metrics
-    archive/                <- backup & export page
+    trades/                # trade list, filters, journal, screenshots
+    rules/                 # versioned strategy playbook builder
+    coach/                 # Edge Coach evidence
+    stats/                 # analytics breakdowns
+    performance/           # equity and risk metrics
+    calendar/              # P&L calendar
+    archive/               # backup and recovery
   components/Sidebar.tsx
 sync.py
 requirements.txt
 ```
 
-## API — Export Endpoints
+## Key API Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/export/json` | GET | Full JSON backup: all trades + account events |
-| `/api/export/csv` | GET | Flat CSV of all trades (20 columns) |
-| `/api/export/status` | GET | DB mode, counts, backup file info, pending offline screenshots |
+| `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
+| `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
+| `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
+| `/api/playbooks` | GET / POST | List playbooks or publish a new strategy |
+| `/api/playbooks/:playbookId` | PUT | Publish a new immutable version |
+| `/api/playbooks/:playbookId` | PATCH | Archive or restore a strategy |
+| `/api/coach` | GET | Behavioral, version, and rule-answer analytics |
+| `/api/maintenance/recover-screenshots` | POST | Reattach screenshots and reconstruct missing core trades |
+| `/api/export/json` | GET | Full JSON backup of trades and account events |
+| `/api/export/csv` | GET | Flat CSV trade export |
+| `/api/export/status` | GET | Database, backup, and pending screenshot status |
 
-All export endpoints work in both online (MongoDB) and offline (local cache) modes.
+All endpoints require authentication except login and health checks. Export and recovery routes work with the same authenticated user scope as trade routes.
 
 ## Environment Variables
 
@@ -144,32 +200,34 @@ All export endpoints work in both online (MongoDB) and offline (local cache) mod
 
 | Variable | Description |
 |---|---|
-| `MT5_LOGIN` | Your MT5 account number |
-| `MT5_PASSWORD` | Your MT5 password |
-| `MT5_SERVER` | Your broker's MT5 server name |
-| `MT5_REQUIRE_REAL_ACCOUNT` | Set `true` to reject demo accounts; default `false` syncs both and labels trades automatically |
-| `API_BASE` | Backend API URL |
-| `SYNC_INTERVAL` | Sync frequency in seconds |
-| `USER_EMAIL` | Admin email |
-| `USER_PASSWORD` | Admin password |
+| `MT5_LOGIN` | MT5 account number |
+| `MT5_PASSWORD` | MT5 password |
+| `MT5_SERVER` | Broker server name |
+| `MT5_REQUIRE_REAL_ACCOUNT` | Set `true` to reject demo accounts; default `false` syncs and labels both account types |
+| `API_BASE` | Backend API URL, normally `http://localhost:4000/api` |
+| `API_TIMEOUT` | HTTP timeout in seconds |
+| `SYNC_INTERVAL` | Polling interval in seconds |
+| `USER_EMAIL` | Journal admin email used by the sync process |
+| `USER_PASSWORD` | Journal admin password used by the sync process |
 
 ### `backend/.env`
 
 | Variable | Description |
 |---|---|
-| `PORT` | Backend port (default 4000) |
+| `PORT` | Express port, default `4000` |
 | `MONGODB_URI` | MongoDB connection string |
-| `JWT_SECRET` | Long random string for JWT signing |
-| `ADMIN_EMAIL` | Admin user email |
-| `ADMIN_PASSWORD` | Admin user password |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name (for screenshot uploads) |
+| `JWT_SECRET` | Long random JWT signing secret |
+| `ADMIN_EMAIL` | Private admin email |
+| `ADMIN_PASSWORD` | Private admin password |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | Cloudinary API secret |
 
 ## Security Notes
 
-- `.env` files are ignored by git.
+- `.env` files are ignored by Git.
 - Public registration is disabled.
-- All trade API routes require JWT authentication.
-- Trade data is scoped to the authenticated user.
-- Offline screenshots in `backend/public/screenshots/` are automatically deleted after successful Cloudinary upload.
+- API routes require JWT authentication and scope data to the authenticated user.
+- Cloudinary recovery only scans the authenticated user's folder prefix.
+- Offline screenshots are removed from local staging after successful Cloudinary upload.
+- Published playbook versions referenced by trades are immutable audit records.

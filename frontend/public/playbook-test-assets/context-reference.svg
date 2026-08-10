@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Higher timeframe context reference</title><desc id="desc">Dummy bullish chart approaching prior-day liquidity.</desc>
+  <rect width="1200" height="675" fill="#0f172a"/><g stroke="#24324a" stroke-width="1"><path d="M0 110h1200M0 220h1200M0 330h1200M0 440h1200M0 550h1200"/><path d="M150 0v675M300 0v675M450 0v675M600 0v675M750 0v675M900 0v675M1050 0v675"/></g>
+  <rect x="90" y="440" width="1020" height="90" fill="#2563eb" opacity=".16" stroke="#60a5fa" stroke-dasharray="8 6"/><text x="110" y="475" fill="#93c5fd" font-family="Arial" font-size="24">H4 DISCOUNT / DEMAND</text>
+  <path d="M80 510 C180 490 220 530 310 475 S450 440 510 400 S620 430 690 360 S810 375 870 300 S990 270 1100 185" fill="none" stroke="#22c55e" stroke-width="8"/>
+  <path d="M990 155h120" stroke="#f59e0b" stroke-width="5" stroke-dasharray="12 8"/><text x="820" y="140" fill="#fbbf24" font-family="Arial" font-size="25">PRIOR-DAY LIQUIDITY</text>
+  <text x="65" y="70" fill="#fff" font-family="Arial" font-weight="bold" font-size="34">CONTEXT REFERENCE — BULLISH HTF NARRATIVE</text><text x="65" y="620" fill="#94a3b8" font-family="Arial" font-size="22">Dummy testing asset — not market data</text>
+</svg>

@@ -1,0 +1,107 @@
+{
+  "name": "London Liquidity Sweep — Test Playbook",
+  "description": "Comprehensive dummy strategy used to test the visual playbook editor, timeline journal, immutable snapshots, specialized fields, and Edge Coach analytics.",
+  "changeNote": "Created a complete test strategy covering every lifecycle stage and supported field type.",
+  "blocks": [
+    {
+      "blockId": "test-concept",
+      "name": "Strategy thesis",
+      "category": "concept",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-thesis", "label": "Why should this edge exist?", "inputType": "long_text", "options": [], "required": true, "helpText": "Explain the repeatable market behavior behind the strategy.", "placeholder": "London takes overnight liquidity before expanding toward the opposing objective…", "unit": "", "defaultValue": null, "validation": { "minLength": 30, "maxLength": 1000 } },
+        { "ruleId": "test-market", "label": "Suitable markets", "inputType": "multi_choice", "options": ["NAS100", "US30", "EURUSD", "GBPUSD"], "required": true, "helpText": "Select every market validated for this playbook.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} }
+      ]
+    },
+    {
+      "blockId": "test-context",
+      "name": "Higher-timeframe context",
+      "category": "context",
+      "evidence": [
+        { "evidenceId": "test-evidence-context", "url": "/playbook-test-assets/context-reference.svg", "publicId": "", "caption": "Reference context: price approaches prior-day liquidity while the higher-timeframe bias remains bullish.", "kind": "reference", "linkedRuleId": "test-bias", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 }
+      ],
+      "rules": [
+        { "ruleId": "test-bias", "label": "Higher-timeframe bias", "inputType": "single_choice", "options": ["Bullish", "Bearish", "Neutral"], "required": true, "helpText": "Use Daily and H4 structure to establish direction.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-session-date", "label": "Analysis date", "inputType": "date", "options": [], "required": true, "helpText": "Date on which the pre-market plan was prepared.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-session-time", "label": "Planned entry window", "inputType": "time", "options": [], "required": true, "helpText": "Local start time of the intended execution window.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} }
+      ]
+    },
+    {
+      "blockId": "test-setup",
+      "name": "Liquidity sweep and location",
+      "category": "setup",
+      "evidence": [
+        { "evidenceId": "test-evidence-valid", "url": "/playbook-test-assets/valid-setup.svg", "publicId": "", "caption": "Valid example: liquidity is swept into the marked order block before displacement creates an entry imbalance.", "kind": "valid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 0 },
+        { "evidenceId": "test-evidence-invalid", "url": "/playbook-test-assets/invalid-setup.svg", "publicId": "", "caption": "Invalid example: entry occurs in the middle of the range without a liquidity sweep or higher-timeframe location.", "kind": "invalid", "linkedRuleId": "test-confirmations", "uploadedAt": "2026-08-10T00:00:00.000Z", "order": 1 }
+      ],
+      "rules": [
+        { "ruleId": "test-sweep", "label": "Required liquidity was swept", "inputType": "boolean", "options": [], "required": true, "helpText": "Confirm price traded through the documented liquidity objective before entry.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-confirmations", "label": "Setup confirmations", "inputType": "multi_choice", "options": ["Order Block", "Fair Value Gap", "Market Structure Shift", "Displacement", "Session Open"], "required": true, "helpText": "Select every observable confirmation present on the chart.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-location-note", "label": "Location explanation", "inputType": "text", "options": [], "required": false, "helpText": "Summarize why the location is meaningful.", "placeholder": "Discount H1 order block below Asian low", "unit": "", "defaultValue": null, "validation": { "minLength": 5, "maxLength": 160 } }
+      ]
+    },
+    {
+      "blockId": "test-entry",
+      "name": "Entry confirmation",
+      "category": "entry",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-entry-model", "label": "Entry model", "inputType": "single_choice", "options": ["FVG retracement", "Order Block retest", "Breaker retest", "Market execution"], "required": true, "helpText": "Choose the exact entry model used.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-entry-price", "label": "Planned entry price", "inputType": "price", "options": [], "required": true, "helpText": "Record the planned price before execution.", "placeholder": "21450.5", "unit": "", "defaultValue": null, "validation": { "min": 0 } }
+      ]
+    },
+    {
+      "blockId": "test-risk",
+      "name": "Risk plan",
+      "category": "risk",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-risk-percent", "label": "Account risk", "inputType": "percentage", "options": [], "required": true, "helpText": "Maximum account equity placed at risk.", "placeholder": "0.5", "unit": "%", "defaultValue": 0.5, "validation": { "min": 0.1, "max": 2 } },
+        { "ruleId": "test-risk-currency", "label": "Monetary risk", "inputType": "currency", "options": [], "required": true, "helpText": "Maximum planned loss in account currency.", "placeholder": "50", "unit": "USD", "defaultValue": null, "validation": { "min": 0, "max": 1000 } },
+        { "ruleId": "test-stop-distance", "label": "Stop distance", "inputType": "number", "options": [], "required": true, "helpText": "Distance between entry and invalidation.", "placeholder": "25", "unit": "points", "defaultValue": null, "validation": { "min": 1, "max": 500 } },
+        { "ruleId": "test-min-rr", "label": "Planned risk-to-reward", "inputType": "risk_reward", "options": [], "required": true, "helpText": "Enter 2 for a planned 1:2 trade.", "placeholder": "2", "unit": "R", "defaultValue": 2, "validation": { "min": 1, "max": 10 } }
+      ]
+    },
+    {
+      "blockId": "test-execution",
+      "name": "Order execution",
+      "category": "execution",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-executed-plan", "label": "Entry executed as planned", "inputType": "boolean", "options": [], "required": true, "helpText": "Confirm price, timing, direction, and size matched the plan.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-slippage", "label": "Entry slippage", "inputType": "price", "options": [], "required": false, "helpText": "Absolute difference between planned and filled price.", "placeholder": "1.5", "unit": "points", "defaultValue": 0, "validation": { "min": 0, "max": 100 } }
+      ]
+    },
+    {
+      "blockId": "test-management",
+      "name": "Trade management",
+      "category": "management",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-duration", "label": "Trade duration", "inputType": "duration", "options": [], "required": true, "helpText": "Minutes from entry until final exit.", "placeholder": "45", "unit": "minutes", "defaultValue": null, "validation": { "min": 1, "max": 1440 } },
+        { "ruleId": "test-intervention", "label": "Management followed the plan", "inputType": "boolean", "options": [], "required": true, "helpText": "No unplanned stop movement, partial, or fear-based close.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} }
+      ]
+    },
+    {
+      "blockId": "test-exit",
+      "name": "Exit and final result",
+      "category": "exit",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-exit-reason", "label": "Exit reason", "inputType": "single_choice", "options": ["Target reached", "Stop reached", "Invalidation", "Time-based exit", "Manual close"], "required": true, "helpText": "Select the event that ended the trade.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} },
+        { "ruleId": "test-realized-r", "label": "Realized result", "inputType": "number", "options": [], "required": true, "helpText": "Final result expressed as an R multiple; losses may be negative.", "placeholder": "1.8", "unit": "R", "defaultValue": null, "validation": { "min": -10, "max": 20 } }
+      ]
+    },
+    {
+      "blockId": "test-review",
+      "name": "Post-trade review",
+      "category": "review",
+      "evidence": [],
+      "rules": [
+        { "ruleId": "test-quality", "label": "Execution quality", "inputType": "rating", "options": [], "required": true, "helpText": "Rate compliance with the complete playbook from 1 to 10.", "placeholder": "", "unit": "", "defaultValue": 5, "validation": {} },
+        { "ruleId": "test-lesson", "label": "Main lesson", "inputType": "long_text", "options": [], "required": true, "helpText": "Write the repeatable lesson, not merely a description of the outcome.", "placeholder": "What should be repeated or avoided next time?", "unit": "", "defaultValue": null, "validation": { "minLength": 20, "maxLength": 2000 } },
+        { "ruleId": "test-revision", "label": "Does the playbook require revision?", "inputType": "boolean", "options": [], "required": false, "helpText": "Choose Yes only when evidence suggests the documented strategy—not execution—needs adjustment.", "placeholder": "", "unit": "", "defaultValue": null, "validation": {} }
+      ]
+    }
+  ]
+}

@@ -139,7 +139,7 @@ const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: Templa
   ] },
   exit: { name: 'Exit', rules: [
     templateRule('Exit reason', 'single_choice', 'Record the event that terminated the trade.', { required: true, options: ['Target reached', 'Stop reached', 'Invalidation', 'Time-based exit', 'Manual close'] }),
-    templateRule('Realized result', 'risk_reward', 'Record the final result as an R multiple.', { unit: 'R' }),
+    templateRule('Realized result', 'number', 'Record the final result as an R multiple; losses may be negative.', { unit: 'R' }),
     templateRule('Exit followed the playbook', 'boolean', 'Confirm the final exit complied with the documented plan.', { required: true }),
   ] },
   review: { name: 'Post-trade review', rules: [

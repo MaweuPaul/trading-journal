@@ -66,6 +66,32 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
   return JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[];
 }
 
+function ChoiceOptionsInput({
+  options,
+  onChange,
+}: {
+  options: string[];
+  onChange: (options: string[]) => void;
+}) {
+  // Keep the text being edited separate from the normalized array. Parsing the
+  // controlled value directly removed a trailing comma immediately, making it
+  // impossible to type the next choice.
+  const [draft, setDraft] = useState(() => options.join(', '));
+
+  return (
+    <input
+      value={draft}
+      onChange={event => {
+        const nextDraft = event.target.value;
+        setDraft(nextDraft);
+        onChange(nextDraft.split(',').map(item => item.trim()).filter(Boolean));
+      }}
+      placeholder="A, B, C"
+      style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+    />
+  );
+}
+
 export default function PlaybooksPage() {
   const router = useRouter();
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -258,7 +284,7 @@ export default function PlaybooksPage() {
                       <div key={rule.ruleId} className="playbook-rule-row">
                         <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Rule {ruleIndex + 1}<input value={rule.label} onChange={e => updateRule(block.blockId, rule.ruleId, { label: e.target.value })} placeholder="Observable condition" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label>
                         <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}><span>Answer type<InfoHint text="Choose how this evidence is recorded on a trade. Structured answers such as Yes/No and choices are easiest for Edge Coach to compare." /></span><select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType, options: [] })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(INPUT_LABELS) as InputType[]).map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label>
-                        {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<input value={rule.options.join(', ')} onChange={e => updateRule(block.blockId, rule.ruleId, { options: e.target.value.split(',').map(item => item.trim()).filter(Boolean) })} placeholder="A, B, C" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
+                        {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
                       </div>

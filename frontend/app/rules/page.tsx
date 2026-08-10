@@ -145,7 +145,7 @@ export default function TradingRulesPage() {
 
   return (
     <main className="page-content">
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: '36px 24px 64px' }}>
+      <div style={{ width: '100%', padding: '0 0 32px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap', marginBottom: 28 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>

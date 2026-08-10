@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
-type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
+type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
 type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
 
 interface PlaybookRule {
@@ -56,8 +56,16 @@ const INPUT_LABELS: Record<InputType, string> = {
   single_choice: 'Single choice',
   multi_choice: 'Multiple choice',
   number: 'Number',
+  percentage: 'Percentage',
+  currency: 'Currency amount',
+  price: 'Price',
+  duration: 'Duration',
+  risk_reward: 'Risk-to-reward',
   rating: 'Rating 1–10',
-  text: 'Text',
+  text: 'Short text',
+  long_text: 'Long explanation',
+  date: 'Date',
+  time: 'Time',
 };
 
 const BLOCK_CATEGORIES: Array<{ value: BlockCategory; label: string; description: string }> = [
@@ -102,8 +110,8 @@ const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: Templa
     templateRule('Entry matched the model', 'boolean', 'Confirm that entry occurred only after the documented trigger.', { required: true }),
   ] },
   risk: { name: 'Risk plan', rules: [
-    templateRule('Planned risk', 'number', 'Enter the percentage of account equity planned for this trade.', { required: true, unit: '%', validation: { min: 0, max: 100 } }),
-    templateRule('Minimum risk-to-reward', 'number', 'Enter the minimum reward multiple required, for example 2 for 1:2.', { required: true, unit: 'R', validation: { min: 0 } }),
+    templateRule('Planned risk', 'percentage', 'Enter the percentage of account equity planned for this trade.', { required: true, unit: '%', validation: { min: 0, max: 100 } }),
+    templateRule('Minimum risk-to-reward', 'risk_reward', 'Enter the minimum reward multiple required, for example 2 for 1:2.', { required: true, unit: 'R', validation: { min: 0 } }),
     templateRule('Stop and target defined', 'boolean', 'Confirm both invalidation and profit objectives were defined before entry.', { required: true }),
   ] },
   execution: { name: 'Execution', rules: [
@@ -118,7 +126,7 @@ const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: Templa
   ] },
   exit: { name: 'Exit', rules: [
     templateRule('Exit reason', 'single_choice', 'Record the event that terminated the trade.', { required: true, options: ['Target reached', 'Stop reached', 'Invalidation', 'Time-based exit', 'Manual close'] }),
-    templateRule('Realized result', 'number', 'Record the final result as an R multiple.', { unit: 'R' }),
+    templateRule('Realized result', 'risk_reward', 'Record the final result as an R multiple.', { unit: 'R' }),
     templateRule('Exit followed the playbook', 'boolean', 'Confirm the final exit complied with the documented plan.', { required: true }),
   ] },
   review: { name: 'Post-trade review', rules: [
@@ -210,7 +218,7 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
         <label style={labelStyle}>Unit
           <input value={rule.unit || ''} onChange={event => onChange({ unit: event.target.value })} placeholder="%, USD, points, R…" style={inputStyle} />
         </label>
-        {rule.inputType === 'number' && <>
+        {['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward'].includes(rule.inputType) && <>
           <label style={labelStyle}>Minimum
             <input type="number" value={validation.min ?? ''} onChange={event => onChange({ validation: { ...validation, min: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
@@ -218,7 +226,7 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
             <input type="number" value={validation.max ?? ''} onChange={event => onChange({ validation: { ...validation, max: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
         </>}
-        {rule.inputType === 'text' && <>
+        {['text', 'long_text'].includes(rule.inputType) && <>
           <label style={labelStyle}>Minimum characters
             <input type="number" min="0" value={validation.minLength ?? ''} onChange={event => onChange({ validation: { ...validation, minLength: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>

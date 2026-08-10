@@ -132,7 +132,7 @@ function normalizeBlocks(input) {
       rules: rules.map((rule, ruleIndex) => {
         const label = String(rule.label || '').trim();
         if (!label || label.length > 160) throw new Error('Every rule needs a label');
-        const inputType = ['boolean', 'single_choice', 'multi_choice', 'number', 'rating', 'text'].includes(rule.inputType) ? rule.inputType : 'boolean';
+        const inputType = ['boolean', 'single_choice', 'multi_choice', 'number', 'percentage', 'currency', 'price', 'duration', 'risk_reward', 'rating', 'text', 'long_text', 'date', 'time'].includes(rule.inputType) ? rule.inputType : 'boolean';
         const options = ['single_choice', 'multi_choice'].includes(inputType)
           ? (Array.isArray(rule.options) ? rule.options.map(option => String(option).trim()).filter(Boolean).slice(0, 20) : [])
           : [];
@@ -187,13 +187,19 @@ function validatePlaybookResponses(snapshot, input) {
       if (rule.inputType === 'boolean' && typeof value !== 'boolean') throw new Error(`Invalid Yes/No answer for: ${rule.label}`);
       if (rule.inputType === 'single_choice' && !rule.options.includes(String(value))) throw new Error(`Invalid choice for: ${rule.label}`);
       if (rule.inputType === 'multi_choice' && (!Array.isArray(value) || value.some(item => !rule.options.includes(String(item))))) throw new Error(`Invalid choices for: ${rule.label}`);
-      if (rule.inputType === 'number' && !Number.isFinite(Number(value))) throw new Error(`Invalid number for: ${rule.label}`);
-      if (rule.inputType === 'number' && rule.validation?.min !== null && rule.validation?.min !== undefined && Number(value) < rule.validation.min) throw new Error(`${rule.label} must be at least ${rule.validation.min}`);
-      if (rule.inputType === 'number' && rule.validation?.max !== null && rule.validation?.max !== undefined && Number(value) > rule.validation.max) throw new Error(`${rule.label} must be at most ${rule.validation.max}`);
+      const numericTypes = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward'];
+      if (numericTypes.includes(rule.inputType) && !Number.isFinite(Number(value))) throw new Error(`Invalid number for: ${rule.label}`);
+      if (numericTypes.includes(rule.inputType) && rule.validation?.min !== null && rule.validation?.min !== undefined && Number(value) < rule.validation.min) throw new Error(`${rule.label} must be at least ${rule.validation.min}`);
+      if (numericTypes.includes(rule.inputType) && rule.validation?.max !== null && rule.validation?.max !== undefined && Number(value) > rule.validation.max) throw new Error(`${rule.label} must be at most ${rule.validation.max}`);
+      if (rule.inputType === 'percentage' && (Number(value) < 0 || Number(value) > 100)) throw new Error(`${rule.label} must be between 0 and 100%`);
+      if (rule.inputType === 'risk_reward' && Number(value) < 0) throw new Error(`${rule.label} cannot be negative`);
       if (rule.inputType === 'rating' && (!Number.isFinite(Number(value)) || Number(value) < 1 || Number(value) > 10)) throw new Error(`Rating must be from 1 to 10: ${rule.label}`);
-      if (rule.inputType === 'text' && rule.validation?.minLength !== null && rule.validation?.minLength !== undefined && String(value).length < rule.validation.minLength) throw new Error(`${rule.label} needs at least ${rule.validation.minLength} characters`);
-      if (rule.inputType === 'text' && rule.validation?.maxLength !== null && rule.validation?.maxLength !== undefined && String(value).length > rule.validation.maxLength) throw new Error(`${rule.label} can contain at most ${rule.validation.maxLength} characters`);
-      clean[rule.ruleId] = rule.inputType === 'text' ? String(value).slice(0, rule.validation?.maxLength || 2000) : value;
+      const textTypes = ['text', 'long_text'];
+      if (textTypes.includes(rule.inputType) && rule.validation?.minLength !== null && rule.validation?.minLength !== undefined && String(value).length < rule.validation.minLength) throw new Error(`${rule.label} needs at least ${rule.validation.minLength} characters`);
+      if (textTypes.includes(rule.inputType) && rule.validation?.maxLength !== null && rule.validation?.maxLength !== undefined && String(value).length > rule.validation.maxLength) throw new Error(`${rule.label} can contain at most ${rule.validation.maxLength} characters`);
+      if (rule.inputType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new Error(`Invalid date for: ${rule.label}`);
+      if (rule.inputType === 'time' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value))) throw new Error(`Invalid time for: ${rule.label}`);
+      clean[rule.ruleId] = textTypes.includes(rule.inputType) ? String(value).slice(0, rule.validation?.maxLength || 5000) : value;
     }
   }
   return clean;

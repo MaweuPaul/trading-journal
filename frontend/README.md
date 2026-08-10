@@ -16,6 +16,8 @@ When a playbook is attached to a trade, the frontend renders its fields in Plan,
 
 Rule-level instructional images are required by default for newly added rules. In **Field guidance and validation**, turn off **Require instructional image examples** when a rule does not need a chart example.
 
+The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
+
 ## Routes
 
 | Route | Purpose |

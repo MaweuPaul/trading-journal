@@ -6,6 +6,7 @@ import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
+type PrimitiveInputType = 'boolean' | 'number' | 'text' | 'single_choice' | 'multi_choice';
 type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
 
 interface PlaybookRule {
@@ -82,6 +83,22 @@ const INPUT_LABELS: Record<InputType, string> = {
   date: 'Date',
   time: 'Time',
 };
+
+const PRIMITIVE_INPUT_LABELS: Record<PrimitiveInputType, string> = {
+  boolean: 'Yes / No',
+  number: 'Number',
+  text: 'Text',
+  single_choice: 'Single choice',
+  multi_choice: 'Multiple choice',
+};
+const NUMBER_FORMATS: InputType[] = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward', 'rating'];
+const TEXT_FORMATS: InputType[] = ['text', 'long_text', 'date', 'time'];
+
+function primitiveInputType(inputType: InputType): PrimitiveInputType {
+  if (NUMBER_FORMATS.includes(inputType)) return 'number';
+  if (TEXT_FORMATS.includes(inputType)) return 'text';
+  return inputType as PrimitiveInputType;
+}
 
 const BLOCK_CATEGORIES: Array<{ value: BlockCategory; label: string; description: string }> = [
   { value: 'concept', label: '1. Strategy concept', description: 'The thesis, markets, sessions, and conditions behind the edge.' },
@@ -647,8 +664,8 @@ export default function PlaybooksPage() {
                     {block.rules.map((rule, ruleIndex) => (
                       <div key={rule.ruleId} className="playbook-rule-row">
                         <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Rule {ruleIndex + 1}<input value={rule.label} onChange={e => updateRule(block.blockId, rule.ruleId, { label: e.target.value })} placeholder="Observable condition" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label>
-                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}><span>Answer type<InfoHint text="Choose how this evidence is recorded on a trade. Structured answers such as Yes/No and choices are easiest for Edge Coach to compare." /></span><select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType, options: [] })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(INPUT_LABELS) as InputType[]).map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label>
-                        {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
+                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}><span>Answer type<InfoHint text="Choose the primitive value stored for this rule: Boolean, Number, Text, Single choice, or Multiple choice. Number and Text presentation is configured separately under Format." /></span><select value={primitiveInputType(rule.inputType)} onChange={e => { const next = e.target.value as PrimitiveInputType; updateRule(block.blockId, rule.ruleId, { inputType: next, options: ['single_choice', 'multi_choice'].includes(next) ? rule.options : [] }); }} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(PRIMITIVE_INPUT_LABELS) as PrimitiveInputType[]).map(type => <option key={type} value={type}>{PRIMITIVE_INPUT_LABELS[type]}</option>)}</select></label>
+                        {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : primitiveInputType(rule.inputType) === 'number' ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Format<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{NUMBER_FORMATS.map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label> : primitiveInputType(rule.inputType) === 'text' ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Format<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{TEXT_FORMATS.map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Boolean value</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
                         <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />

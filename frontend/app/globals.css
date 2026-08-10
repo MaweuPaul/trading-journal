@@ -1070,6 +1070,27 @@ tbody td.text {
   border-radius: 10px;
   border: 1px solid var(--border);
 }
+.playbook-field-details {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.playbook-field-details summary {
+  width: fit-content;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.playbook-field-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
 @media (max-width: 1100px) {
   .playbook-layout { grid-template-columns: 1fr; }
   .playbook-layout aside { position: static !important; }
@@ -1079,6 +1100,8 @@ tbody td.text {
   .playbook-header-grid,
   .playbook-block-header,
   .playbook-rule-row { grid-template-columns: 1fr; }
+  .playbook-field-details-grid { grid-template-columns: 1fr; }
+  .playbook-field-details-grid > label { grid-column: auto !important; }
 }
 
 /* ══════════════════════════════

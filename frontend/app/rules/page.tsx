@@ -14,6 +14,16 @@ interface PlaybookRule {
   inputType: InputType;
   options: string[];
   required: boolean;
+  helpText?: string;
+  placeholder?: string;
+  unit?: string;
+  defaultValue?: string | number | boolean | null;
+  validation?: {
+    min?: number | null;
+    max?: number | null;
+    minLength?: number | null;
+    maxLength?: number | null;
+  };
   order?: number;
 }
 
@@ -92,6 +102,49 @@ function ChoiceOptionsInput({
   );
 }
 
+function optionalNumber(value: string) {
+  return value === '' ? null : Number(value);
+}
+
+function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch: Partial<PlaybookRule>) => void }) {
+  const validation = rule.validation || {};
+  const inputStyle = { minHeight: 38, width: '100%', border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' };
+  const labelStyle = { display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' };
+
+  return (
+    <details className="playbook-field-details">
+      <summary>Field guidance and validation</summary>
+      <div className="playbook-field-details-grid">
+        <label style={{ ...labelStyle, gridColumn: 'span 2' }}>Help text
+          <input value={rule.helpText || ''} onChange={event => onChange({ helpText: event.target.value })} placeholder="Explain what evidence the trader should record" style={inputStyle} />
+        </label>
+        <label style={labelStyle}>Input placeholder
+          <input value={rule.placeholder || ''} onChange={event => onChange({ placeholder: event.target.value })} placeholder="Example answer or instruction" style={inputStyle} />
+        </label>
+        <label style={labelStyle}>Unit
+          <input value={rule.unit || ''} onChange={event => onChange({ unit: event.target.value })} placeholder="%, USD, points, R…" style={inputStyle} />
+        </label>
+        {rule.inputType === 'number' && <>
+          <label style={labelStyle}>Minimum
+            <input type="number" value={validation.min ?? ''} onChange={event => onChange({ validation: { ...validation, min: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>Maximum
+            <input type="number" value={validation.max ?? ''} onChange={event => onChange({ validation: { ...validation, max: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+        </>}
+        {rule.inputType === 'text' && <>
+          <label style={labelStyle}>Minimum characters
+            <input type="number" min="0" value={validation.minLength ?? ''} onChange={event => onChange({ validation: { ...validation, minLength: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>Maximum characters
+            <input type="number" min="1" value={validation.maxLength ?? ''} onChange={event => onChange({ validation: { ...validation, maxLength: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+        </>}
+      </div>
+    </details>
+  );
+}
+
 export default function PlaybooksPage() {
   const router = useRouter();
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -166,7 +219,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {} }],
     } : block));
     markDirty();
   };
@@ -293,6 +346,7 @@ export default function PlaybooksPage() {
                         {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
+                        <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />
                       </div>
                     ))}
                   </div>

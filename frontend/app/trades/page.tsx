@@ -11,6 +11,7 @@ const API = '/api';
 const PAGE_SIZE = 50;
 
 interface ChecklistItem {
+  ruleId?: string;
   rule: string;
   complied: boolean;
   _id?: string;
@@ -82,6 +83,22 @@ const DEFAULT_CHECKLIST = [
   { rule: 'Stop Loss and Take Profit Defined', complied: false },
 ];
 
+const DEFAULT_EXECUTION_CHECKLIST = [
+  { rule: 'Entry as planned', complied: false },
+  { rule: 'Stop not moved', complied: false },
+  { rule: 'Target respected', complied: false },
+  { rule: 'Position size correct', complied: false },
+  { rule: 'No manual close out of fear', complied: false },
+];
+
+interface TradingRule {
+  ruleId: string;
+  label: string;
+  category: 'pre_trade' | 'execution';
+  enabled: boolean;
+  order: number;
+}
+
 function formatDuration(mins: number) {
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
@@ -102,6 +119,7 @@ export default function TradesPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [hasToken, setHasToken] = useState(false);
+  const [tradingRules, setTradingRules] = useState<TradingRule[]>([]);
 
   // Auth checking
   useEffect(() => {
@@ -112,6 +130,15 @@ export default function TradesPage() {
     }
     setHasToken(true);
   }, [router]);
+
+  useEffect(() => {
+    if (!hasToken) return;
+    const token = localStorage.getItem('token');
+    fetch(`${API}/rules`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load trading rules')))
+      .then(body => setTradingRules(body.rules || []))
+      .catch(error => console.error(error));
+  }, [hasToken]);
 
   // Filters
   const [symbol, setSymbol]       = useState('');
@@ -194,6 +221,13 @@ export default function TradesPage() {
   };
 
   const handleRowClick = (trade: Trade) => {
+    const rulesFor = (category: TradingRule['category'], fallback: ChecklistItem[]) => {
+      const active = tradingRules
+        .filter(rule => rule.category === category && rule.enabled)
+        .sort((a, b) => a.order - b.order)
+        .map(rule => ({ ruleId: rule.ruleId, rule: rule.label, complied: false }));
+      return active.length > 0 ? active : fallback.map(rule => ({ ...rule }));
+    };
     setSelectedTrade(trade);
     setDraftNotes(trade.notes || '');
     setDraftEmotion(trade.emotion || '');
@@ -202,7 +236,7 @@ export default function TradesPage() {
     setDraftChecklist(
       trade.checklist && trade.checklist.length > 0
         ? trade.checklist
-        : DEFAULT_CHECKLIST.map(c => ({ ...c }))
+        : rulesFor('pre_trade', DEFAULT_CHECKLIST)
     );
     setTagInput('');
     setScreenshotCaption('');
@@ -220,13 +254,7 @@ export default function TradesPage() {
     setDraftExecChecklist(
       trade.executionChecklist && trade.executionChecklist.length > 0
         ? trade.executionChecklist
-        : [
-            { rule: 'Entry as planned', complied: false },
-            { rule: 'Stop not moved', complied: false },
-            { rule: 'Target respected', complied: false },
-            { rule: 'Position size correct', complied: false },
-            { rule: 'No manual close out of fear', complied: false },
-          ]
+        : rulesFor('execution', DEFAULT_EXECUTION_CHECKLIST)
     );
     setDraftIsReEntry(trade.isReEntry ?? false);
     setDraftTradeGroup(trade.tradeGroup || '');

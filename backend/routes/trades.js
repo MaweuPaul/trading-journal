@@ -3,6 +3,7 @@ const router = express.Router();
 const Trade = require('../models/Trade');
 const SyncRequest = require('../models/SyncRequest');
 const AccountEvent = require('../models/AccountEvent');
+const User = require('../models/User');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -11,6 +12,7 @@ const { v2: cloudinary } = require('cloudinary');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
+const LOCAL_RULES_PATH = path.join(__dirname, '../local_user_rules.json');
 const OFFLINE_SCREENSHOTS_DIR = path.join(__dirname, '../public/screenshots');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -34,6 +36,7 @@ if (CLOUDINARY_READY) {
 // Load initial n-memory trades from local file f exists
 let inMemoryTrades = [];
 let inMemoryAccountEvents = [];
+let inMemoryUserRules = {};
 const inMemorySyncRequests = {};
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
@@ -44,9 +47,77 @@ try {
     inMemoryAccountEvents = JSON.parse(fs.readFileSync(LOCAL_EVENTS_PATH, 'utf8'));
     console.log(` Loaded ${inMemoryAccountEvents.length} account events from local persistent database file.`);
   }
+  if (fs.existsSync(LOCAL_RULES_PATH)) {
+    inMemoryUserRules = JSON.parse(fs.readFileSync(LOCAL_RULES_PATH, 'utf8'));
+  }
 } catch (e) {
   console.error("Failed to load local persistent database:", e.message);
 }
+
+const DEFAULT_TRADING_RULES = [
+  { ruleId: 'pre-htf-trend', label: 'HTF Trend Aligned', category: 'pre_trade', enabled: true, order: 0 },
+  { ruleId: 'pre-key-level', label: 'Daily/H4 Key Level Tap', category: 'pre_trade', enabled: true, order: 1 },
+  { ruleId: 'pre-confirmation', label: 'Confluence / Confirmation Entry', category: 'pre_trade', enabled: true, order: 2 },
+  { ruleId: 'pre-risk-reward', label: 'Risk-to-Reward Ratio >= 1:2', category: 'pre_trade', enabled: true, order: 3 },
+  { ruleId: 'pre-defined-exits', label: 'Stop Loss and Take Profit Defined', category: 'pre_trade', enabled: true, order: 4 },
+  { ruleId: 'exec-entry-plan', label: 'Entry as planned', category: 'execution', enabled: true, order: 0 },
+  { ruleId: 'exec-stop', label: 'Stop not moved', category: 'execution', enabled: true, order: 1 },
+  { ruleId: 'exec-target', label: 'Target respected', category: 'execution', enabled: true, order: 2 },
+  { ruleId: 'exec-size', label: 'Position size correct', category: 'execution', enabled: true, order: 3 },
+  { ruleId: 'exec-fear', label: 'No manual close out of fear', category: 'execution', enabled: true, order: 4 },
+];
+
+function saveLocalRules() {
+  fs.writeFileSync(LOCAL_RULES_PATH, JSON.stringify(inMemoryUserRules, null, 2), 'utf8');
+}
+
+function normalizeRules(input) {
+  if (!Array.isArray(input) || input.length > 100) throw new Error('Rules must be an array of at most 100 items');
+  return input.map((rule, index) => {
+    const label = String(rule.label || '').trim();
+    if (!label || label.length > 160) throw new Error('Every rule needs a label between 1 and 160 characters');
+    if (!['pre_trade', 'execution'].includes(rule.category)) throw new Error('Invalid rule category');
+    return {
+      ruleId: String(rule.ruleId || new mongoose.Types.ObjectId()),
+      label,
+      category: rule.category,
+      enabled: rule.enabled !== false,
+      order: Number.isFinite(Number(rule.order)) ? Number(rule.order) : index,
+    };
+  });
+}
+
+async function getUserRules(userId) {
+  if (mongoose.connection.readyState === 1) {
+    const user = await User.findById(userId).select('tradingRules').lean();
+    return user?.tradingRules?.length ? user.tradingRules : DEFAULT_TRADING_RULES;
+  }
+  return inMemoryUserRules[String(userId)] || DEFAULT_TRADING_RULES;
+}
+
+router.get('/rules', auth, async (req, res) => {
+  try {
+    res.json({ rules: await getUserRules(req.user.userId) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/rules', auth, async (req, res) => {
+  try {
+    const rules = normalizeRules(req.body.rules);
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findByIdAndUpdate(req.user.userId, { $set: { tradingRules: rules } }, { new: true });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+    } else {
+      inMemoryUserRules[String(req.user.userId)] = rules;
+      saveLocalRules();
+    }
+    res.json({ rules });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 function saveLocalDatabase() {
   try {
@@ -1064,14 +1135,6 @@ router.get('/performance', auth, async (req, res) => {
 
 
 
-const DEFAULT_CHECKLST = [
-  { rule: 'HTF Trend Algned', complied: false },
-  { rule: 'Daly/H4 Key Level Tap', complied: false },
-  { rule: 'Confluence / Confrmaton Entry', complied: false },
-  { rule: 'Rsk-to-Reward Rato >= 1:2', complied: false },
-  { rule: 'Stop Loss and Take Proft Defned', complied: false },
-];
-
 // GET /api/trades  all trades, newest frst, wth optonal flters
 router.get('/trades', auth, async (req, res) => {
   try {
@@ -1424,6 +1487,15 @@ router.post('/sync', auth, async (req, res) => {
 
     let inserted = 0;
     let skipped = 0;
+    const userRules = await getUserRules(req.user.userId);
+    const checklistSnapshot = userRules
+      .filter(rule => rule.category === 'pre_trade' && rule.enabled !== false)
+      .sort((a, b) => a.order - b.order)
+      .map(rule => ({ ruleId: rule.ruleId, rule: rule.label, complied: false }));
+    const executionChecklistSnapshot = userRules
+      .filter(rule => rule.category === 'execution' && rule.enabled !== false)
+      .sort((a, b) => a.order - b.order)
+      .map(rule => ({ ruleId: rule.ruleId, rule: rule.label, complied: false }));
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
@@ -1451,7 +1523,8 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: t.closeTime,
           durationMinutes: Number(t.durationMinutes || 0),
           runningBalance: Number(t.runningBalance || 0),
-          checklist: DEFAULT_CHECKLST,
+          checklist: checklistSnapshot.map(rule => ({ ...rule })),
+          executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
           synced: new Date().toISOString()
         };
@@ -1493,7 +1566,8 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: new Date(t.closeTime),
           durationMinutes: t.durationMinutes || 0,
           runningBalance: t.runningBalance || 0,
-          checklist: DEFAULT_CHECKLST,
+          checklist: checklistSnapshot.map(rule => ({ ...rule })),
+          executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
         });
 

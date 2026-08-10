@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal } from 'lucide-react';
 
 const navItems = [
   { href: '/',            label: 'Dashboard',    icon: LayoutDashboard },
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/performance', label: 'Performance',  icon: LineChart },
   { href: '/coach',       label: 'Edge Coach',   icon: Brain },
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
+  { href: '/rules',       label: 'Trading Rules', icon: SlidersHorizontal },
 ];
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {

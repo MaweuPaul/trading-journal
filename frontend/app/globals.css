@@ -1091,10 +1091,33 @@ tbody td.text {
   border-radius: 8px;
   background: var(--bg-surface);
 }
+.playbook-add-stage {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, .65fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+.playbook-add-stage > div { display: grid; gap: 2px; }
+.playbook-add-stage strong { color: var(--text-primary); font-size: 12px; }
+.playbook-add-stage span { color: var(--text-muted); font-size: 10.5px; }
+.playbook-add-stage select {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 9px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.playbook-add-stage button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
 @media (max-width: 1100px) {
   .playbook-layout { grid-template-columns: 1fr; }
   .playbook-layout aside { position: static !important; }
   .playbook-rule-row { grid-template-columns: minmax(220px, 1fr) 150px; }
+  .playbook-add-stage { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 620px) {
   .playbook-header-grid,
@@ -1102,6 +1125,7 @@ tbody td.text {
   .playbook-rule-row { grid-template-columns: 1fr; }
   .playbook-field-details-grid { grid-template-columns: 1fr; }
   .playbook-field-details-grid > label { grid-column: auto !important; }
+  .playbook-add-stage { grid-template-columns: 1fr; }
 }
 
 /* ══════════════════════════════

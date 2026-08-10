@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, ArrowDown, ArrowUp, Check, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
@@ -183,6 +183,12 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
   }));
 }
 
+function blockIsReady(block: PlaybookBlock) {
+  return block.rules.length > 0
+    && block.rules.every(rule => rule.label.trim())
+    && (block.evidence || []).every(item => item.caption.trim().length >= 10);
+}
+
 function ChoiceOptionsInput({
   options,
   onChange,
@@ -343,6 +349,7 @@ export default function PlaybooksPage() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [newBlockCategory, setNewBlockCategory] = useState<TemplateCategory>('context');
+  const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(() => new Set());
 
   const selectPlaybook = useCallback((playbook: Playbook) => {
     const version = latest(playbook);
@@ -400,6 +407,21 @@ export default function PlaybooksPage() {
     setBlocks(current => current.map(block => block.blockId === blockId ? { ...block, rules: block.rules.filter(rule => rule.ruleId !== ruleId) } : block));
     markDirty();
   };
+  const moveBlock = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= blocks.length) return;
+    setBlocks(current => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next.map((block, order) => ({ ...block, order }));
+    });
+    markDirty();
+  };
+  const toggleBlock = (blockId: string) => setCollapsedBlockIds(current => {
+    const next = new Set(current);
+    if (next.has(blockId)) next.delete(blockId); else next.add(blockId);
+    return next;
+  });
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
@@ -514,8 +536,22 @@ export default function PlaybooksPage() {
                 )}
               </section>
 
-              {blocks.map(block => (
+              {blocks.map((block, blockIndex) => (
                 <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+                  <div className="playbook-stage-toolbar">
+                    <span className="playbook-stage-number">{blockIndex + 1}</span>
+                    <div>
+                      <strong>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.label || 'Custom stage'} <span className={`playbook-stage-status ${blockIsReady(block) ? 'ready' : 'draft'}`}>{blockIsReady(block) ? 'Ready' : 'Needs details'}</span></strong>
+                      <span>{block.rules.length} field{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required · {(block.evidence || []).length} screenshot{(block.evidence || []).length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="playbook-stage-actions">
+                      <button type="button" onClick={() => moveBlock(blockIndex, -1)} disabled={blockIndex === 0} aria-label={`Move ${block.name} earlier`}><ArrowUp size={14} /></button>
+                      <button type="button" onClick={() => moveBlock(blockIndex, 1)} disabled={blockIndex === blocks.length - 1} aria-label={`Move ${block.name} later`}><ArrowDown size={14} /></button>
+                      <button type="button" onClick={() => toggleBlock(block.blockId)} aria-expanded={!collapsedBlockIds.has(block.blockId)} aria-label={`${collapsedBlockIds.has(block.blockId) ? 'Expand' : 'Collapse'} ${block.name}`}><ChevronDown size={15} style={{ transform: collapsedBlockIds.has(block.blockId) ? 'rotate(-90deg)' : 'none', transition: 'transform .15s ease' }} /></button>
+                    </div>
+                  </div>
+
+                  {!collapsedBlockIds.has(block.blockId) && <>
                   <div className="playbook-block-header">
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -538,6 +574,7 @@ export default function PlaybooksPage() {
                     ))}
                   </div>
                   <button onClick={() => addRule(block.blockId)} style={{ marginTop: 10, minHeight: 40, border: '1px dashed var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', padding: '0 12px' }}><Plus size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />Add rule</button>
+                  </>}
                 </section>
               ))}
 

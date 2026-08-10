@@ -32,7 +32,7 @@ Playbooks use an append-only audit model:
 1. Create a strategy from an empty canvas or editable lifecycle templates.
 2. Arrange stages from Strategy Concept through Context, Setup, Entry, Risk, Execution, Management, Exit, and Review.
 3. Add custom fields with guidance, units, defaults, choices, and validation.
-4. Add captioned reference, valid, and invalid chart screenshots to any stage or field.
+4. Add captioned reference, valid, and invalid chart screenshots to a stage or directly to an individual rule; rules may require one or several instructional examples before publishing.
 5. Publish the strategy to create an immutable schema-versioned snapshot.
 6. Read the published version as a visual book from `/rules/read`.
 7. Complete the attached playbook in the trade journal's Plan, Manage, and Review timeline.

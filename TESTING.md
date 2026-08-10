@@ -534,8 +534,8 @@ Run this workflow after completing setup with valid MongoDB and Cloudinary crede
 4. Rename template fields, remove one, and add one empty custom field.
 5. Configure these field types: Yes/No, choices, percentage, currency, price, duration, risk-to-reward, rating, date, time, short text, and long explanation.
 6. Set units and numeric minimum/maximum values, then mark several fields required.
-7. Upload at least three chart images: Reference, Valid example, and Invalid example.
-8. Link one image to a specific field, write a caption of at least ten characters, and reorder the images.
+7. Upload at least three stage-level chart images: Reference, Valid example, and Invalid example.
+8. Add multiple examples directly to a rule, classify them as valid/invalid, require a minimum number, write captions of at least ten characters, and reorder them.
 9. Enter a change note describing what changed, why, and the expected result. Publish version 1.
 10. Open Read Playbook and verify the cover, contents, chapters, large images, captions, options, and next/previous navigation.
 11. Attach the playbook to a trade and complete its Plan, Manage, and Review tabs.
@@ -566,6 +566,6 @@ Use a backup containing playbooks created before the structured timeline update.
 Expected results:
 
 - Versions without `schemaVersion` are treated as schema version 1.
-- Newly published versions contain `schemaVersion: 2`.
+- Schema 2 versions remain readable, while newly published rule-example versions contain `schemaVersion: 3`.
 - Publishing appends a version and never mutates the old version or trades already attached to it.
 - Unknown legacy categories remain readable as Custom stages.

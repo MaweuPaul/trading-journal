@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
@@ -504,6 +504,7 @@ export default function PlaybooksPage() {
           <button className="btn-primary" onClick={publish} disabled={saving || !dirty} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
             {saved ? <Check size={16} /> : <Save size={16} />}{saving ? 'Publishing…' : saved ? 'Published' : creating ? 'Publish strategy' : 'Publish new version'}
           </button>
+          {!creating && selectedId && <button className="btn-ghost" onClick={() => router.push(`/rules/read?playbook=${encodeURIComponent(selectedId)}`)} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}><BookOpen size={16} />Read playbook</button>}
         </div>
 
         {error && <div role="alert" style={{ padding: 12, marginBottom: 16, borderRadius: 10, background: 'var(--red-bg)', border: '1px solid var(--red-border)', color: 'var(--red)' }}>{error}</div>}

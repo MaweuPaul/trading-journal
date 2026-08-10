@@ -122,6 +122,18 @@ interface PlaybookBlock {
   name: string;
   category: string;
   rules: PlaybookRule[];
+  evidence?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid'; linkedRuleId?: string }>;
+}
+
+type JournalPhase = 'plan' | 'manage' | 'review';
+const JOURNAL_PHASES: Array<{ id: JournalPhase; label: string; categories: string[] }> = [
+  { id: 'plan', label: '1. Plan', categories: ['concept', 'context', 'setup', 'entry', 'risk', 'pre_trade'] },
+  { id: 'manage', label: '2. Manage', categories: ['execution', 'management', 'trade_management'] },
+  { id: 'review', label: '3. Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
+];
+
+function hasPlaybookAnswer(value: unknown) {
+  return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
 }
 
 interface PlaybookSnapshot {
@@ -232,6 +244,7 @@ export default function TradesPage() {
   const [copied, setCopied] = useState(false);
   const [draftPlaybookSnapshot, setDraftPlaybookSnapshot] = useState<PlaybookSnapshot | null>(null);
   const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
+  const [activePlaybookPhase, setActivePlaybookPhase] = useState<JournalPhase>('plan');
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -318,6 +331,7 @@ export default function TradesPage() {
     setDraftParentTradeId(trade.parentTradeId || '');
     setDraftPlaybookSnapshot(trade.playbookSnapshot || null);
     setDraftPlaybookResponses(trade.playbookResponses || {});
+    setActivePlaybookPhase('plan');
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -347,6 +361,9 @@ export default function TradesPage() {
       return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
     });
     if (missingRequired) {
+      const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingRequired.ruleId));
+      const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
+      if (missingPhase) setActivePlaybookPhase(missingPhase.id);
       alert(`Complete the required playbook field: ${missingRequired.label}`);
       return;
     }
@@ -587,6 +604,7 @@ export default function TradesPage() {
     if (!playbook) {
       setDraftPlaybookSnapshot(null);
       setDraftPlaybookResponses({});
+      setActivePlaybookPhase('plan');
       return;
     }
     const version = playbook.versions[playbook.versions.length - 1];
@@ -606,6 +624,7 @@ export default function TradesPage() {
       }
     }
     setDraftPlaybookResponses(defaults);
+    setActivePlaybookPhase('plan');
   };
 
   const setPlaybookResponse = (ruleId: string, value: unknown) => {
@@ -946,20 +965,39 @@ export default function TradesPage() {
                   {draftPlaybookSnapshot && <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>Audit snapshot: {draftPlaybookSnapshot.name} v{draftPlaybookSnapshot.versionNumber}. Future changes will not alter this trade after saving.</div>}
                 </div>
 
-                {draftPlaybookSnapshot?.blocks.map(block => (
-                  <div key={block.blockId} style={{ marginBottom: 12, padding: 11, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 9 }}>{block.name}</div>
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      {block.rules.map(rule => (
-                        <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
-                          {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
-                          {renderPlaybookInput(rule)}
-                        </div>
-                      ))}
-                    </div>
+                {draftPlaybookSnapshot && <>
+                  <div className="journal-phase-tabs">
+                    {JOURNAL_PHASES.map(phase => {
+                      const phaseRules = draftPlaybookSnapshot.blocks.filter(block => phase.categories.includes(block.category)).flatMap(block => block.rules);
+                      const completed = phaseRules.filter(rule => hasPlaybookAnswer(draftPlaybookResponses[rule.ruleId])).length;
+                      return <button key={phase.id} type="button" className={activePlaybookPhase === phase.id ? 'active' : ''} onClick={() => setActivePlaybookPhase(phase.id)}><span>{phase.label}</span><small>{completed}/{phaseRules.length} answered</small></button>;
+                    })}
                   </div>
-                ))}
+
+                  {draftPlaybookSnapshot.blocks.filter(block => (JOURNAL_PHASES.find(phase => phase.id === activePlaybookPhase)?.categories || []).includes(block.category)).map(block => (
+                    <div key={block.blockId} className="journal-playbook-stage">
+                      <div className="journal-playbook-stage-title"><strong>{block.name}</strong><span>{block.rules.filter(rule => rule.required).length} required</span></div>
+                      {(block.evidence || []).length > 0 && <div className="journal-playbook-evidence">
+                        {(block.evidence || []).map(item => <figure key={item.evidenceId} className={item.kind}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={item.url} alt={item.caption} />
+                          <figcaption><strong>{item.kind === 'valid' ? 'Valid' : item.kind === 'invalid' ? 'Avoid' : 'Reference'}</strong>{item.caption}</figcaption>
+                        </figure>)}
+                      </div>}
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {block.rules.map(rule => (
+                          <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
+                            {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
+                            {renderPlaybookInput(rule)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  {draftPlaybookSnapshot.blocks.filter(block => (JOURNAL_PHASES.find(phase => phase.id === activePlaybookPhase)?.categories || []).includes(block.category)).length === 0 && <div className="journal-phase-empty">This playbook has no fields in the {activePlaybookPhase} stage.</div>}
+                </>}
 
                 {/* Legacy fields remain in stored data for backward compatibility. */}
                 {false && <>

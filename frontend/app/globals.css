@@ -1295,12 +1295,29 @@ tbody td.text {
 .journal-rule-examples img { width: 100%; aspect-ratio: 16 / 9; display: block; object-fit: contain; background: #0f172a; }
 .journal-rule-examples figcaption { display: grid; gap: 2px; padding: 6px; color: var(--text-secondary); font-size: 9px; line-height: 1.35; }
 .journal-rule-examples figcaption strong { color: var(--text-primary); font-size: 8px; text-transform: uppercase; }
+.journal-rule-confirmation { display: grid; gap: 8px; margin-top: 4px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elevated); }
+.journal-rule-confirmation.missing { border-color: var(--red-border); background: var(--red-bg); }
+.journal-rule-confirmation.complete { border-color: var(--green-border); background: var(--green-bg); }
+.journal-rule-confirmation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.journal-rule-confirmation-heading > div { display: grid; gap: 2px; }
+.journal-rule-confirmation-heading strong { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); font-size: 10.5px; }
+.journal-rule-confirmation-heading > div > span { color: var(--text-muted); font-size: 9.5px; line-height: 1.4; }
+.journal-rule-confirmation-count { flex: 0 0 auto; color: var(--text-secondary); font-size: 9px; font-weight: 800; }
+.journal-rule-confirmation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.journal-rule-confirmation-grid figure { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-surface); }
+.journal-rule-confirmation-grid img { width: 100%; aspect-ratio: 16 / 9; display: block; object-fit: contain; background: #0f172a; }
+.journal-rule-confirmation-grid figcaption { padding: 5px 6px; color: var(--text-secondary); font-size: 9px; }
+.journal-rule-confirmation-grid button { position: absolute; top: 5px; right: 5px; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--red-border); border-radius: 7px; background: var(--bg-surface); color: var(--red); cursor: pointer; box-shadow: var(--shadow-sm); }
+.journal-rule-confirmation-upload { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--accent); border-radius: 8px; color: var(--accent); background: var(--bg-surface); cursor: pointer; font-size: 10.5px; font-weight: 800; }
+.journal-rule-confirmation-upload input { display: none; }
+.journal-rule-confirmation-upload.disabled { opacity: .5; cursor: not-allowed; }
+.journal-rule-confirmation-error { color: var(--red); font-size: 9.5px; font-weight: 700; }
 .journal-phase-empty { margin-bottom: 12px; padding: 18px; border: 1px dashed var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10.5px; text-align: center; }
 .journal-playbook-lock { min-height: 50px; display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--accent-mid); border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
 .journal-playbook-lock > div { display: grid; gap: 2px; min-width: 0; }
 .journal-playbook-lock strong { overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .journal-playbook-lock span { color: var(--text-muted); font-size: 9.5px; }
-@media (max-width: 520px) { .journal-phase-tabs, .journal-playbook-evidence, .journal-rule-examples { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .journal-phase-tabs, .journal-playbook-evidence, .journal-rule-examples, .journal-rule-confirmation-grid { grid-template-columns: 1fr; } .journal-rule-confirmation-heading { flex-direction: column; } }
 @media (max-width: 1100px) {
   .playbook-layout { grid-template-columns: 1fr; }
   .playbook-layout aside { position: static !important; }

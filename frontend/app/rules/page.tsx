@@ -100,7 +100,7 @@ type TemplateCategory = Exclude<BlockCategory, 'custom'>;
 type TemplateRule = Omit<PlaybookRule, 'ruleId'>;
 
 const templateRule = (label: string, inputType: InputType, helpText: string, extra: Partial<TemplateRule> = {}): TemplateRule => ({
-  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, ...extra,
+  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: true, minimumImages: 1, maximumImages: 6 }, ...extra,
 });
 
 const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: TemplateRule[] }> = {
@@ -183,6 +183,11 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
   return (JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[]).map(block => ({
     ...block,
     category: legacyCategories[block.category] || block.category || 'custom',
+    rules: block.rules.map(rule => ({
+      ...rule,
+      examples: rule.examples || [],
+      exampleRequirement: rule.exampleRequirement || { required: true, minimumImages: 1, maximumImages: 6 },
+    })),
   }));
 }
 
@@ -501,7 +506,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 } }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: true, minimumImages: 1, maximumImages: 6 } }],
     } : block));
     markDirty();
   };

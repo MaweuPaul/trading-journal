@@ -43,6 +43,20 @@ Removing a rule only excludes it from the next published version. Previous versi
 
 Existing flat trading rules are migrated into a starter playbook automatically.
 
+### How playbook rules generate the trade journal
+
+The trade journal is derived from the selected published playbook rather than from a fixed form:
+
+1. Each playbook stage contains rules with answer configuration, help text, validation, and instructional examples.
+2. Newly added rules require at least one instructional image by default. The rule's **Field guidance and validation** panel contains a toggle to make images optional and controls for the minimum and maximum image count.
+3. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
+4. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version.
+5. The first save permanently attaches the complete snapshot to the trade.
+6. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
+7. Publishing a newer playbook version affects only trades that attach that newer version.
+
+This creates a reliable audit chain: the rule teaches what to look for, its images demonstrate the condition, the trade records whether it happened, and Edge Coach compares that answer with the outcome.
+
 ### Edge Coach Evidence
 
 For playbook-backed trades, Edge Coach reports:

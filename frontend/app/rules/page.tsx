@@ -50,6 +50,7 @@ interface PlaybookEvidence {
 interface PlaybookVersion {
   versionId: string;
   versionNumber: number;
+  schemaVersion?: number;
   changeNote: string;
   publishedAt: string;
   blocks: PlaybookBlock[];
@@ -311,6 +312,8 @@ function BlockEvidenceEditor({ block, onChange, onError }: { block: PlaybookBloc
         <div className="playbook-evidence-grid">
           {evidence.map((item, index) => (
             <article key={item.evidenceId} className="playbook-evidence-card">
+              {/* Draft evidence may use Cloudinary or local URLs, so a native image preserves both sources. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={item.url} alt={item.caption || `${block.name} ${item.kind} example`} />
               <div className="playbook-evidence-card-fields">
                 <select value={item.kind} onChange={event => updateEvidence(item.evidenceId, { kind: event.target.value as PlaybookEvidence['kind'] })}>

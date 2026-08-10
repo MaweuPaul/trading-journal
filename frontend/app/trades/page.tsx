@@ -142,6 +142,7 @@ interface PlaybookSnapshot {
   description?: string;
   versionId: string;
   versionNumber: number;
+  schemaVersion?: number;
   publishedAt: string;
   blocks: PlaybookBlock[];
 }
@@ -151,7 +152,7 @@ interface Playbook {
   name: string;
   description: string;
   archived: boolean;
-  versions: Array<{ versionId: string; versionNumber: number; publishedAt: string; blocks: PlaybookBlock[] }>;
+  versions: Array<{ versionId: string; versionNumber: number; schemaVersion?: number; publishedAt: string; blocks: PlaybookBlock[] }>;
 }
 
 function formatDuration(mins: number) {
@@ -614,6 +615,7 @@ export default function TradesPage() {
       description: playbook.description,
       versionId: version.versionId,
       versionNumber: version.versionNumber,
+      schemaVersion: version.schemaVersion || 1,
       publishedAt: version.publishedAt,
       blocks: JSON.parse(JSON.stringify(version.blocks)),
     });

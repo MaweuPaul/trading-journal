@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
@@ -32,6 +32,18 @@ interface PlaybookBlock {
   name: string;
   category: BlockCategory;
   rules: PlaybookRule[];
+  evidence?: PlaybookEvidence[];
+  order?: number;
+}
+
+interface PlaybookEvidence {
+  evidenceId: string;
+  url: string;
+  publicId: string;
+  caption: string;
+  kind: 'reference' | 'valid' | 'invalid';
+  linkedRuleId?: string;
+  uploadedAt: string;
   order?: number;
 }
 
@@ -141,7 +153,7 @@ function uid(prefix: string) {
 }
 
 function blankBlock(): PlaybookBlock {
-  return { blockId: uid('block'), name: 'New stage', category: 'custom', rules: [] };
+  return { blockId: uid('block'), name: 'New stage', category: 'custom', rules: [], evidence: [] };
 }
 
 function blockFromTemplate(category: TemplateCategory): PlaybookBlock {
@@ -150,6 +162,7 @@ function blockFromTemplate(category: TemplateCategory): PlaybookBlock {
     blockId: uid('block'),
     name: template.name,
     category,
+    evidence: [],
     rules: template.rules.map(rule => ({ ...cloneRule(rule), ruleId: uid('rule') })),
   };
 }
@@ -168,6 +181,12 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
     ...block,
     category: legacyCategories[block.category] || block.category || 'custom',
   }));
+}
+
+function blockIsReady(block: PlaybookBlock) {
+  return block.rules.length > 0
+    && block.rules.every(rule => rule.label.trim())
+    && (block.evidence || []).every(item => item.caption.trim().length >= 10);
 }
 
 function ChoiceOptionsInput({
@@ -239,6 +258,82 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
   );
 }
 
+function BlockEvidenceEditor({ block, onChange, onError }: { block: PlaybookBlock; onChange: (evidence: PlaybookEvidence[]) => void; onError: (message: string) => void }) {
+  const [uploading, setUploading] = useState(false);
+  const evidence = block.evidence || [];
+
+  const upload = async (file: File) => {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { onError('Use a PNG, JPEG, or WebP screenshot.'); return; }
+    if (file.size > 10 * 1024 * 1024) { onError('Screenshot must be smaller than 10 MB.'); return; }
+    setUploading(true); onError('');
+    try {
+      const imageData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Could not read screenshot'));
+        reader.readAsDataURL(file);
+      });
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/playbooks/evidence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ imageData, kind: 'reference' }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not upload screenshot');
+      onChange([...evidence, { ...body.evidence, order: evidence.length }]);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not upload screenshot');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const updateEvidence = (evidenceId: string, patch: Partial<PlaybookEvidence>) => onChange(evidence.map(item => item.evidenceId === evidenceId ? { ...item, ...patch } : item));
+  const move = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= evidence.length) return;
+    const next = [...evidence];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next.map((item, order) => ({ ...item, order })));
+  };
+
+  return (
+    <div className="playbook-evidence-editor">
+      <div className="playbook-evidence-heading">
+        <div><strong>Visual evidence</strong><span>Add the chart examples a trader must recognize at this stage.</span></div>
+        <label className={`btn-ghost playbook-evidence-upload${uploading ? ' disabled' : ''}`}>
+          <ImagePlus size={14} />{uploading ? 'Uploading…' : 'Add screenshot'}
+          <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} />
+        </label>
+      </div>
+      {evidence.length === 0 ? <div className="playbook-evidence-empty">No screenshots yet. Add a reference, valid example, or invalid example.</div> : (
+        <div className="playbook-evidence-grid">
+          {evidence.map((item, index) => (
+            <article key={item.evidenceId} className="playbook-evidence-card">
+              <img src={item.url} alt={item.caption || `${block.name} ${item.kind} example`} />
+              <div className="playbook-evidence-card-fields">
+                <select value={item.kind} onChange={event => updateEvidence(item.evidenceId, { kind: event.target.value as PlaybookEvidence['kind'] })}>
+                  <option value="reference">Reference</option><option value="valid">Valid example</option><option value="invalid">Invalid example</option>
+                </select>
+                <select value={item.linkedRuleId || ''} onChange={event => updateEvidence(item.evidenceId, { linkedRuleId: event.target.value })}>
+                  <option value="">Whole stage</option>{block.rules.map(rule => <option key={rule.ruleId} value={rule.ruleId}>{rule.label || 'Unnamed rule'}</option>)}
+                </select>
+                <textarea value={item.caption} onChange={event => updateEvidence(item.evidenceId, { caption: event.target.value })} placeholder="Explain exactly what the trader should notice…" rows={3} />
+              </div>
+              <div className="playbook-evidence-actions">
+                <button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label="Move screenshot earlier"><ArrowUp size={13} /></button>
+                <button type="button" onClick={() => move(index, 1)} disabled={index === evidence.length - 1} aria-label="Move screenshot later"><ArrowDown size={13} /></button>
+                <button type="button" onClick={() => onChange(evidence.filter(entry => entry.evidenceId !== item.evidenceId))} aria-label="Remove screenshot from draft"><X size={13} /></button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PlaybooksPage() {
   const router = useRouter();
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -254,6 +349,7 @@ export default function PlaybooksPage() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [newBlockCategory, setNewBlockCategory] = useState<TemplateCategory>('context');
+  const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(() => new Set());
 
   const selectPlaybook = useCallback((playbook: Playbook) => {
     const version = latest(playbook);
@@ -311,6 +407,21 @@ export default function PlaybooksPage() {
     setBlocks(current => current.map(block => block.blockId === blockId ? { ...block, rules: block.rules.filter(rule => rule.ruleId !== ruleId) } : block));
     markDirty();
   };
+  const moveBlock = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= blocks.length) return;
+    setBlocks(current => {
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next.map((block, order) => ({ ...block, order }));
+    });
+    markDirty();
+  };
+  const toggleBlock = (blockId: string) => setCollapsedBlockIds(current => {
+    const next = new Set(current);
+    if (next.has(blockId)) next.delete(blockId); else next.add(blockId);
+    return next;
+  });
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
@@ -425,14 +536,30 @@ export default function PlaybooksPage() {
                 )}
               </section>
 
-              {blocks.map(block => (
+              {blocks.map((block, blockIndex) => (
                 <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+                  <div className="playbook-stage-toolbar">
+                    <span className="playbook-stage-number">{blockIndex + 1}</span>
+                    <div>
+                      <strong>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.label || 'Custom stage'} <span className={`playbook-stage-status ${blockIsReady(block) ? 'ready' : 'draft'}`}>{blockIsReady(block) ? 'Ready' : 'Needs details'}</span></strong>
+                      <span>{block.rules.length} field{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required · {(block.evidence || []).length} screenshot{(block.evidence || []).length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="playbook-stage-actions">
+                      <button type="button" onClick={() => moveBlock(blockIndex, -1)} disabled={blockIndex === 0} aria-label={`Move ${block.name} earlier`}><ArrowUp size={14} /></button>
+                      <button type="button" onClick={() => moveBlock(blockIndex, 1)} disabled={blockIndex === blocks.length - 1} aria-label={`Move ${block.name} later`}><ArrowDown size={14} /></button>
+                      <button type="button" onClick={() => toggleBlock(block.blockId)} aria-expanded={!collapsedBlockIds.has(block.blockId)} aria-label={`${collapsedBlockIds.has(block.blockId) ? 'Expand' : 'Collapse'} ${block.name}`}><ChevronDown size={15} style={{ transform: collapsedBlockIds.has(block.blockId) ? 'rotate(-90deg)' : 'none', transition: 'transform .15s ease' }} /></button>
+                    </div>
+                  </div>
+
+                  {!collapsedBlockIds.has(block.blockId) && <>
                   <div className="playbook-block-header">
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                     <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
                   </div>
                   <p style={{ margin: '-5px 0 12px', color: 'var(--text-muted)', fontSize: 11 }}>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.description || BLOCK_CATEGORIES[BLOCK_CATEGORIES.length - 1].description}</p>
+
+                  <BlockEvidenceEditor block={block} onChange={evidence => updateBlock(block.blockId, { evidence })} onError={setError} />
 
                   <div style={{ display: 'grid', gap: 9 }}>
                     {block.rules.map((rule, ruleIndex) => (
@@ -447,6 +574,7 @@ export default function PlaybooksPage() {
                     ))}
                   </div>
                   <button onClick={() => addRule(block.blockId)} style={{ marginTop: 10, minHeight: 40, border: '1px dashed var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', padding: '0 12px' }}><Plus size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />Add rule</button>
+                  </>}
                 </section>
               ))}
 

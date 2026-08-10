@@ -14,7 +14,7 @@ The journal form is not hard-coded. A published playbook defines:
 
 When a playbook is attached to a trade, the frontend renders its fields in Plan, Manage, and Review tabs. The first save stores the complete published snapshot on that trade. Later playbook versions do not rewrite the journal, and an attached trade cannot switch to another version.
 
-Rule-level instructional images are required by default for newly added rules. In **Field guidance and validation**, turn off **Require instructional image examples** when a rule does not need a chart example.
+Rule-level instructional images are optional by default. Enable **Require image confirmation** beside a rule's example section only when visual confirmation is mandatory; otherwise examples remain supporting material and do not block publishing.
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 

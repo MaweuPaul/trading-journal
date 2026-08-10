@@ -1554,7 +1554,27 @@ router.put('/trades/:id', auth, async (req, res) => {
 
     let canonicalPlaybookSnapshot;
     let validatedPlaybookResponses;
-    if (playbookId !== undefined && playbookId) {
+    let lockedPlaybookSnapshot = null;
+    if (playbookId !== undefined) {
+      let existingTrade;
+      if (mongoose.connection.readyState === 1) {
+        existingTrade = await Trade.findOne({ _id: req.params.id, user: req.user.userId }).select('playbookSnapshot').lean();
+      } else {
+        existingTrade = inMemoryTrades.find(t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId));
+      }
+      if (!existingTrade) return res.status(404).json({ error: 'Trade not found' });
+      lockedPlaybookSnapshot = existingTrade.playbookSnapshot || null;
+      if (lockedPlaybookSnapshot && (
+        String(playbookId || '') !== String(lockedPlaybookSnapshot.playbookId || '')
+        || String(playbookVersionId || '') !== String(lockedPlaybookSnapshot.versionId || '')
+      )) {
+        return res.status(409).json({ error: `This journal is permanently attached to ${lockedPlaybookSnapshot.name} v${lockedPlaybookSnapshot.versionNumber}. Its playbook version cannot be replaced.` });
+      }
+    }
+    if (lockedPlaybookSnapshot) {
+      canonicalPlaybookSnapshot = lockedPlaybookSnapshot;
+      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses);
+    } else if (playbookId !== undefined && playbookId) {
       const playbooks = await getPlaybooks(req.user.userId);
       const playbook = playbooks.find(item => item.playbookId === String(playbookId));
       if (!playbook) return res.status(400).json({ error: 'Strategy not found' });

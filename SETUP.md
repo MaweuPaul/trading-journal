@@ -176,6 +176,19 @@ http://localhost:3000
 
 Create the owner through `/signup` if environment seeding was not enabled, then sign in.
 
+### Create the first rule-driven playbook
+
+1. Open `/rules` and create a strategy or add recommended lifecycle stages.
+2. Edit each rule's answer type, guidance, validation, and choices.
+3. Add at least one instructional example image to each new rule. Images are required by default.
+4. If a rule does not benefit from an image, expand **Field guidance and validation** and turn off **Require instructional image examples**.
+5. Add a caption explaining what the trader should notice and classify the example as Reference, Valid, or Invalid.
+6. Enter the required version-change explanation and publish.
+7. Use **Read playbook** to verify the resulting visual manual.
+8. Open a trade, select the published version, complete its generated Plan, Manage, and Review fields, and save.
+
+The first trade save creates an immutable audit snapshot. You can edit that journal's answers later, but you cannot replace its attached playbook or upgrade it to a newer version. New versions apply only to newly attached trades.
+
 ## 8. Configure MT5 synchronization
 
 Return to the repository root and copy the sync environment file:

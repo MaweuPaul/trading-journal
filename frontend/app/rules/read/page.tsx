@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, BookOpen, FileClock, ShieldCheck } from 'lucide-react';
 
 interface Evidence { evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid'; linkedRuleId?: string }
-interface Rule { ruleId: string; label: string; inputType: string; required: boolean; helpText?: string; unit?: string; options?: string[] }
+interface Rule { ruleId: string; label: string; inputType: string; required: boolean; helpText?: string; unit?: string; options?: string[]; examples?: Evidence[]; exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number } }
 interface Block { blockId: string; name: string; category: string; rules: Rule[]; evidence?: Evidence[] }
 interface Version { versionId: string; versionNumber: number; schemaVersion?: number; changeNote: string; publishedAt: string; blocks: Block[] }
 interface Playbook { playbookId: string; name: string; description: string; archived: boolean; versions: Version[] }
@@ -92,7 +92,13 @@ export default function ReadPlaybookPage() {
               <div className="playbook-reader-rules">
                 {block.rules.map((rule, ruleIndex) => <div key={rule.ruleId} className="playbook-reader-rule">
                   <span>{String(ruleIndex + 1).padStart(2, '0')}</span>
-                  <div><h3>{rule.label}{rule.required && <em>Required</em>}</h3>{rule.helpText && <p>{rule.helpText}</p>}{rule.options && rule.options.length > 0 && <div className="playbook-reader-options">{rule.options.map(option => <span key={option}>{option}</span>)}</div>}</div>
+                  <div><h3>{rule.label}{rule.required && <em>Required</em>}</h3>{rule.helpText && <p>{rule.helpText}</p>}{rule.options && rule.options.length > 0 && <div className="playbook-reader-options">{rule.options.map(option => <span key={option}>{option}</span>)}</div>}
+                    {(rule.examples || []).length > 0 && <div className="playbook-reader-rule-examples">{(rule.examples || []).map(example => <figure key={example.evidenceId} className={example.kind}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={example.url} alt={example.caption} />
+                      <figcaption><strong>{example.kind === 'valid' ? 'Valid' : example.kind === 'invalid' ? 'Invalid' : 'Reference'}</strong>{example.caption}</figcaption>
+                    </figure>)}</div>}
+                  </div>
                   <small>{rule.inputType.replaceAll('_', ' ')}{rule.unit ? ` · ${rule.unit}` : ''}</small>
                 </div>)}
               </div>

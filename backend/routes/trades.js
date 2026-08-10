@@ -75,7 +75,7 @@ const DEFAULT_TRADING_RULES = [
 const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
-const PLAYBOOK_SCHEMA_VERSION = 2;
+const PLAYBOOK_SCHEMA_VERSION = 3;
 
 function normalizePlaybookCategory(category) {
   const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
@@ -118,36 +118,40 @@ function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
   };
 }
 
+function normalizePlaybookEvidence(input, ownerLabel, maximum = 20) {
+  const evidence = Array.isArray(input) ? input : [];
+  if (evidence.length > maximum) throw new Error(`${ownerLabel} can contain at most ${maximum} screenshots`);
+  return evidence.map((item, evidenceIndex) => {
+    const url = String(item.url || '').trim();
+    if (!url || (!url.startsWith('https://') && !url.startsWith('/'))) throw new Error('Every screenshot needs a valid URL');
+    const caption = String(item.caption || '').trim();
+    if (caption.length < 10) throw new Error(`Screenshot ${evidenceIndex + 1} in "${ownerLabel}" needs a descriptive caption`);
+    return {
+      evidenceId: String(item.evidenceId || id('evidence')),
+      url,
+      publicId: String(item.publicId || '').slice(0, 300),
+      caption: caption.slice(0, 500),
+      kind: ['reference', 'valid', 'invalid'].includes(item.kind) ? item.kind : 'reference',
+      linkedRuleId: String(item.linkedRuleId || '').slice(0, 100),
+      uploadedAt: item.uploadedAt || new Date().toISOString(),
+      order: evidenceIndex,
+    };
+  });
+}
+
 function normalizeBlocks(input) {
   if (!Array.isArray(input) || input.length === 0 || input.length > 20) throw new Error('A playbook needs 1 to 20 blocks');
   return input.map((block, blockIndex) => {
     const name = String(block.name || '').trim();
     if (!name || name.length > 100) throw new Error('Every block needs a name');
     const rules = Array.isArray(block.rules) ? block.rules : [];
-    const evidence = Array.isArray(block.evidence) ? block.evidence : [];
     if (rules.length > 50) throw new Error('A block can contain at most 50 rules');
-    if (evidence.length > 20) throw new Error('A block can contain at most 20 screenshots');
     return {
       blockId: String(block.blockId || id('block')),
       name,
       category: normalizePlaybookCategory(block.category),
       order: blockIndex,
-      evidence: evidence.map((item, evidenceIndex) => {
-        const url = String(item.url || '').trim();
-        if (!url || (!url.startsWith('https://') && !url.startsWith('/'))) throw new Error('Every screenshot needs a valid URL');
-        const caption = String(item.caption || '').trim();
-        if (caption.length < 10) throw new Error(`Screenshot ${evidenceIndex + 1} in "${name}" needs a descriptive caption`);
-        return {
-          evidenceId: String(item.evidenceId || id('evidence')),
-          url,
-          publicId: String(item.publicId || '').slice(0, 300),
-          caption: caption.slice(0, 500),
-          kind: ['reference', 'valid', 'invalid'].includes(item.kind) ? item.kind : 'reference',
-          linkedRuleId: String(item.linkedRuleId || '').slice(0, 100),
-          uploadedAt: item.uploadedAt || new Date().toISOString(),
-          order: evidenceIndex,
-        };
-      }),
+      evidence: normalizePlaybookEvidence(block.evidence, name, 20),
       rules: rules.map((rule, ruleIndex) => {
         const label = String(rule.label || '').trim();
         if (!label || label.length > 160) throw new Error('Every rule needs a label');
@@ -174,6 +178,16 @@ function normalizeBlocks(input) {
         if (validation.minLength !== null && validation.maxLength !== null && validation.minLength > validation.maxLength) {
           throw new Error(`Minimum length cannot exceed maximum length for: ${label}`);
         }
+        const exampleRequirementSource = rule.exampleRequirement && typeof rule.exampleRequirement === 'object' ? rule.exampleRequirement : {};
+        const exampleRequirement = {
+          required: Boolean(exampleRequirementSource.required),
+          minimumImages: Math.max(0, Math.min(12, Number(exampleRequirementSource.minimumImages) || 0)),
+          maximumImages: Math.max(1, Math.min(12, Number(exampleRequirementSource.maximumImages) || 6)),
+        };
+        if (exampleRequirement.required && exampleRequirement.minimumImages < 1) exampleRequirement.minimumImages = 1;
+        if (exampleRequirement.minimumImages > exampleRequirement.maximumImages) throw new Error(`Minimum example images cannot exceed maximum for: ${label}`);
+        const examples = normalizePlaybookEvidence(rule.examples, label, exampleRequirement.maximumImages);
+        if (examples.length < exampleRequirement.minimumImages) throw new Error(`"${label}" needs at least ${exampleRequirement.minimumImages} example image${exampleRequirement.minimumImages === 1 ? '' : 's'}`);
         return {
           ruleId: String(rule.ruleId || id('rule')),
           label,
@@ -185,6 +199,8 @@ function normalizeBlocks(input) {
           unit: String(rule.unit || '').trim().slice(0, 30),
           defaultValue: rule.defaultValue ?? null,
           validation,
+          examples,
+          exampleRequirement,
           order: ruleIndex,
         };
       }),

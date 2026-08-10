@@ -50,50 +50,59 @@ if (!process.env.MONGODB_URI) {
     .then(async () => {
       console.log(' MongoDB connected');
 
-      // Seed private admin user if not exists
+      // Create the personal owner once from environment variables, or leave the
+      // database empty so the first-run Signup page can create the owner.
       const User = require('./models/User');
       const bcrypt = require('bcryptjs');
       try {
-        const email = process.env.ADMIN_EMAIL;
-        const password = process.env.ADMIN_PASSWORD;
+        const seedEnabled = String(process.env.SEED_OWNER_ENABLED || 'false').toLowerCase() === 'true';
+        const ownerName = process.env.OWNER_NAME || process.env.ADMIN_NAME || 'Journal Owner';
+        const ownerEmail = process.env.OWNER_EMAIL || process.env.ADMIN_EMAIL || '';
+        const ownerPassword = process.env.OWNER_PASSWORD || process.env.ADMIN_PASSWORD || '';
+        let owner = await User.findOne({}).sort({ createdAt: 1 });
 
-        if (!email || !password) {
-           console.warn(' ADMIN_EMAIL or ADMIN_PASSWORD not set. Admin seed skipped.');
-           return;
-        }
-
-        let admin = await User.findOne({ email: email.toLowerCase() });
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        if (!admin) {
-          admin = new User({
-            name: 'Paul Maweu',
-            email: email.toLowerCase(),
-            password: hashedPassword,
-          });
-          await admin.save();
-          console.log(` Private admin user seeded successfully: ${email}`);
+        if (!owner && seedEnabled) {
+          if (!ownerEmail || !ownerPassword || ownerPassword.length < 8) {
+            console.warn(' Owner seed skipped: OWNER_EMAIL and an OWNER_PASSWORD of at least 8 characters are required.');
+          } else {
+            owner = await User.create({
+              ownerKey: 'owner',
+              name: ownerName,
+              email: ownerEmail.toLowerCase(),
+              password: await bcrypt.hash(ownerPassword, 12),
+            });
+            console.log(` Personal journal owner created from environment: ${ownerEmail}`);
+          }
+        } else if (owner) {
+          if (!owner.ownerKey) {
+            owner.ownerKey = 'owner';
+            await owner.save();
+          }
+          console.log(` Existing journal owner retained: ${owner.email}`);
         } else {
-          admin.password = hashedPassword;
-          admin.name = 'Paul Maweu';
-          await admin.save();
-          console.log(` Private admin user password synchronized: ${email}`);
+          console.log(' No owner exists. Complete the one-time setup at /signup.');
         }
 
-        // Migration: Associate all existing trades that have no user with the admin user
+        if (!owner) return;
+
+        // Migration: assign legacy records without an owner to this installation's owner.
         const Trade = require('./models/Trade');
-        const updateResult = await Trade.updateMany(
+        const AccountEvent = require('./models/AccountEvent');
+        const [tradeResult, eventResult] = await Promise.all([
+          Trade.updateMany(
           { $or: [{ user: { $exists: false } }, { user: null }] },
-          { $set: { user: admin._id } },
-        );
-        if (updateResult.modifiedCount > 0) {
-          console.log(
-            ` Migrated ${updateResult.modifiedCount} unassociated trades to admin user: ${email}`,
-          );
+          { $set: { user: owner._id } },
+          ),
+          AccountEvent.updateMany(
+            { $or: [{ user: { $exists: false } }, { user: null }] },
+            { $set: { user: owner._id } },
+          ),
+        ]);
+        if (tradeResult.modifiedCount || eventResult.modifiedCount) {
+          console.log(` Assigned ${tradeResult.modifiedCount} legacy trades and ${eventResult.modifiedCount} account events to the owner.`);
         }
       } catch (e) {
-        console.error(' Admin seeding or migration failed:', e.message);
+        console.error(' Owner setup or migration failed:', e.message);
       }
     })
     .catch((err) => {

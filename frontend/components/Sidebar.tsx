@@ -84,7 +84,7 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
         )}
         <div className="sync-pill">
           <span className="sync-dot" />
-          <span>MT5 Syncing · Exness</span>
+          <span>MT5 Sync Connected</span>
         </div>
       </div>
     </>
@@ -95,7 +95,7 @@ export default function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
 
-  if (path === '/login') return null;
+  if (path === '/login' || path === '/signup') return null;
 
   return (
     <>

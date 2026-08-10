@@ -114,6 +114,15 @@ Next.js frontend (:3000)
 
 ## Setup
 
+### Create the personal owner
+
+This is a single-owner journal. It supports two first-run options:
+
+1. Leave `SEED_OWNER_ENABLED=false`, start MongoDB and the backend, then open `/signup`. Registration is available only while the user collection is empty and locks permanently after the owner is created.
+2. Set `SEED_OWNER_ENABLED=true` with `OWNER_NAME`, `OWNER_EMAIL`, and `OWNER_PASSWORD`. The backend creates the owner only when no user exists.
+
+Environment seeding is create-only: restarting the backend never overwrites an existing owner's name, email, or password. If an owner already exists, both environment seeding and `POST /api/auth/register` are ignored or rejected.
+
 ### Backend
 
 ```bash
@@ -183,6 +192,8 @@ requirements.txt
 | `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
+| `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
+| `/api/auth/register` | POST | Create the owner only when the database contains zero users |
 | `/api/playbooks` | GET / POST | List playbooks or publish a new strategy |
 | `/api/playbooks/:playbookId` | PUT | Publish a new immutable version |
 | `/api/playbooks/:playbookId` | PATCH | Archive or restore a strategy |
@@ -217,8 +228,10 @@ All endpoints require authentication except login and health checks. Export and 
 | `PORT` | Express port, default `4000` |
 | `MONGODB_URI` | MongoDB connection string |
 | `JWT_SECRET` | Long random JWT signing secret |
-| `ADMIN_EMAIL` | Private admin email |
-| `ADMIN_PASSWORD` | Private admin password |
+| `SEED_OWNER_ENABLED` | Set `true` to create the first owner from environment variables |
+| `OWNER_NAME` | Owner name used only during first-time environment seeding |
+| `OWNER_EMAIL` | Owner email used for seeding and optional offline login |
+| `OWNER_PASSWORD` | Owner password used only for first-time seeding and optional offline login; minimum 8 characters |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | Cloudinary API secret |
@@ -227,6 +240,7 @@ All endpoints require authentication except login and health checks. Export and 
 
 - `.env` files are ignored by Git.
 - Public registration is disabled.
+- Signup is a one-time owner setup route and rejects every request after any user exists.
 - API routes require JWT authentication and scope data to the authenticated user.
 - Cloudinary recovery only scans the authenticated user's folder prefix.
 - Offline screenshots are removed from local staging after successful Cloudinary upload.

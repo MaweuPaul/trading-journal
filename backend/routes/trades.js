@@ -13,6 +13,7 @@ const { v2: cloudinary } = require('cloudinary');
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
 const LOCAL_RULES_PATH = path.join(__dirname, '../local_user_rules.json');
+const LOCAL_PLAYBOOKS_PATH = path.join(__dirname, '../local_playbooks.json');
 const OFFLINE_SCREENSHOTS_DIR = path.join(__dirname, '../public/screenshots');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -37,6 +38,7 @@ if (CLOUDINARY_READY) {
 let inMemoryTrades = [];
 let inMemoryAccountEvents = [];
 let inMemoryUserRules = {};
+let inMemoryPlaybooks = {};
 const inMemorySyncRequests = {};
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
@@ -49,6 +51,9 @@ try {
   }
   if (fs.existsSync(LOCAL_RULES_PATH)) {
     inMemoryUserRules = JSON.parse(fs.readFileSync(LOCAL_RULES_PATH, 'utf8'));
+  }
+  if (fs.existsSync(LOCAL_PLAYBOOKS_PATH)) {
+    inMemoryPlaybooks = JSON.parse(fs.readFileSync(LOCAL_PLAYBOOKS_PATH, 'utf8'));
   }
 } catch (e) {
   console.error("Failed to load local persistent database:", e.message);
@@ -66,6 +71,196 @@ const DEFAULT_TRADING_RULES = [
   { ruleId: 'exec-size', label: 'Position size correct', category: 'execution', enabled: true, order: 3 },
   { ruleId: 'exec-fear', label: 'No manual close out of fear', category: 'execution', enabled: true, order: 4 },
 ];
+
+function id(prefix) {
+  return `${prefix}-${new mongoose.Types.ObjectId()}`;
+}
+
+function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
+  const now = new Date().toISOString();
+  const playbookId = 'playbook-core-edge';
+  const blocks = [
+    {
+      blockId: 'block-pre-trade',
+      name: 'Pre-trade conditions',
+      category: 'setup',
+      rules: rules.filter(rule => rule.category === 'pre_trade' && rule.enabled !== false).map(rule => ({
+        ruleId: rule.ruleId, label: rule.label, inputType: 'boolean', options: [], required: false,
+      })),
+    },
+    {
+      blockId: 'block-execution',
+      name: 'Execution discipline',
+      category: 'execution',
+      rules: rules.filter(rule => rule.category === 'execution' && rule.enabled !== false).map(rule => ({
+        ruleId: rule.ruleId, label: rule.label, inputType: 'boolean', options: [], required: false,
+      })),
+    },
+  ];
+  return {
+    playbookId,
+    name: 'Core Trading Edge',
+    description: 'Your migrated pre-trade and execution rules.',
+    archived: false,
+    createdAt: now,
+    versions: [{ versionId: 'playbook-core-edge-v1', versionNumber: 1, changeNote: 'Initial playbook', publishedAt: now, blocks }],
+  };
+}
+
+function normalizeBlocks(input) {
+  if (!Array.isArray(input) || input.length === 0 || input.length > 20) throw new Error('A playbook needs 1 to 20 blocks');
+  return input.map((block, blockIndex) => {
+    const name = String(block.name || '').trim();
+    if (!name || name.length > 100) throw new Error('Every block needs a name');
+    const rules = Array.isArray(block.rules) ? block.rules : [];
+    if (rules.length > 50) throw new Error('A block can contain at most 50 rules');
+    return {
+      blockId: String(block.blockId || id('block')),
+      name,
+      category: ['setup', 'context', 'entry', 'risk', 'execution', 'custom'].includes(block.category) ? block.category : 'custom',
+      order: blockIndex,
+      rules: rules.map((rule, ruleIndex) => {
+        const label = String(rule.label || '').trim();
+        if (!label || label.length > 160) throw new Error('Every rule needs a label');
+        const inputType = ['boolean', 'single_choice', 'multi_choice', 'number', 'rating', 'text'].includes(rule.inputType) ? rule.inputType : 'boolean';
+        const options = ['single_choice', 'multi_choice'].includes(inputType)
+          ? (Array.isArray(rule.options) ? rule.options.map(option => String(option).trim()).filter(Boolean).slice(0, 20) : [])
+          : [];
+        if (['single_choice', 'multi_choice'].includes(inputType) && options.length < 2) throw new Error(`"${label}" needs at least two choices`);
+        return {
+          ruleId: String(rule.ruleId || id('rule')),
+          label,
+          inputType,
+          options,
+          required: Boolean(rule.required),
+          order: ruleIndex,
+        };
+      }),
+    };
+  });
+}
+
+function validatePlaybookResponses(snapshot, input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const clean = {};
+  for (const block of snapshot?.blocks || []) {
+    for (const rule of block.rules || []) {
+      const value = source[rule.ruleId];
+      const missing = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+      if (missing) {
+        if (rule.required) throw new Error(`Required playbook field is missing: ${rule.label}`);
+        continue;
+      }
+      if (rule.inputType === 'boolean' && typeof value !== 'boolean') throw new Error(`Invalid Yes/No answer for: ${rule.label}`);
+      if (rule.inputType === 'single_choice' && !rule.options.includes(String(value))) throw new Error(`Invalid choice for: ${rule.label}`);
+      if (rule.inputType === 'multi_choice' && (!Array.isArray(value) || value.some(item => !rule.options.includes(String(item))))) throw new Error(`Invalid choices for: ${rule.label}`);
+      if (rule.inputType === 'number' && !Number.isFinite(Number(value))) throw new Error(`Invalid number for: ${rule.label}`);
+      if (rule.inputType === 'rating' && (!Number.isFinite(Number(value)) || Number(value) < 1 || Number(value) > 10)) throw new Error(`Rating must be from 1 to 10: ${rule.label}`);
+      clean[rule.ruleId] = rule.inputType === 'text' ? String(value).slice(0, 2000) : value;
+    }
+  }
+  return clean;
+}
+
+function saveLocalPlaybooks() {
+  fs.writeFileSync(LOCAL_PLAYBOOKS_PATH, JSON.stringify(inMemoryPlaybooks, null, 2), 'utf8');
+}
+
+async function getPlaybooks(userId) {
+  let playbooks;
+  if (mongoose.connection.readyState === 1) {
+    const user = await User.findById(userId).select('playbooks tradingRules').lean();
+    if (!user) throw new Error('User not found');
+    playbooks = user.playbooks || [];
+    if (!playbooks.length) {
+      playbooks = [rulesToStarterPlaybook(user.tradingRules?.length ? user.tradingRules : DEFAULT_TRADING_RULES)];
+      await User.findByIdAndUpdate(userId, { $set: { playbooks } });
+    }
+  } else {
+    const key = String(userId);
+    playbooks = inMemoryPlaybooks[key] || [];
+    if (!playbooks.length) {
+      playbooks = [rulesToStarterPlaybook(inMemoryUserRules[key] || DEFAULT_TRADING_RULES)];
+      inMemoryPlaybooks[key] = playbooks;
+      saveLocalPlaybooks();
+    }
+  }
+  return playbooks;
+}
+
+async function savePlaybooks(userId, playbooks) {
+  if (mongoose.connection.readyState === 1) {
+    await User.findByIdAndUpdate(userId, { $set: { playbooks } });
+  } else {
+    inMemoryPlaybooks[String(userId)] = playbooks;
+    saveLocalPlaybooks();
+  }
+}
+
+router.get('/playbooks', auth, async (req, res) => {
+  try {
+    res.json({ playbooks: await getPlaybooks(req.user.userId) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/playbooks', auth, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    if (!name || name.length > 100) return res.status(400).json({ error: 'Strategy name is required' });
+    const blocks = normalizeBlocks(req.body.blocks);
+    const playbooks = await getPlaybooks(req.user.userId);
+    const playbookId = id('playbook');
+    const now = new Date().toISOString();
+    const playbook = {
+      playbookId, name, description: String(req.body.description || '').trim().slice(0, 500), archived: false, createdAt: now,
+      versions: [{ versionId: id('version'), versionNumber: 1, changeNote: String(req.body.changeNote || 'Initial version').trim().slice(0, 300), publishedAt: now, blocks }],
+    };
+    playbooks.push(playbook);
+    await savePlaybooks(req.user.userId, playbooks);
+    res.status(201).json({ playbook });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.put('/playbooks/:playbookId', auth, async (req, res) => {
+  try {
+    const playbooks = await getPlaybooks(req.user.userId);
+    const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
+    if (!playbook) return res.status(404).json({ error: 'Strategy not found' });
+    const blocks = normalizeBlocks(req.body.blocks);
+    const latest = playbook.versions[playbook.versions.length - 1];
+    const now = new Date().toISOString();
+    playbook.name = String(req.body.name || playbook.name).trim().slice(0, 100);
+    playbook.description = String(req.body.description || '').trim().slice(0, 500);
+    playbook.versions.push({
+      versionId: id('version'),
+      versionNumber: Number(latest?.versionNumber || 0) + 1,
+      changeNote: String(req.body.changeNote || '').trim().slice(0, 300) || 'Strategy updated',
+      publishedAt: now,
+      blocks,
+    });
+    await savePlaybooks(req.user.userId, playbooks);
+    res.json({ playbook });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.patch('/playbooks/:playbookId', auth, async (req, res) => {
+  try {
+    const playbooks = await getPlaybooks(req.user.userId);
+    const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
+    if (!playbook) return res.status(404).json({ error: 'Strategy not found' });
+    playbook.archived = Boolean(req.body.archived);
+    await savePlaybooks(req.user.userId, playbooks);
+    res.json({ playbook });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 function saveLocalRules() {
   fs.writeFileSync(LOCAL_RULES_PATH, JSON.stringify(inMemoryUserRules, null, 2), 'utf8');
@@ -384,11 +579,12 @@ function buildCloudinaryContext(trade, caption) {
     `closeTime=${t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime}`,
     `durationMinutes=${t.durationMinutes || 0}`,
     `runningBalance=${t.runningBalance || 0}`,
+    `accountType=${t.accountType || ''}`,
     `emotion=${t.emotion || ''}`,
     `grade=${t.grade || ''}`,
     `tags=${(t.tags || []).join(',')}`,
     `caption=${(caption || '').replace(/[|=]/g, ' ').slice(0, 200)}`,
-    `journalVersion=1`,
+    `journalVersion=2`,
   ].join('|');
 }
 
@@ -396,7 +592,7 @@ function buildCloudinaryContext(trade, caption) {
 function buildSidecarMetadata(trade, caption, imageUrl) {
   const t = typeof trade.toObject === 'function' ? trade.toObject() : trade;
   return {
-    _schemaVersion: 1,
+    _schemaVersion: 2,
     exportedAt: new Date().toISOString(),
     imageUrl,
     caption: caption || '',
@@ -422,7 +618,55 @@ function buildSidecarMetadata(trade, caption, imageUrl) {
       emotion: t.emotion || '',
       grade: t.grade || '',
       checklist: t.checklist || [],
+      accountType: t.accountType || '',
+      analysisGrade: t.analysisGrade || '',
+      executionGrade: t.executionGrade || '',
+      plannedRR: t.plannedRR ?? null,
+      exitReason: t.exitReason || '',
+      manuallyIntervened: t.manuallyIntervened ?? null,
+      confidenceRating: t.confidenceRating ?? null,
+      primarySetup: t.primarySetup || '',
+      setupConfirmations: t.setupConfirmations || [],
+      executionChecklist: t.executionChecklist || [],
+      playbookId: t.playbookId || '',
+      playbookVersionId: t.playbookVersionId || '',
+      playbookSnapshot: t.playbookSnapshot || null,
+      playbookResponses: t.playbookResponses || {},
     },
+  };
+}
+
+function reconstructTradeFromContext(ctx, userId) {
+  const required = ['dealId', 'symbol', 'direction', 'entryPrice', 'exitPrice', 'lotSize', 'pnlUSD', 'openTime', 'closeTime'];
+  if (required.some(key => ctx[key] === undefined || ctx[key] === '')) return null;
+  const direction = String(ctx.direction).toUpperCase();
+  if (!['BUY', 'SELL'].includes(direction)) return null;
+  const openTime = new Date(ctx.openTime);
+  const closeTime = new Date(ctx.closeTime);
+  if (Number.isNaN(openTime.getTime()) || Number.isNaN(closeTime.getTime())) return null;
+  const number = key => Number(ctx[key] || 0);
+  return {
+    dealId: String(ctx.dealId),
+    positionId: String(ctx.positionId || ''),
+    symbol: String(ctx.symbol),
+    direction,
+    entryPrice: number('entryPrice'),
+    exitPrice: number('exitPrice'),
+    lotSize: number('lotSize'),
+    pnlUSD: number('pnlUSD'),
+    pnlPct: number('pnlPct'),
+    commission: number('commission'),
+    swap: number('swap'),
+    openTime,
+    closeTime,
+    durationMinutes: number('durationMinutes'),
+    runningBalance: number('runningBalance'),
+    accountType: ['live', 'demo'].includes(String(ctx.accountType).toLowerCase()) ? String(ctx.accountType).toLowerCase() : '',
+    emotion: ctx.emotion || '',
+    grade: ctx.grade || '',
+    tags: String(ctx.tags || '').split(',').map(tag => tag.trim()).filter(Boolean),
+    user: userId,
+    synced: new Date(),
   };
 }
 
@@ -656,8 +900,8 @@ router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
 });
 
 // POST /api/maintenance/recover-screenshots
-// After a clear + resync, re-attach Cloudinary screenshots to freshly-created trades
-// by matching on the dealId stored in each image's Cloudinary context tags.
+// Re-attach Cloudinary screenshots by dealId. If the trade is missing entirely,
+// reconstruct its core MT5 record from the metadata embedded on the image asset.
 router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
   if (!CLOUDINARY_READY) {
     return res.status(400).json({ error: 'Cloudinary is not configured on this server.' });
@@ -684,10 +928,11 @@ router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
     } while (nextCursor);
 
     if (allResources.length === 0) {
-      return res.json({ recovered: 0, skipped: 0, errors: 0, total: 0, message: 'No images found in Cloudinary for this account.' });
+      return res.json({ recovered: 0, tradesReconstructed: 0, skipped: 0, errors: 0, total: 0, message: 'No images found in Cloudinary for this account.' });
     }
 
     let recovered = 0;
+    let tradesReconstructed = 0;
     let skipped = 0;
     let errors = 0;
 
@@ -704,10 +949,16 @@ router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
 
         if (mongoose.connection.readyState !== 1) {
           // Offline mode: update inMemoryTrades
-          const idx = inMemoryTrades.findIndex(
+          let idx = inMemoryTrades.findIndex(
             t => isOfflineTradeVisibleToUser(t, userId) && String(t.dealId) === String(dealId)
           );
-          if (idx === -1) { skipped++; continue; }
+          if (idx === -1) {
+            const reconstructed = reconstructTradeFromContext(ctx, userId);
+            if (!reconstructed) { skipped++; continue; }
+            inMemoryTrades.push({ ...reconstructed, _id: `recovered-${dealId}`, openTime: reconstructed.openTime.toISOString(), closeTime: reconstructed.closeTime.toISOString(), synced: new Date().toISOString(), screenshots: [] });
+            idx = inMemoryTrades.length - 1;
+            tradesReconstructed++;
+          }
 
           if (!Array.isArray(inMemoryTrades[idx].screenshots)) inMemoryTrades[idx].screenshots = [];
           const alreadyLinked = inMemoryTrades[idx].screenshots.some(s => s.publicId === publicId);
@@ -722,8 +973,13 @@ router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
           recovered++;
         } else {
           // MongoDB mode
-          const trade = await Trade.findOne({ user: req.user.userId, dealId: String(dealId) });
-          if (!trade) { skipped++; continue; }
+          let trade = await Trade.findOne({ user: req.user.userId, dealId: String(dealId) });
+          if (!trade) {
+            const reconstructed = reconstructTradeFromContext(ctx, req.user.userId);
+            if (!reconstructed) { skipped++; continue; }
+            trade = await Trade.create(reconstructed);
+            tradesReconstructed++;
+          }
 
           const alreadyLinked = trade.screenshots.some(s => s.publicId === publicId);
           if (alreadyLinked) { skipped++; continue; }
@@ -747,10 +1003,10 @@ router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
     if (recovered > 0 && mongoose.connection.readyState !== 1) saveLocalDatabase();
 
     const message = recovered > 0
-      ? `Recovered ${recovered} screenshot(s). ${skipped} already linked or no matching trade. ${errors > 0 ? `${errors} error(s).` : ''}`
+      ? `Recovered ${recovered} screenshot(s) and reconstructed ${tradesReconstructed} missing trade(s). ${skipped} skipped. ${errors > 0 ? `${errors} error(s).` : ''}`
       : `No screenshots needed recovery. ${skipped} already linked or no matching trade found.`;
 
-    res.json({ recovered, skipped, errors, total: allResources.length, message });
+    res.json({ recovered, tradesReconstructed, skipped, errors, total: allResources.length, message });
   } catch (err) {
     console.error('[RecoverScreenshots] Fatal error:', err.message);
     res.status(500).json({ error: err.message });
@@ -888,6 +1144,7 @@ router.post('/sync-account-events', auth, async (req, res) => {
 
     let inserted = 0;
     let skipped = 0;
+    let accountTypesUpdated = 0;
 
     if (mongoose.connection.readyState !== 1) {
       for (const e of events) {
@@ -1138,13 +1395,14 @@ router.get('/performance', auth, async (req, res) => {
 // GET /api/trades  all trades, newest frst, wth optonal flters
 router.get('/trades', auth, async (req, res) => {
   try {
-    const { symbol, direction, from, to, page = 1, limit = 50 } = req.query;
+    const { symbol, direction, accountType, from, to, page = 1, limit = 50 } = req.query;
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
       if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
       if (direction) filtered = filtered.filter(t => t.direction === direction.toUpperCase());
+      if (accountType) filtered = filtered.filter(t => t.accountType === String(accountType).toLowerCase());
       if (from) filtered = filtered.filter(t => new Date(t.closeTime) >= new Date(from));
       if (to) filtered = filtered.filter(t => new Date(t.closeTime) <= new Date(to));
 
@@ -1165,6 +1423,7 @@ router.get('/trades', auth, async (req, res) => {
     const query = { user: req.user.userId };
     if (symbol) query.symbol = symbol.toUpperCase();
     if (direction) query.direction = query.direction = direction.toUpperCase();
+    if (accountType) query.accountType = String(accountType).toLowerCase();
     if (from || to) {
       query.closeTime = {};
       if (from) query.closeTime.$gte = new Date(from);
@@ -1195,7 +1454,29 @@ router.put('/trades/:id', auth, async (req, res) => {
       isReEntry, parentTradeId, tradeGroup,
       primarySetup, setupConfirmations,
       executionChecklist,
+      playbookId, playbookVersionId, playbookResponses,
     } = req.body;
+
+    let canonicalPlaybookSnapshot;
+    let validatedPlaybookResponses;
+    if (playbookId !== undefined && playbookId) {
+      const playbooks = await getPlaybooks(req.user.userId);
+      const playbook = playbooks.find(item => item.playbookId === String(playbookId));
+      if (!playbook) return res.status(400).json({ error: 'Strategy not found' });
+      const version = playbook.versions.find(item => item.versionId === String(playbookVersionId))
+        || playbook.versions[playbook.versions.length - 1];
+      if (!version) return res.status(400).json({ error: 'Strategy has no published version' });
+      canonicalPlaybookSnapshot = {
+        playbookId: playbook.playbookId,
+        name: playbook.name,
+        description: playbook.description,
+        versionId: version.versionId,
+        versionNumber: version.versionNumber,
+        publishedAt: version.publishedAt,
+        blocks: version.blocks,
+      };
+      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses);
+    }
 
     // Helper to apply all fields to a trade object
     function applyFields(t) {
@@ -1223,6 +1504,14 @@ router.put('/trades/:id', auth, async (req, res) => {
       if (primarySetup !== undefined) t.primarySetup = primarySetup;
       if (setupConfirmations !== undefined) t.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
       if (executionChecklist !== undefined) t.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
+      if (playbookId !== undefined) {
+        t.playbookId = canonicalPlaybookSnapshot?.playbookId || '';
+        t.playbookVersionId = canonicalPlaybookSnapshot?.versionId || '';
+        t.playbookSnapshot = canonicalPlaybookSnapshot || null;
+        t.playbookResponses = validatedPlaybookResponses || {};
+      } else if (playbookResponses !== undefined && t.playbookSnapshot) {
+        t.playbookResponses = playbookResponses && typeof playbookResponses === 'object' ? playbookResponses : {};
+      }
       return t;
     }
 
@@ -1259,6 +1548,14 @@ router.put('/trades/:id', auth, async (req, res) => {
     if (primarySetup !== undefined) update.primarySetup = primarySetup;
     if (setupConfirmations !== undefined) update.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
     if (executionChecklist !== undefined) update.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
+    if (playbookId !== undefined) {
+      update.playbookId = canonicalPlaybookSnapshot?.playbookId || '';
+      update.playbookVersionId = canonicalPlaybookSnapshot?.versionId || '';
+      update.playbookSnapshot = canonicalPlaybookSnapshot || null;
+      update.playbookResponses = validatedPlaybookResponses || {};
+    } else if (playbookResponses !== undefined) {
+      update.playbookResponses = playbookResponses && typeof playbookResponses === 'object' ? playbookResponses : {};
+    }
 
     const updated = await Trade.findOneAndUpdate(
       { _id: req.params.id, user: req.user.userId },
@@ -1500,8 +1797,13 @@ router.post('/sync', auth, async (req, res) => {
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       for (const t of trades) {
-        const exists = inMemoryTrades.some(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId));
-        if (exists) {
+        const existingIndex = inMemoryTrades.findIndex(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId));
+        if (existingIndex !== -1) {
+          const syncedType = ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '';
+          if (syncedType && inMemoryTrades[existingIndex].accountType !== syncedType) {
+            inMemoryTrades[existingIndex].accountType = syncedType;
+            accountTypesUpdated++;
+          }
           skipped++;
           continue;
         }
@@ -1523,6 +1825,7 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: t.closeTime,
           durationMinutes: Number(t.durationMinutes || 0),
           runningBalance: Number(t.runningBalance || 0),
+          accountType: ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '',
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
@@ -1531,11 +1834,11 @@ router.post('/sync', auth, async (req, res) => {
 
         inMemoryTrades.push(newTrade);
         inserted++;
-      } if (inserted > 0) {
+      } if (inserted > 0 || accountTypesUpdated > 0) {
         saveLocalDatabase();
       }
 
-      return res.json({ inserted, skipped, total: trades.length });
+      return res.json({ inserted, skipped, accountTypesUpdated, total: trades.length });
     }
 
     for (const t of trades) {
@@ -1543,9 +1846,16 @@ router.post('/sync', auth, async (req, res) => {
         const existing = await Trade.findOne({
           user: req.user.userId,
           dealId: String(t.dealId),
-        }).select('_id');
+        }).select('_id accountType');
 
         if (existing) {
+          const syncedType = ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '';
+          if (syncedType && existing.accountType !== syncedType) {
+            await Trade.updateOne({ _id: existing._id, user: req.user.userId }, { $set: { accountType: syncedType } });
+            const memoryIndex = inMemoryTrades.findIndex(item => sameTradeOwnerAndDealId(item, req.user.userId, t.dealId));
+            if (memoryIndex !== -1) inMemoryTrades[memoryIndex].accountType = syncedType;
+            accountTypesUpdated++;
+          }
           skipped++;
           continue;
         }
@@ -1566,6 +1876,7 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: new Date(t.closeTime),
           durationMinutes: t.durationMinutes || 0,
           runningBalance: t.runningBalance || 0,
+          accountType: ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '',
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
@@ -1591,11 +1902,11 @@ router.post('/sync', auth, async (req, res) => {
           throw e;
         }
       }
-    } if (inserted > 0) {
+    } if (inserted > 0 || accountTypesUpdated > 0) {
       saveLocalDatabase();
     }
 
-    res.json({ inserted, skipped, total: trades.length });
+    res.json({ inserted, skipped, accountTypesUpdated, total: trades.length });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2245,6 +2556,8 @@ router.get('/coach', auth, async (req, res) => {
         manualIntervention: { interventionCount: 0, cleanCount: 0, interventionAvgPnL: 0, cleanAvgPnL: 0, interventionAvgRR: 0, cleanAvgRR: 0 },
         demoVsLive: { demo: null, live: null },
         setupAnalytics: [],
+        playbookAnalytics: [],
+        ruleEffectiveness: [],
         totalTrades: 0,
       });
     }
@@ -2406,6 +2719,70 @@ router.get('/coach', auth, async (req, res) => {
       .filter(s => s.setup !== 'Untagged')
       .sort((a, b) => b.winRate - a.winRate);
 
+    // ── 9. Versioned Playbook & Rule Effectiveness ──────────────────────────
+    const playbookMap = {};
+    const ruleMap = {};
+    for (const trade of trades) {
+      const snapshot = trade.playbookSnapshot;
+      if (!snapshot?.playbookId || !snapshot?.versionId) continue;
+      const versionKey = `${snapshot.playbookId}:${snapshot.versionId}`;
+      if (!playbookMap[versionKey]) {
+        playbookMap[versionKey] = {
+          playbookId: snapshot.playbookId,
+          playbookName: snapshot.name,
+          versionId: snapshot.versionId,
+          versionNumber: snapshot.versionNumber,
+          tradeCount: 0,
+          wins: 0,
+          totalPnL: 0,
+        };
+      }
+      const versionStats = playbookMap[versionKey];
+      versionStats.tradeCount++;
+      versionStats.totalPnL += Number(trade.pnlUSD || 0);
+      if (trade.pnlUSD > 0) versionStats.wins++;
+
+      const responses = trade.playbookResponses || {};
+      for (const block of snapshot.blocks || []) {
+        for (const rule of block.rules || []) {
+          const value = responses[rule.ruleId];
+          if (value === undefined || value === null || value === '') continue;
+          const answers = Array.isArray(value) ? value : [value];
+          for (const answer of answers) {
+            if (!['boolean', 'single_choice', 'multi_choice', 'rating'].includes(rule.inputType)) continue;
+            const answerLabel = typeof answer === 'boolean' ? (answer ? 'Yes' : 'No') : String(answer);
+            const key = `${rule.ruleId}:${answerLabel}`;
+            if (!ruleMap[key]) {
+              ruleMap[key] = {
+                ruleId: rule.ruleId,
+                ruleLabel: rule.label,
+                blockName: block.name,
+                inputType: rule.inputType,
+                answer: answerLabel,
+                tradeCount: 0,
+                wins: 0,
+                totalPnL: 0,
+              };
+            }
+            ruleMap[key].tradeCount++;
+            ruleMap[key].totalPnL += Number(trade.pnlUSD || 0);
+            if (trade.pnlUSD > 0) ruleMap[key].wins++;
+          }
+        }
+      }
+    }
+    const playbookAnalytics = Object.values(playbookMap).map(item => ({
+      ...item,
+      winRate: item.tradeCount ? parseFloat(((item.wins / item.tradeCount) * 100).toFixed(1)) : 0,
+      avgPnL: item.tradeCount ? parseFloat((item.totalPnL / item.tradeCount).toFixed(2)) : 0,
+    })).sort((a, b) => b.avgPnL - a.avgPnL);
+    const ruleEffectiveness = Object.values(ruleMap).map(item => ({
+      ...item,
+      winRate: item.tradeCount ? parseFloat(((item.wins / item.tradeCount) * 100).toFixed(1)) : 0,
+      avgPnL: item.tradeCount ? parseFloat((item.totalPnL / item.tradeCount).toFixed(2)) : 0,
+      sampleStatus: item.tradeCount >= 20 ? 'strong' : item.tradeCount >= 5 ? 'developing' : 'insufficient',
+    })).sort((a, b) => b.tradeCount - a.tradeCount);
+
     res.json({
       totalTrades: trades.length,
       earlyExits: {
@@ -2445,6 +2822,8 @@ router.get('/coach', auth, async (req, res) => {
         demo: buildAccountStats(demoArr),
       },
       setupAnalytics,
+      playbookAnalytics,
+      ruleEffectiveness,
     });
   } catch (err) {
     console.error('Coach route error:', err.message);

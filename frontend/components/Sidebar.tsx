@@ -12,7 +12,7 @@ const navItems = [
   { href: '/performance', label: 'Performance',  icon: LineChart },
   { href: '/coach',       label: 'Edge Coach',   icon: Brain },
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
-  { href: '/rules',       label: 'Trading Rules', icon: SlidersHorizontal },
+  { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },
 ];
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {

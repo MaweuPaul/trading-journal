@@ -110,6 +110,11 @@ interface PlaybookRule {
   inputType: 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
   options: string[];
   required: boolean;
+  helpText?: string;
+  placeholder?: string;
+  unit?: string;
+  defaultValue?: string | number | boolean | null;
+  validation?: { min?: number | null; max?: number | null; minLength?: number | null; maxLength?: number | null };
 }
 
 interface PlaybookBlock {
@@ -594,7 +599,13 @@ export default function TradesPage() {
       publishedAt: version.publishedAt,
       blocks: JSON.parse(JSON.stringify(version.blocks)),
     });
-    setDraftPlaybookResponses({});
+    const defaults: Record<string, unknown> = {};
+    for (const block of version.blocks) {
+      for (const rule of block.rules) {
+        if (rule.defaultValue !== null && rule.defaultValue !== undefined && rule.defaultValue !== '') defaults[rule.ruleId] = rule.defaultValue;
+      }
+    }
+    setDraftPlaybookResponses(defaults);
   };
 
   const setPlaybookResponse = (ruleId: string, value: unknown) => {
@@ -623,9 +634,9 @@ export default function TradesPage() {
       return <div><input type="range" min="1" max="10" value={Number(value || 5)} onChange={event => setPlaybookResponse(rule.ruleId, Number(event.target.value))} style={{ width: '100%', accentColor: 'var(--accent)' }} /><div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>{Number(value || 5)}/10</div></div>;
     }
     if (rule.inputType === 'number') {
-      return <input type="number" value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
+      return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}><input type="number" min={rule.validation?.min ?? undefined} max={rule.validation?.max ?? undefined} placeholder={rule.placeholder || undefined} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />{rule.unit && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{rule.unit}</span>}</div>;
     }
-    return <textarea value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={2} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
+    return <textarea value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={2} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
   };
 
   return (
@@ -934,6 +945,7 @@ export default function TradesPage() {
                       {block.rules.map(rule => (
                         <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
                           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
+                          {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
                           {renderPlaybookInput(rule)}
                         </div>
                       ))}

@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowRight, BookOpen, FileClock, ShieldCheck } from 'lucide-
 interface Evidence { evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid'; linkedRuleId?: string }
 interface Rule { ruleId: string; label: string; inputType: string; required: boolean; helpText?: string; unit?: string; options?: string[] }
 interface Block { blockId: string; name: string; category: string; rules: Rule[]; evidence?: Evidence[] }
-interface Version { versionId: string; versionNumber: number; changeNote: string; publishedAt: string; blocks: Block[] }
+interface Version { versionId: string; versionNumber: number; schemaVersion?: number; changeNote: string; publishedAt: string; blocks: Block[] }
 interface Playbook { playbookId: string; name: string; description: string; archived: boolean; versions: Version[] }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -61,7 +61,7 @@ export default function ReadPlaybookPage() {
               {[...playbook.versions].reverse().map(item => <option key={item.versionId} value={item.versionId}>Version {item.versionNumber} · {new Date(item.publishedAt).toLocaleDateString()}</option>)}
             </select>
           </label>
-          <span>{version.changeNote}</span>
+          <span>Schema {version.schemaVersion || 1} · {version.changeNote}</span>
         </div>
       </header>
 

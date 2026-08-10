@@ -75,6 +75,7 @@ const DEFAULT_TRADING_RULES = [
 const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
+const PLAYBOOK_SCHEMA_VERSION = 2;
 
 function normalizePlaybookCategory(category) {
   const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
@@ -113,7 +114,7 @@ function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
     description: 'Your migrated pre-trade and execution rules.',
     archived: false,
     createdAt: now,
-    versions: [{ versionId: 'playbook-core-edge-v1', versionNumber: 1, changeNote: 'Initial playbook', publishedAt: now, blocks }],
+    versions: [{ versionId: 'playbook-core-edge-v1', versionNumber: 1, schemaVersion: PLAYBOOK_SCHEMA_VERSION, changeNote: 'Initial playbook', publishedAt: now, blocks }],
   };
 }
 
@@ -298,13 +299,15 @@ router.post('/playbooks', auth, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     if (!name || name.length > 100) return res.status(400).json({ error: 'Strategy name is required' });
+    const changeNote = String(req.body.changeNote || '').trim();
+    if (changeNote.length < 20) return res.status(400).json({ error: 'Explain what changed and why using at least 20 characters' });
     const blocks = normalizeBlocks(req.body.blocks);
     const playbooks = await getPlaybooks(req.user.userId);
     const playbookId = id('playbook');
     const now = new Date().toISOString();
     const playbook = {
       playbookId, name, description: String(req.body.description || '').trim().slice(0, 500), archived: false, createdAt: now,
-      versions: [{ versionId: id('version'), versionNumber: 1, changeNote: String(req.body.changeNote || 'Initial version').trim().slice(0, 300), publishedAt: now, blocks }],
+      versions: [{ versionId: id('version'), versionNumber: 1, schemaVersion: PLAYBOOK_SCHEMA_VERSION, changeNote: changeNote.slice(0, 1000), publishedAt: now, blocks }],
     };
     playbooks.push(playbook);
     await savePlaybooks(req.user.userId, playbooks);
@@ -319,6 +322,8 @@ router.put('/playbooks/:playbookId', auth, async (req, res) => {
     const playbooks = await getPlaybooks(req.user.userId);
     const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
     if (!playbook) return res.status(404).json({ error: 'Strategy not found' });
+    const changeNote = String(req.body.changeNote || '').trim();
+    if (changeNote.length < 20) return res.status(400).json({ error: 'Explain what changed and why using at least 20 characters' });
     const blocks = normalizeBlocks(req.body.blocks);
     const latest = playbook.versions[playbook.versions.length - 1];
     const now = new Date().toISOString();
@@ -327,7 +332,8 @@ router.put('/playbooks/:playbookId', auth, async (req, res) => {
     playbook.versions.push({
       versionId: id('version'),
       versionNumber: Number(latest?.versionNumber || 0) + 1,
-      changeNote: String(req.body.changeNote || '').trim().slice(0, 300) || 'Strategy updated',
+      schemaVersion: PLAYBOOK_SCHEMA_VERSION,
+      changeNote: changeNote.slice(0, 1000),
       publishedAt: now,
       blocks,
     });
@@ -1561,6 +1567,7 @@ router.put('/trades/:id', auth, async (req, res) => {
         description: playbook.description,
         versionId: version.versionId,
         versionNumber: version.versionNumber,
+        schemaVersion: version.schemaVersion || 1,
         publishedAt: version.publishedAt,
         blocks: version.blocks,
       };

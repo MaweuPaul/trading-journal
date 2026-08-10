@@ -6,7 +6,7 @@ import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCh
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
-type BlockCategory = 'setup' | 'context' | 'entry' | 'risk' | 'execution' | 'custom';
+type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
 
 interface PlaybookRule {
   ruleId: string;
@@ -14,6 +14,16 @@ interface PlaybookRule {
   inputType: InputType;
   options: string[];
   required: boolean;
+  helpText?: string;
+  placeholder?: string;
+  unit?: string;
+  defaultValue?: string | number | boolean | null;
+  validation?: {
+    min?: number | null;
+    max?: number | null;
+    minLength?: number | null;
+    maxLength?: number | null;
+  };
   order?: number;
 }
 
@@ -50,12 +60,25 @@ const INPUT_LABELS: Record<InputType, string> = {
   text: 'Text',
 };
 
+const BLOCK_CATEGORIES: Array<{ value: BlockCategory; label: string; description: string }> = [
+  { value: 'concept', label: '1. Strategy concept', description: 'The thesis, markets, sessions, and conditions behind the edge.' },
+  { value: 'context', label: '2. Market context', description: 'Bias, regime, liquidity, key levels, and higher-timeframe evidence.' },
+  { value: 'setup', label: '3. Setup & location', description: 'Where the opportunity must form and what makes the location valid.' },
+  { value: 'entry', label: '4. Entry confirmation', description: 'The precise trigger that authorizes the trade.' },
+  { value: 'risk', label: '5. Risk plan', description: 'Position sizing, stop placement, targets, and risk limits.' },
+  { value: 'execution', label: '6. Execution', description: 'How the order must be placed and verified.' },
+  { value: 'management', label: '7. Trade management', description: 'Break-even, partials, trailing, and intervention rules.' },
+  { value: 'exit', label: '8. Exit', description: 'Valid reasons and conditions for terminating the trade.' },
+  { value: 'review', label: '9. Post-trade review', description: 'Outcome, execution quality, lessons, and revision evidence.' },
+  { value: 'custom', label: 'Custom stage', description: 'A user-defined stage outside the standard lifecycle.' },
+];
+
 function uid(prefix: string) {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
 }
 
 function blankBlock(): PlaybookBlock {
-  return { blockId: uid('block'), name: 'New block', category: 'custom', rules: [] };
+  return { blockId: uid('block'), name: 'New stage', category: 'custom', rules: [] };
 }
 
 function latest(playbook: Playbook) {
@@ -63,7 +86,11 @@ function latest(playbook: Playbook) {
 }
 
 function cloneBlocks(blocks: PlaybookBlock[]) {
-  return JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[];
+  const legacyCategories: Record<string, BlockCategory> = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
+  return (JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[]).map(block => ({
+    ...block,
+    category: legacyCategories[block.category] || block.category || 'custom',
+  }));
 }
 
 function ChoiceOptionsInput({
@@ -89,6 +116,49 @@ function ChoiceOptionsInput({
       placeholder="A, B, C"
       style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
     />
+  );
+}
+
+function optionalNumber(value: string) {
+  return value === '' ? null : Number(value);
+}
+
+function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch: Partial<PlaybookRule>) => void }) {
+  const validation = rule.validation || {};
+  const inputStyle = { minHeight: 38, width: '100%', border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' };
+  const labelStyle = { display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' };
+
+  return (
+    <details className="playbook-field-details">
+      <summary>Field guidance and validation</summary>
+      <div className="playbook-field-details-grid">
+        <label style={{ ...labelStyle, gridColumn: 'span 2' }}>Help text
+          <input value={rule.helpText || ''} onChange={event => onChange({ helpText: event.target.value })} placeholder="Explain what evidence the trader should record" style={inputStyle} />
+        </label>
+        <label style={labelStyle}>Input placeholder
+          <input value={rule.placeholder || ''} onChange={event => onChange({ placeholder: event.target.value })} placeholder="Example answer or instruction" style={inputStyle} />
+        </label>
+        <label style={labelStyle}>Unit
+          <input value={rule.unit || ''} onChange={event => onChange({ unit: event.target.value })} placeholder="%, USD, points, R…" style={inputStyle} />
+        </label>
+        {rule.inputType === 'number' && <>
+          <label style={labelStyle}>Minimum
+            <input type="number" value={validation.min ?? ''} onChange={event => onChange({ validation: { ...validation, min: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>Maximum
+            <input type="number" value={validation.max ?? ''} onChange={event => onChange({ validation: { ...validation, max: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+        </>}
+        {rule.inputType === 'text' && <>
+          <label style={labelStyle}>Minimum characters
+            <input type="number" min="0" value={validation.minLength ?? ''} onChange={event => onChange({ validation: { ...validation, minLength: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>Maximum characters
+            <input type="number" min="1" value={validation.maxLength ?? ''} onChange={event => onChange({ validation: { ...validation, maxLength: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+        </>}
+      </div>
+    </details>
   );
 }
 
@@ -166,7 +236,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {} }],
     } : block));
     markDirty();
   };
@@ -281,9 +351,10 @@ export default function PlaybooksPage() {
                 <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
                   <div className="playbook-block-header">
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
-                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Category<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{(['setup', 'context', 'entry', 'risk', 'execution', 'custom'] as BlockCategory[]).map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                     <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
                   </div>
+                  <p style={{ margin: '-5px 0 12px', color: 'var(--text-muted)', fontSize: 11 }}>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.description || BLOCK_CATEGORIES[BLOCK_CATEGORIES.length - 1].description}</p>
 
                   <div style={{ display: 'grid', gap: 9 }}>
                     {block.rules.map((rule, ruleIndex) => (
@@ -293,6 +364,7 @@ export default function PlaybooksPage() {
                         {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
+                        <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />
                       </div>
                     ))}
                   </div>

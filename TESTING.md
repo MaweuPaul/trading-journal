@@ -11,8 +11,8 @@ The following checks were run against the repository on August 10, 2026:
 | Backend JavaScript syntax | Passed | Express routes, models, middleware, and startup files parse correctly |
 | TypeScript `tsc --noEmit` | Passed | Frontend pages and components are type-valid |
 | Targeted ESLint | Passed | New Signup, Playbook, and contextual-help components pass their targeted lint checks |
-| Next.js production build | Passed | All 14 application routes compile and prerender successfully |
-| Playbook answer-type trace | Passed | All six types are present in the builder, rendered in Trade Review, validated by the backend, and stored in trade snapshots |
+| Next.js production build | Passed | All 15 application routes, including `/rules/read`, compile and prerender successfully |
+| Playbook answer-type trace | Passed | Standard and specialized field types are configured in the builder, rendered in Trade Review, validated by the backend, and stored in snapshots |
 
 Tests requiring real external credentials cannot be fully executed in a source-only environment. MongoDB persistence, Cloudinary upload/recovery, and MT5 synchronization must be verified against your own services using the procedures below.
 
@@ -502,3 +502,49 @@ Copy this table into an issue or release note:
 | JSON/CSV export | Pass / Fail | |
 | Offline fallback | Pass / Fail | |
 | Responsive/accessibility | Pass / Fail | |
+
+## Structured visual playbook acceptance test
+
+Run this workflow after completing setup with valid MongoDB and Cloudinary credentials.
+
+1. Open Playbooks and create a new strategy.
+2. Add recommended Context, Setup, Risk, Execution, Exit, and Review stages.
+3. Reorder two stages, collapse and expand them, and confirm the stage numbers follow the new order.
+4. Rename template fields, remove one, and add one empty custom field.
+5. Configure these field types: Yes/No, choices, percentage, currency, price, duration, risk-to-reward, rating, date, time, short text, and long explanation.
+6. Set units and numeric minimum/maximum values, then mark several fields required.
+7. Upload at least three chart images: Reference, Valid example, and Invalid example.
+8. Link one image to a specific field, write a caption of at least ten characters, and reorder the images.
+9. Enter a change note describing what changed, why, and the expected result. Publish version 1.
+10. Open Read Playbook and verify the cover, contents, chapters, large images, captions, options, and next/previous navigation.
+11. Attach the playbook to a trade and complete its Plan, Manage, and Review tabs.
+12. Attempt to save with a required field missing. Confirm the journal opens the phase containing that field and blocks the save.
+13. Complete every required field, save, refresh, and reopen the trade.
+14. Edit the playbook, publish version 2, and reopen the earlier trade.
+15. Complete several trades with different answers and outcomes, then open Edge Coach.
+
+Expected results:
+
+- Templates are editable starting points, not locked rules.
+- Screenshot captions and field configuration are part of the published snapshot.
+- Version 1 remains available in reading mode after version 2 is published.
+- The earlier trade still contains schema version 1's exact stages, screenshots, fields, and responses.
+- Edge Coach separates versions and reports stage compliance, answer effectiveness, and numeric winning/losing averages.
+
+## Legacy migration test
+
+Use a backup containing playbooks created before the structured timeline update.
+
+1. Start the updated backend against the backup.
+2. Open an old playbook and an old attached trade.
+3. Confirm legacy `pre_trade`, `post_trade`, and `trade_management` categories appear as Setup, Review, and Management while editing.
+4. Confirm the stored historical version has not been rewritten.
+5. Publish a new version with a detailed change note.
+6. Export JSON and compare the old and new versions.
+
+Expected results:
+
+- Versions without `schemaVersion` are treated as schema version 1.
+- Newly published versions contain `schemaVersion: 2`.
+- Publishing appends a version and never mutates the old version or trades already attached to it.
+- Unknown legacy categories remain readable as Custom stages.

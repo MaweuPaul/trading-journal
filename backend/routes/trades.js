@@ -75,6 +75,7 @@ const DEFAULT_TRADING_RULES = [
 const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
+const PLAYBOOK_SCHEMA_VERSION = 2;
 
 function normalizePlaybookCategory(category) {
   const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
@@ -113,7 +114,7 @@ function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
     description: 'Your migrated pre-trade and execution rules.',
     archived: false,
     createdAt: now,
-    versions: [{ versionId: 'playbook-core-edge-v1', versionNumber: 1, changeNote: 'Initial playbook', publishedAt: now, blocks }],
+    versions: [{ versionId: 'playbook-core-edge-v1', versionNumber: 1, schemaVersion: PLAYBOOK_SCHEMA_VERSION, changeNote: 'Initial playbook', publishedAt: now, blocks }],
   };
 }
 
@@ -298,13 +299,15 @@ router.post('/playbooks', auth, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     if (!name || name.length > 100) return res.status(400).json({ error: 'Strategy name is required' });
+    const changeNote = String(req.body.changeNote || '').trim();
+    if (changeNote.length < 20) return res.status(400).json({ error: 'Explain what changed and why using at least 20 characters' });
     const blocks = normalizeBlocks(req.body.blocks);
     const playbooks = await getPlaybooks(req.user.userId);
     const playbookId = id('playbook');
     const now = new Date().toISOString();
     const playbook = {
       playbookId, name, description: String(req.body.description || '').trim().slice(0, 500), archived: false, createdAt: now,
-      versions: [{ versionId: id('version'), versionNumber: 1, changeNote: String(req.body.changeNote || 'Initial version').trim().slice(0, 300), publishedAt: now, blocks }],
+      versions: [{ versionId: id('version'), versionNumber: 1, schemaVersion: PLAYBOOK_SCHEMA_VERSION, changeNote: changeNote.slice(0, 1000), publishedAt: now, blocks }],
     };
     playbooks.push(playbook);
     await savePlaybooks(req.user.userId, playbooks);
@@ -319,6 +322,8 @@ router.put('/playbooks/:playbookId', auth, async (req, res) => {
     const playbooks = await getPlaybooks(req.user.userId);
     const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
     if (!playbook) return res.status(404).json({ error: 'Strategy not found' });
+    const changeNote = String(req.body.changeNote || '').trim();
+    if (changeNote.length < 20) return res.status(400).json({ error: 'Explain what changed and why using at least 20 characters' });
     const blocks = normalizeBlocks(req.body.blocks);
     const latest = playbook.versions[playbook.versions.length - 1];
     const now = new Date().toISOString();
@@ -327,7 +332,8 @@ router.put('/playbooks/:playbookId', auth, async (req, res) => {
     playbook.versions.push({
       versionId: id('version'),
       versionNumber: Number(latest?.versionNumber || 0) + 1,
-      changeNote: String(req.body.changeNote || '').trim().slice(0, 300) || 'Strategy updated',
+      schemaVersion: PLAYBOOK_SCHEMA_VERSION,
+      changeNote: changeNote.slice(0, 1000),
       publishedAt: now,
       blocks,
     });
@@ -1561,6 +1567,7 @@ router.put('/trades/:id', auth, async (req, res) => {
         description: playbook.description,
         versionId: version.versionId,
         versionNumber: version.versionNumber,
+        schemaVersion: version.schemaVersion || 1,
         publishedAt: version.publishedAt,
         blocks: version.blocks,
       };
@@ -2647,6 +2654,8 @@ router.get('/coach', auth, async (req, res) => {
         setupAnalytics: [],
         playbookAnalytics: [],
         ruleEffectiveness: [],
+        stageCompliance: [],
+        numericFieldAnalytics: [],
         totalTrades: 0,
       });
     }
@@ -2811,6 +2820,8 @@ router.get('/coach', auth, async (req, res) => {
     // ── 9. Versioned Playbook & Rule Effectiveness ──────────────────────────
     const playbookMap = {};
     const ruleMap = {};
+    const stageMap = {};
+    const numericFieldMap = {};
     for (const trade of trades) {
       const snapshot = trade.playbookSnapshot;
       if (!snapshot?.playbookId || !snapshot?.versionId) continue;
@@ -2833,10 +2844,33 @@ router.get('/coach', auth, async (req, res) => {
 
       const responses = trade.playbookResponses || {};
       for (const block of snapshot.blocks || []) {
+        const requiredRules = (block.rules || []).filter(rule => rule.required);
+        const requiredAnswered = requiredRules.filter(rule => {
+          const answer = responses[rule.ruleId];
+          return answer !== undefined && answer !== null && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
+        }).length;
+        const stageComplete = requiredRules.length === 0 || requiredAnswered === requiredRules.length;
+        const stageKey = `${versionKey}:${block.blockId}`;
+        if (!stageMap[stageKey]) stageMap[stageKey] = { playbookName: snapshot.name, versionNumber: snapshot.versionNumber, category: block.category, stageName: block.name, requiredFieldCount: requiredRules.length, tradeCount: 0, completeCount: 0, completeWins: 0, completePnL: 0, incompleteCount: 0, incompleteWins: 0, incompletePnL: 0 };
+        const stageStats = stageMap[stageKey];
+        stageStats.tradeCount++;
+        if (stageComplete) {
+          stageStats.completeCount++; stageStats.completePnL += Number(trade.pnlUSD || 0); if (trade.pnlUSD > 0) stageStats.completeWins++;
+        } else {
+          stageStats.incompleteCount++; stageStats.incompletePnL += Number(trade.pnlUSD || 0); if (trade.pnlUSD > 0) stageStats.incompleteWins++;
+        }
         for (const rule of block.rules || []) {
           const value = responses[rule.ruleId];
           if (value === undefined || value === null || value === '') continue;
           const answers = Array.isArray(value) ? value : [value];
+          if (['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward', 'rating'].includes(rule.inputType) && Number.isFinite(Number(value))) {
+            const numericKey = `${versionKey}:${rule.ruleId}`;
+            if (!numericFieldMap[numericKey]) numericFieldMap[numericKey] = { playbookName: snapshot.name, versionNumber: snapshot.versionNumber, ruleId: rule.ruleId, ruleLabel: rule.label, blockName: block.name, inputType: rule.inputType, unit: rule.unit || '', tradeCount: 0, valueTotal: 0, winningValueTotal: 0, winningCount: 0, losingValueTotal: 0, losingCount: 0, totalPnL: 0 };
+            const numericStats = numericFieldMap[numericKey];
+            numericStats.tradeCount++; numericStats.valueTotal += Number(value); numericStats.totalPnL += Number(trade.pnlUSD || 0);
+            if (trade.pnlUSD > 0) { numericStats.winningCount++; numericStats.winningValueTotal += Number(value); }
+            else { numericStats.losingCount++; numericStats.losingValueTotal += Number(value); }
+          }
           for (const answer of answers) {
             if (!['boolean', 'single_choice', 'multi_choice', 'rating'].includes(rule.inputType)) continue;
             const answerLabel = typeof answer === 'boolean' ? (answer ? 'Yes' : 'No') : String(answer);
@@ -2869,6 +2903,22 @@ router.get('/coach', auth, async (req, res) => {
       ...item,
       winRate: item.tradeCount ? parseFloat(((item.wins / item.tradeCount) * 100).toFixed(1)) : 0,
       avgPnL: item.tradeCount ? parseFloat((item.totalPnL / item.tradeCount).toFixed(2)) : 0,
+      sampleStatus: item.tradeCount >= 20 ? 'strong' : item.tradeCount >= 5 ? 'developing' : 'insufficient',
+    })).sort((a, b) => b.tradeCount - a.tradeCount);
+    const stageCompliance = Object.values(stageMap).map(item => ({
+      ...item,
+      complianceRate: item.tradeCount ? parseFloat(((item.completeCount / item.tradeCount) * 100).toFixed(1)) : 0,
+      completeWinRate: item.completeCount ? parseFloat(((item.completeWins / item.completeCount) * 100).toFixed(1)) : null,
+      incompleteWinRate: item.incompleteCount ? parseFloat(((item.incompleteWins / item.incompleteCount) * 100).toFixed(1)) : null,
+      completeAvgPnL: item.completeCount ? parseFloat((item.completePnL / item.completeCount).toFixed(2)) : null,
+      incompleteAvgPnL: item.incompleteCount ? parseFloat((item.incompletePnL / item.incompleteCount).toFixed(2)) : null,
+    })).sort((a, b) => b.tradeCount - a.tradeCount);
+    const numericFieldAnalytics = Object.values(numericFieldMap).map(item => ({
+      ...item,
+      averageValue: parseFloat((item.valueTotal / item.tradeCount).toFixed(2)),
+      averageWinningValue: item.winningCount ? parseFloat((item.winningValueTotal / item.winningCount).toFixed(2)) : null,
+      averageLosingValue: item.losingCount ? parseFloat((item.losingValueTotal / item.losingCount).toFixed(2)) : null,
+      avgPnL: parseFloat((item.totalPnL / item.tradeCount).toFixed(2)),
       sampleStatus: item.tradeCount >= 20 ? 'strong' : item.tradeCount >= 5 ? 'developing' : 'insufficient',
     })).sort((a, b) => b.tradeCount - a.tradeCount);
 
@@ -2913,6 +2963,8 @@ router.get('/coach', auth, async (req, res) => {
       setupAnalytics,
       playbookAnalytics,
       ruleEffectiveness,
+      stageCompliance,
+      numericFieldAnalytics,
     });
   } catch (err) {
     console.error('Coach route error:', err.message);

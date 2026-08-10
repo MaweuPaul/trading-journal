@@ -56,6 +56,8 @@ interface CoachData {
   setupAnalytics: { setup: string; tradeCount: number; winRate: number; totalPnL: number; avgPnL: number; avgPlannedRR: number | null }[];
   playbookAnalytics: { playbookId: string; playbookName: string; versionId: string; versionNumber: number; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number }[];
   ruleEffectiveness: { ruleId: string; ruleLabel: string; blockName: string; inputType: string; answer: string; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient' }[];
+  stageCompliance: { playbookName: string; versionNumber: number; category: string; stageName: string; requiredFieldCount: number; tradeCount: number; completeCount: number; incompleteCount: number; complianceRate: number; completeWinRate: number | null; incompleteWinRate: number | null; completeAvgPnL: number | null; incompleteAvgPnL: number | null }[];
+  numericFieldAnalytics: { playbookName: string; versionNumber: number; ruleId: string; ruleLabel: string; blockName: string; inputType: string; unit: string; tradeCount: number; averageValue: number; averageWinningValue: number | null; averageLosingValue: number | null; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient' }[];
 }
 
 function GradeBadge({ grade }: { grade: string | null }) {
@@ -512,6 +514,42 @@ export default function CoachPage() {
                     </div>
                   ))}
                 </div>
+              </SectionCard>
+            )}
+
+            {(data!.stageCompliance || []).length > 0 && (
+              <SectionCard title="Lifecycle Stage Compliance" icon={<Shield size={15} />} accent="#3b82f6" help="Compares outcomes when every required field in a playbook stage was completed versus when that stage was incomplete.">
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Use the complete and incomplete columns to find the stages where discipline changes results. Stages without required fields will naturally show 100% completion.</p>
+                <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '8px 10px' }}>Stage</th><th>Compliance</th><th>Complete</th><th>Incomplete</th><th>Outcome difference</th></tr></thead>
+                  <tbody>{data!.stageCompliance.map(item => (
+                    <tr key={`${item.playbookName}-${item.versionNumber}-${item.stageName}`} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px' }}><div style={{ fontWeight: 700 }}>{item.stageName}</div><div style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{item.playbookName} v{item.versionNumber} · {item.requiredFieldCount} required</div></td>
+                      <td><strong>{item.complianceRate}%</strong><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{item.tradeCount} trades</div></td>
+                      <td>{item.completeAvgPnL == null ? '—' : <><strong style={{ color: item.completeAvgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.completeAvgPnL.toFixed(2)}</strong><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{item.completeWinRate}% win</div></>}</td>
+                      <td>{item.incompleteAvgPnL == null ? '—' : <><strong style={{ color: item.incompleteAvgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.incompleteAvgPnL.toFixed(2)}</strong><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{item.incompleteWinRate}% win</div></>}</td>
+                      <td><strong>{item.completeAvgPnL != null && item.incompleteAvgPnL != null ? `${item.completeAvgPnL - item.incompleteAvgPnL >= 0 ? '+' : ''}$${(item.completeAvgPnL - item.incompleteAvgPnL).toFixed(2)}` : 'Need both samples'}</strong></td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              </SectionCard>
+            )}
+
+            {(data!.numericFieldAnalytics || []).length > 0 && (
+              <SectionCard title="Numeric Field Evidence" icon={<BarChart2 size={15} />} accent="#06b6d4" help="Shows the average recorded value overall, on winning trades, and on losing trades for numeric playbook fields such as risk, R:R, duration, and ratings.">
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Differences between winning and losing averages can suggest a useful threshold, but only strong samples should influence a strategy revision.</p>
+                <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '8px 10px' }}>Field</th><th>Sample</th><th>Overall</th><th>Winning avg</th><th>Losing avg</th></tr></thead>
+                  <tbody>{data!.numericFieldAnalytics.slice(0, 30).map(item => (
+                    <tr key={`${item.playbookName}-${item.versionNumber}-${item.ruleId}`} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px' }}><div style={{ fontWeight: 700 }}>{item.ruleLabel}</div><div style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{item.blockName} · {item.playbookName} v{item.versionNumber}</div></td>
+                      <td><span style={{ color: item.sampleStatus === 'strong' ? '#10b981' : item.sampleStatus === 'developing' ? '#f59e0b' : 'var(--text-muted)' }}>{item.sampleStatus}</span><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{item.tradeCount} trades</div></td>
+                      <td><strong>{item.averageValue}{item.unit}</strong></td>
+                      <td><strong style={{ color: '#10b981' }}>{item.averageWinningValue == null ? '—' : `${item.averageWinningValue}${item.unit}`}</strong></td>
+                      <td><strong style={{ color: '#ef4444' }}>{item.averageLosingValue == null ? '—' : `${item.averageLosingValue}${item.unit}`}</strong></td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
               </SectionCard>
             )}
 

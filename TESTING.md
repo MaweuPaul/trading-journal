@@ -16,6 +16,27 @@ The following checks were run against the repository on August 10, 2026:
 
 Tests requiring real external credentials cannot be fully executed in a source-only environment. MongoDB persistence, Cloudinary upload/recovery, and MT5 synchronization must be verified against your own services using the procedures below.
 
+## Seed the dummy visual playbook
+
+The repository includes a complete test strategy, three local chart illustrations, and three sample response sets:
+
+- `backend/fixtures/visual-playbook-test.json`
+- `backend/fixtures/visual-playbook-responses.json`
+- `frontend/public/playbook-test-assets/`
+
+Start the backend, then seed the playbook through the authenticated API:
+
+```powershell
+cd backend
+$env:TEST_USER_EMAIL='owner@example.com'
+$env:TEST_USER_PASSWORD='your-test-password'
+npm run seed:test-playbook
+```
+
+For a non-default deployment, also set `API_BASE` and `APP_BASE`. The script checks for the fixture name first and does not create a duplicate when it already exists. It never embeds or prints the password.
+
+The response fixture is intentionally not written automatically to trades because each installation has different trade IDs. Open three existing test trades, attach `London Liquidity Sweep — Test Playbook`, and copy the matching values from `visual-playbook-responses.json` into the Plan, Manage, and Review stages. This produces winning, normal-loss, and poor-execution samples for Edge Coach.
+
 ## Test environment
 
 Complete [SETUP.md](SETUP.md) first. For a complete integration test, prepare:

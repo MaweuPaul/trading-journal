@@ -11,7 +11,7 @@ Configuration:
         MT5_LOGIN=YOUR_MT5_ACCOUNT_NUMBER
         MT5_PASSWORD=YOUR_MT5_PASSWORD
         MT5_SERVER=YOUR_MT5_SERVER_NAME
-        MT5_REQUIRE_REAL_ACCOUNT=true
+        MT5_REQUIRE_REAL_ACCOUNT=false
         API_BASE=http://localhost:4000/api
         API_TIMEOUT=60
         SYNC_INTERVAL=60
@@ -34,7 +34,7 @@ load_dotenv()
 MT5_LOGIN    = int(os.getenv("MT5_LOGIN", "0"))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER   = os.getenv("MT5_SERVER", "")
-MT5_REQUIRE_REAL_ACCOUNT = os.getenv("MT5_REQUIRE_REAL_ACCOUNT", "true").lower() in {"1", "true", "yes", "on"}
+MT5_REQUIRE_REAL_ACCOUNT = os.getenv("MT5_REQUIRE_REAL_ACCOUNT", "false").lower() in {"1", "true", "yes", "on"}
 API_BASE      = os.getenv("API_BASE", "http://localhost:4000/api")
 API_TIMEOUT   = int(os.getenv("API_TIMEOUT", "60"))
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
@@ -145,6 +145,15 @@ def get_account_balance():
     return info.balance if info else 0.0
 
 
+def get_account_type():
+    """Return the journal account classification reported by the connected MT5 account."""
+    info = mt5.account_info()
+    if not info:
+        return ""
+    real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
+    return "live" if info.trade_mode == real_mode else "demo"
+
+
 def get_latest_trade_time():
     """Fetch the closeTime of the latest trade from the database API."""
     global JWT_TOKEN
@@ -217,6 +226,7 @@ def fetch_deals(from_date=None):
     log.info("[MT5] Fetched %d closed deal(s) from history", len(closed))
 
     current_balance = get_account_balance()
+    account_type = get_account_type()
 
     # Sort chronologically so we can compute a rolling balance per trade.
     # The running balance after trade N = starting_balance + sum(pnl[0..N])
@@ -284,6 +294,7 @@ def fetch_deals(from_date=None):
             "closeTime":       close_dt.isoformat(),
             "durationMinutes": duration,
             "runningBalance":  round(trade_running_balance, 2),
+            "accountType":     account_type,
         })
 
     return result

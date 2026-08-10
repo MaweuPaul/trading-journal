@@ -24,6 +24,7 @@ const userSchema = new mongoose.Schema({
     enabled: { type: Boolean, default: true },
     order: { type: Number, default: 0 },
   }],
+  playbooks: { type: [mongoose.Schema.Types.Mixed], default: [] },
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

@@ -147,6 +147,7 @@ All export endpoints work in both online (MongoDB) and offline (local cache) mod
 | `MT5_LOGIN` | Your MT5 account number |
 | `MT5_PASSWORD` | Your MT5 password |
 | `MT5_SERVER` | Your broker's MT5 server name |
+| `MT5_REQUIRE_REAL_ACCOUNT` | Set `true` to reject demo accounts; default `false` syncs both and labels trades automatically |
 | `API_BASE` | Backend API URL |
 | `SYNC_INTERVAL` | Sync frequency in seconds |
 | `USER_EMAIL` | Admin email |

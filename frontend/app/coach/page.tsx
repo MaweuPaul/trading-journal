@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Brain, TrendingDown, TrendingUp, AlertTriangle, CheckCircle,
   BarChart2, RefreshCw, ArrowRight, Zap, Target, Shield,
-  Activity, ChevronDown, ChevronUp, Circle,
+  Activity, ChevronDown, ChevronUp, Circle, FileClock,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -53,6 +53,8 @@ interface CoachData {
     demo: { tradeCount: number; winRate: number; avgPnL: number; profitFactor: number; planAdherence: number | null } | null;
   };
   setupAnalytics: { setup: string; tradeCount: number; winRate: number; totalPnL: number; avgPnL: number; avgPlannedRR: number | null }[];
+  playbookAnalytics: { playbookId: string; playbookName: string; versionId: string; versionNumber: number; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number }[];
+  ruleEffectiveness: { ruleId: string; ruleLabel: string; blockName: string; inputType: string; answer: string; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient' }[];
 }
 
 function GradeBadge({ grade }: { grade: string | null }) {
@@ -495,7 +497,46 @@ export default function CoachPage() {
               )}
             </SectionCard>
 
-            {/* ROW 6: Setup Analytics */}
+            {/* Versioned strategy audit */}
+            {data!.playbookAnalytics.length > 0 && (
+              <SectionCard title="Strategy Versions" icon={<FileClock size={15} />} accent="#8b5cf6">
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Each version is measured separately, so later edits never rewrite the performance of earlier rules.</p>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {data!.playbookAnalytics.map(item => (
+                    <div key={item.versionId} style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 1fr) repeat(3, minmax(70px, auto))', gap: 12, alignItems: 'center', padding: '11px 13px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                      <div><div style={{ fontWeight: 750, fontSize: 13 }}>{item.playbookName} <span style={{ color: '#8b5cf6' }}>v{item.versionNumber}</span></div><div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{item.tradeCount < 5 ? 'Early evidence' : `${item.tradeCount} completed trades`}</div></div>
+                      <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Trades</div><strong>{item.tradeCount}</strong></div>
+                      <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Win rate</div><strong>{item.winRate}%</strong></div>
+                      <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Avg P&L</div><strong style={{ color: item.avgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.avgPnL.toFixed(2)}</strong></div>
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
+            )}
+
+            {data!.ruleEffectiveness.length > 0 && (
+              <SectionCard title="What Works — Rule Evidence" icon={<Target size={15} />} accent="#10b981">
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Outcomes are grouped by the exact answer saved on each immutable trade snapshot. Treat small samples as observations, not conclusions.</p>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '8px 10px' }}>Rule / answer</th><th>Sample</th><th>Trades</th><th>Win rate</th><th>Avg P&L</th></tr></thead>
+                    <tbody>
+                      {data!.ruleEffectiveness.slice(0, 30).map(item => (
+                        <tr key={`${item.ruleId}-${item.answer}`} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '10px' }}><div style={{ fontWeight: 700 }}>{item.ruleLabel}</div><div style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{item.blockName} · Answer: <strong style={{ color: 'var(--text-primary)' }}>{item.answer}</strong></div></td>
+                          <td><span style={{ padding: '3px 7px', borderRadius: 10, background: item.sampleStatus === 'strong' ? '#10b98120' : item.sampleStatus === 'developing' ? '#f59e0b20' : 'var(--bg-surface)', color: item.sampleStatus === 'strong' ? '#10b981' : item.sampleStatus === 'developing' ? '#f59e0b' : 'var(--text-muted)', fontSize: 10 }}>{item.sampleStatus}</span></td>
+                          <td style={{ fontFamily: 'var(--font-mono)' }}>{item.tradeCount}</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{item.winRate}%</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: item.avgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.avgPnL.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </SectionCard>
+            )}
+
+            {/* Legacy setup analytics */}
             {data!.setupAnalytics.length > 0 && (
               <SectionCard title="Best Setups by Win Rate" icon={<TrendingUp size={15} />} accent="#10b981">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

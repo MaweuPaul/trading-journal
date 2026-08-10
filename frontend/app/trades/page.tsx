@@ -62,6 +62,10 @@ interface Trade {
   positionId?: string;
   tradeGroup?: string;
   parentTradeId?: string;
+  playbookId?: string;
+  playbookVersionId?: string;
+  playbookSnapshot?: PlaybookSnapshot | null;
+  playbookResponses?: Record<string, unknown>;
 }
 
 const EMOTIONS = [
@@ -99,6 +103,39 @@ interface TradingRule {
   order: number;
 }
 
+interface PlaybookRule {
+  ruleId: string;
+  label: string;
+  inputType: 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
+  options: string[];
+  required: boolean;
+}
+
+interface PlaybookBlock {
+  blockId: string;
+  name: string;
+  category: string;
+  rules: PlaybookRule[];
+}
+
+interface PlaybookSnapshot {
+  playbookId: string;
+  name: string;
+  description?: string;
+  versionId: string;
+  versionNumber: number;
+  publishedAt: string;
+  blocks: PlaybookBlock[];
+}
+
+interface Playbook {
+  playbookId: string;
+  name: string;
+  description: string;
+  archived: boolean;
+  versions: Array<{ versionId: string; versionNumber: number; publishedAt: string; blocks: PlaybookBlock[] }>;
+}
+
 function formatDuration(mins: number) {
   if (mins < 60) return `${mins}m`;
   const h = Math.floor(mins / 60);
@@ -120,6 +157,7 @@ export default function TradesPage() {
   const [loading, setLoading] = useState(true);
   const [hasToken, setHasToken] = useState(false);
   const [tradingRules, setTradingRules] = useState<TradingRule[]>([]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
 
   // Auth checking
   useEffect(() => {
@@ -140,9 +178,19 @@ export default function TradesPage() {
       .catch(error => console.error(error));
   }, [hasToken]);
 
+  useEffect(() => {
+    if (!hasToken) return;
+    const token = localStorage.getItem('token');
+    fetch(`${API}/playbooks`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load strategy playbooks')))
+      .then(body => setPlaybooks(body.playbooks || []))
+      .catch(error => console.error(error));
+  }, [hasToken]);
+
   // Filters
   const [symbol, setSymbol]       = useState('');
   const [direction, setDirection] = useState('');
+  const [accountTypeFilter, setAccountTypeFilter] = useState('');
   const [from, setFrom]           = useState('');
   const [to, setTo]               = useState('');
   const [symbols, setSymbols]     = useState<string[]>([]);
@@ -176,6 +224,8 @@ export default function TradesPage() {
   const [parentSearchQuery, setParentSearchQuery] = useState('');
   const [showParentDropdown, setShowParentDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [draftPlaybookSnapshot, setDraftPlaybookSnapshot] = useState<PlaybookSnapshot | null>(null);
+  const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -186,6 +236,7 @@ export default function TradesPage() {
       limit: String(PAGE_SIZE),
       ...(symbol    && { symbol }),
       ...(direction && { direction }),
+      ...(accountTypeFilter && { accountType: accountTypeFilter }),
       ...(from      && { from }),
       ...(to        && { to }),
     });
@@ -212,12 +263,12 @@ export default function TradesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, symbol, direction, from, to, router]);
+  }, [page, symbol, direction, accountTypeFilter, from, to, router]);
 
   useEffect(() => { load(); }, [load]);
 
   const resetFilters = () => {
-    setSymbol(''); setDirection(''); setFrom(''); setTo(''); setPage(1);
+    setSymbol(''); setDirection(''); setAccountTypeFilter(''); setFrom(''); setTo(''); setPage(1);
   };
 
   const handleRowClick = (trade: Trade) => {
@@ -259,6 +310,8 @@ export default function TradesPage() {
     setDraftIsReEntry(trade.isReEntry ?? false);
     setDraftTradeGroup(trade.tradeGroup || '');
     setDraftParentTradeId(trade.parentTradeId || '');
+    setDraftPlaybookSnapshot(trade.playbookSnapshot || null);
+    setDraftPlaybookResponses(trade.playbookResponses || {});
   };
 
   const handleAddTag = (e: React.FormEvent) => {
@@ -282,6 +335,15 @@ export default function TradesPage() {
 
   const handleSaveJournal = async () => {
     if (!selectedTrade) return;
+    const missingRequired = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
+      if (!rule.required) return false;
+      const value = draftPlaybookResponses[rule.ruleId];
+      return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+    });
+    if (missingRequired) {
+      alert(`Complete the required playbook field: ${missingRequired.label}`);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setSaving(true);
@@ -309,6 +371,9 @@ export default function TradesPage() {
           primarySetup: draftPrimarySetup,
           setupConfirmations: draftSetupConfirmations,
           executionChecklist: draftExecChecklist,
+          playbookId: draftPlaybookSnapshot?.playbookId || '',
+          playbookVersionId: draftPlaybookSnapshot?.versionId || '',
+          playbookResponses: draftPlaybookResponses,
           isReEntry: draftIsReEntry,
           tradeGroup: draftTradeGroup.trim(),
           parentTradeId: draftParentTradeId,
@@ -511,6 +576,57 @@ export default function TradesPage() {
 
   if (!hasToken) return null;
 
+  const selectPlaybookForTrade = (playbookId: string) => {
+    const playbook = playbooks.find(item => item.playbookId === playbookId);
+    if (!playbook) {
+      setDraftPlaybookSnapshot(null);
+      setDraftPlaybookResponses({});
+      return;
+    }
+    const version = playbook.versions[playbook.versions.length - 1];
+    setDraftPlaybookSnapshot({
+      playbookId: playbook.playbookId,
+      name: playbook.name,
+      description: playbook.description,
+      versionId: version.versionId,
+      versionNumber: version.versionNumber,
+      publishedAt: version.publishedAt,
+      blocks: JSON.parse(JSON.stringify(version.blocks)),
+    });
+    setDraftPlaybookResponses({});
+  };
+
+  const setPlaybookResponse = (ruleId: string, value: unknown) => {
+    setDraftPlaybookResponses(current => ({ ...current, [ruleId]: value }));
+  };
+
+  const renderPlaybookInput = (rule: PlaybookRule) => {
+    const value = draftPlaybookResponses[rule.ruleId];
+    if (rule.inputType === 'boolean') {
+      return (
+        <div style={{ display: 'flex', gap: 6 }}>
+          {([{ label: 'Yes', value: true }, { label: 'No', value: false }] as const).map(option => (
+            <button key={option.label} type="button" onClick={() => setPlaybookResponse(rule.ruleId, option.value)} style={{ minHeight: 38, minWidth: 64, borderRadius: 8, border: `1px solid ${value === option.value ? 'var(--accent)' : 'var(--border)'}`, background: value === option.value ? 'var(--accent-soft)' : 'var(--bg-surface)', color: value === option.value ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700 }}>{option.label}</button>
+          ))}
+        </div>
+      );
+    }
+    if (rule.inputType === 'single_choice') {
+      return <select value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }}><option value="">Select…</option>{rule.options.map(option => <option key={option} value={option}>{option}</option>)}</select>;
+    }
+    if (rule.inputType === 'multi_choice') {
+      const selected = Array.isArray(value) ? value as string[] : [];
+      return <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>{rule.options.map(option => <button key={option} type="button" onClick={() => setPlaybookResponse(rule.ruleId, selected.includes(option) ? selected.filter(item => item !== option) : [...selected, option])} style={{ minHeight: 36, borderRadius: 18, border: `1px solid ${selected.includes(option) ? 'var(--accent)' : 'var(--border)'}`, background: selected.includes(option) ? 'var(--accent-soft)' : 'var(--bg-surface)', color: selected.includes(option) ? 'var(--accent)' : 'var(--text-muted)', padding: '0 10px', cursor: 'pointer' }}>{option}</button>)}</div>;
+    }
+    if (rule.inputType === 'rating') {
+      return <div><input type="range" min="1" max="10" value={Number(value || 5)} onChange={event => setPlaybookResponse(rule.ruleId, Number(event.target.value))} style={{ width: '100%', accentColor: 'var(--accent)' }} /><div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>{Number(value || 5)}/10</div></div>;
+    }
+    if (rule.inputType === 'number') {
+      return <input type="number" value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
+    }
+    return <textarea value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={2} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -537,6 +653,14 @@ export default function TradesPage() {
             <option value="">All</option>
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>
+          </select>
+        </div>
+        <div className="filter-group">
+          <label>Account</label>
+          <select value={accountTypeFilter} onChange={e => { setAccountTypeFilter(e.target.value); setPage(1); }}>
+            <option value="">Live &amp; Demo</option>
+            <option value="live">Live only</option>
+            <option value="demo">Demo only</option>
           </select>
         </div>
         <div className="filter-group">
@@ -620,7 +744,8 @@ export default function TradesPage() {
                           )}
                         </td>
                         <td className="text" style={{ fontWeight: 600 }}>
-                          {t.symbol}
+                          <span>{t.symbol}</span>
+                          {t.accountType && <span style={{ display: 'inline-block', marginLeft: 6, padding: '1px 5px', borderRadius: 5, fontSize: 8.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.04em', background: t.accountType === 'live' ? '#10b98118' : '#8b5cf618', color: t.accountType === 'live' ? '#059669' : '#8b5cf6', border: `1px solid ${t.accountType === 'live' ? '#10b98135' : '#8b5cf635'}` }}>{t.accountType}</span>}
                         </td>
                         <td>
                           <span className={`badge ${t.direction.toLowerCase()}`}>{t.direction}</span>
@@ -763,7 +888,7 @@ export default function TradesPage() {
               <div className="drawer-section" style={{ background: 'var(--bg-elevated)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
                 <span className="drawer-section-title" style={{ color: '#8b5cf6' }}>
                   <Award size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-                  Edge Coach — Execution Review
+                  Post-Trade Review
                 </span>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                   {[
@@ -788,7 +913,35 @@ export default function TradesPage() {
                   ))}
                 </div>
 
-                {/* Primary Setup */}
+                {/* Immutable strategy playbook snapshot */}
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Strategy Playbook</div>
+                  <select value={draftPlaybookSnapshot?.playbookId || ''} onChange={event => selectPlaybookForTrade(event.target.value)} style={{ width: '100%', minHeight: 42, padding: '0 10px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 12 }}>
+                    <option value="">— Select a published strategy —</option>
+                    {playbooks.filter(playbook => !playbook.archived || playbook.playbookId === draftPlaybookSnapshot?.playbookId).map(playbook => {
+                      const version = playbook.versions[playbook.versions.length - 1];
+                      return <option key={playbook.playbookId} value={playbook.playbookId}>{playbook.name} · v{version.versionNumber}</option>;
+                    })}
+                  </select>
+                  {draftPlaybookSnapshot && <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>Audit snapshot: {draftPlaybookSnapshot.name} v{draftPlaybookSnapshot.versionNumber}. Future changes will not alter this trade after saving.</div>}
+                </div>
+
+                {draftPlaybookSnapshot?.blocks.map(block => (
+                  <div key={block.blockId} style={{ marginBottom: 12, padding: 11, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 9 }}>{block.name}</div>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      {block.rules.map(rule => (
+                        <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
+                          {renderPlaybookInput(rule)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Legacy fields remain in stored data for backward compatibility. */}
+                {false && <>
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Primary Setup</div>
                   <select
@@ -827,6 +980,8 @@ export default function TradesPage() {
                     })}
                   </div>
                 </div>
+
+                </>}
 
                 {/* Planned R:R + Confidence */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
@@ -900,8 +1055,8 @@ export default function TradesPage() {
                   </div>
                 </div>
 
-                {/* Execution Checklist */}
-                <div>
+                {/* Legacy execution checklist retained only for old data compatibility. */}
+                {false && <div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Execution Checklist (post-trade)</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     {draftExecChecklist.map((item, idx) => (
@@ -928,7 +1083,7 @@ export default function TradesPage() {
                       </strong>
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
               {/* ── END EDGE COACH ──────────────────────────────────────────── */}
 
@@ -1149,8 +1304,8 @@ export default function TradesPage() {
                 </div>
               </div>
 
-              {/* Strategy Rules Compliance Checklist */}
-              <div className="drawer-section">
+              {/* Legacy flat checklist is preserved in stored trades but replaced by playbook blocks. */}
+              {false && <div className="drawer-section">
                 <span className="drawer-section-title"><CheckSquare size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Rules Checklist</span>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {draftChecklist.map((item, idx) => (
@@ -1166,7 +1321,7 @@ export default function TradesPage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </div>}
 
               {/* Custom Tag Input */}
               <div className="drawer-section">

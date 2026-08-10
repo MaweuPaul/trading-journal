@@ -41,6 +41,12 @@ const tradeSchema = new mongoose.Schema({
   primarySetup:       { type: String, default: '' }, // e.g. 'HTF Supply', 'HTF Demand', 'ORB'
   setupConfirmations: [{ type: String }],            // e.g. ['IFVG', 'Liquidity Sweep', 'Trendline Break']
 
+  // -- Immutable strategy audit snapshot -----------------------------------
+  playbookId:        { type: String, default: '' },
+  playbookVersionId: { type: String, default: '' },
+  playbookSnapshot:  { type: mongoose.Schema.Types.Mixed, default: null },
+  playbookResponses: { type: mongoose.Schema.Types.Mixed, default: {} },
+
   // -- Edge Coach: Post-Trade Execution Checklist ---------------------------
   executionChecklist: [{
     ruleId:   { type: String, default: '' },

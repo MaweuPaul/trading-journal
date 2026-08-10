@@ -2,226 +2,279 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, Check, Plus, RotateCcw, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react';
 
-type RuleCategory = 'pre_trade' | 'execution';
+type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
+type BlockCategory = 'setup' | 'context' | 'entry' | 'risk' | 'execution' | 'custom';
 
-interface TradingRule {
+interface PlaybookRule {
   ruleId: string;
   label: string;
-  category: RuleCategory;
-  enabled: boolean;
-  order: number;
+  inputType: InputType;
+  options: string[];
+  required: boolean;
+  order?: number;
 }
 
-const CATEGORY_COPY: Record<RuleCategory, { title: string; description: string }> = {
-  pre_trade: {
-    title: 'Pre-trade rules',
-    description: 'Conditions that should be true before you enter a trade.',
-  },
-  execution: {
-    title: 'Execution rules',
-    description: 'Behaviors you want to follow while managing an open trade.',
-  },
+interface PlaybookBlock {
+  blockId: string;
+  name: string;
+  category: BlockCategory;
+  rules: PlaybookRule[];
+  order?: number;
+}
+
+interface PlaybookVersion {
+  versionId: string;
+  versionNumber: number;
+  changeNote: string;
+  publishedAt: string;
+  blocks: PlaybookBlock[];
+}
+
+interface Playbook {
+  playbookId: string;
+  name: string;
+  description: string;
+  archived: boolean;
+  versions: PlaybookVersion[];
+}
+
+const INPUT_LABELS: Record<InputType, string> = {
+  boolean: 'Yes / No',
+  single_choice: 'Single choice',
+  multi_choice: 'Multiple choice',
+  number: 'Number',
+  rating: 'Rating 1–10',
+  text: 'Text',
 };
 
-const DEFAULTS: TradingRule[] = [
-  { ruleId: 'pre-htf-trend', label: 'HTF Trend Aligned', category: 'pre_trade', enabled: true, order: 0 },
-  { ruleId: 'pre-key-level', label: 'Daily/H4 Key Level Tap', category: 'pre_trade', enabled: true, order: 1 },
-  { ruleId: 'pre-confirmation', label: 'Confluence / Confirmation Entry', category: 'pre_trade', enabled: true, order: 2 },
-  { ruleId: 'pre-risk-reward', label: 'Risk-to-Reward Ratio >= 1:2', category: 'pre_trade', enabled: true, order: 3 },
-  { ruleId: 'pre-defined-exits', label: 'Stop Loss and Take Profit Defined', category: 'pre_trade', enabled: true, order: 4 },
-  { ruleId: 'exec-entry-plan', label: 'Entry as planned', category: 'execution', enabled: true, order: 0 },
-  { ruleId: 'exec-stop', label: 'Stop not moved', category: 'execution', enabled: true, order: 1 },
-  { ruleId: 'exec-target', label: 'Target respected', category: 'execution', enabled: true, order: 2 },
-  { ruleId: 'exec-size', label: 'Position size correct', category: 'execution', enabled: true, order: 3 },
-  { ruleId: 'exec-fear', label: 'No manual close out of fear', category: 'execution', enabled: true, order: 4 },
-];
-
-function newId() {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function uid(prefix: string) {
+  return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
 }
 
-export default function TradingRulesPage() {
+function blankBlock(): PlaybookBlock {
+  return { blockId: uid('block'), name: 'New block', category: 'custom', rules: [] };
+}
+
+function latest(playbook: Playbook) {
+  return playbook.versions[playbook.versions.length - 1];
+}
+
+function cloneBlocks(blocks: PlaybookBlock[]) {
+  return JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[];
+}
+
+export default function PlaybooksPage() {
   const router = useRouter();
-  const [rules, setRules] = useState<TradingRule[]>([]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [blocks, setBlocks] = useState<PlaybookBlock[]>([]);
+  const [changeNote, setChangeNote] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const loadRules = useCallback(async () => {
+  const selectPlaybook = useCallback((playbook: Playbook) => {
+    const version = latest(playbook);
+    setSelectedId(playbook.playbookId);
+    setName(playbook.name);
+    setDescription(playbook.description || '');
+    setBlocks(cloneBlocks(version?.blocks || []));
+    setChangeNote('');
+    setCreating(false);
+    setDirty(false);
+    setSaved(false);
+  }, []);
+
+  const load = useCallback(async () => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      router.push('/login');
-      return;
-    }
+    if (!token) { router.push('/login'); return; }
     try {
-      const response = await fetch('/api/rules', { headers: { Authorization: `Bearer ${token}` } });
-      if (response.status === 401) {
-        router.push('/login');
-        return;
-      }
+      const response = await fetch('/api/playbooks', { headers: { Authorization: `Bearer ${token}` } });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not load rules');
-      setRules(body.rules || []);
-      setDirty(false);
+      if (!response.ok) throw new Error(body.error || 'Could not load strategies');
+      const loaded = (body.playbooks || []) as Playbook[];
+      setPlaybooks(loaded);
+      if (loaded.length) selectPlaybook(loaded.find(item => !item.archived) || loaded[0]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load rules');
+      setError(err instanceof Error ? err.message : 'Could not load strategies');
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, selectPlaybook]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { void loadRules(); }, 0);
+    const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadRules]);
+  }, [load]);
 
-  const activeCount = useMemo(() => rules.filter(rule => rule.enabled).length, [rules]);
+  const selected = playbooks.find(item => item.playbookId === selectedId);
+  const totalRules = useMemo(() => blocks.reduce((sum, block) => sum + block.rules.length, 0), [blocks]);
 
-  const update = (ruleId: string, patch: Partial<TradingRule>) => {
-    setRules(current => current.map(rule => rule.ruleId === ruleId ? { ...rule, ...patch } : rule));
-    setDirty(true);
-    setSaved(false);
+  const markDirty = () => { setDirty(true); setSaved(false); };
+  const updateBlock = (blockId: string, patch: Partial<PlaybookBlock>) => {
+    setBlocks(current => current.map(block => block.blockId === blockId ? { ...block, ...patch } : block));
+    markDirty();
+  };
+  const updateRule = (blockId: string, ruleId: string, patch: Partial<PlaybookRule>) => {
+    setBlocks(current => current.map(block => block.blockId === blockId ? {
+      ...block, rules: block.rules.map(rule => rule.ruleId === ruleId ? { ...rule, ...patch } : rule),
+    } : block));
+    markDirty();
+  };
+  const removeBlock = (blockId: string) => {
+    setBlocks(current => current.filter(block => block.blockId !== blockId));
+    markDirty();
+  };
+  const removeRule = (blockId: string, ruleId: string) => {
+    setBlocks(current => current.map(block => block.blockId === blockId ? { ...block, rules: block.rules.filter(rule => rule.ruleId !== ruleId) } : block));
+    markDirty();
+  };
+  const addRule = (blockId: string) => {
+    setBlocks(current => current.map(block => block.blockId === blockId ? {
+      ...block,
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false }],
+    } : block));
+    markDirty();
   };
 
-  const addRule = (category: RuleCategory) => {
-    const count = rules.filter(rule => rule.category === category).length;
-    setRules(current => [...current, {
-      ruleId: newId(), label: '', category, enabled: true, order: count,
-    }]);
+  const startNew = () => {
+    setSelectedId('');
+    setName('');
+    setDescription('');
+    setBlocks([blankBlock()]);
+    setChangeNote('Initial version');
+    setCreating(true);
     setDirty(true);
-    setSaved(false);
+    setError('');
   };
 
-  const move = (category: RuleCategory, ruleId: string, direction: -1 | 1) => {
-    const group = rules.filter(rule => rule.category === category && rule.enabled).sort((a, b) => a.order - b.order);
-    const index = group.findIndex(rule => rule.ruleId === ruleId);
-    const swapIndex = index + direction;
-    if (index < 0 || swapIndex < 0 || swapIndex >= group.length) return;
-    const a = group[index];
-    const b = group[swapIndex];
-    setRules(current => current.map(rule => {
-      if (rule.ruleId === a.ruleId) return { ...rule, order: b.order };
-      if (rule.ruleId === b.ruleId) return { ...rule, order: a.order };
-      return rule;
-    }));
-    setDirty(true);
-    setSaved(false);
-  };
-
-  const save = async () => {
-    const emptyRule = rules.find(rule => !rule.label.trim());
-    if (emptyRule) {
-      setError('Give every rule a name before saving.');
-      return;
+  const publish = async () => {
+    if (!name.trim()) { setError('Give this strategy a name.'); return; }
+    if (!blocks.length) { setError('Add at least one block.'); return; }
+    if (blocks.some(block => !block.name.trim() || block.rules.some(rule => !rule.label.trim()))) {
+      setError('Every block and rule needs a name.'); return;
     }
     const token = localStorage.getItem('token');
     if (!token) return;
-    setSaving(true);
-    setError('');
+    setSaving(true); setError('');
     try {
-      const response = await fetch('/api/rules', {
-        method: 'PUT',
+      const response = await fetch(creating ? '/api/playbooks' : `/api/playbooks/${selectedId}`, {
+        method: creating ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ rules }),
+        body: JSON.stringify({ name, description, blocks, changeNote }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not save rules');
-      setRules(body.rules || rules);
-      setDirty(false);
+      if (!response.ok) throw new Error(body.error || 'Could not publish strategy');
+      setPlaybooks(current => creating ? [...current, body.playbook] : current.map(item => item.playbookId === body.playbook.playbookId ? body.playbook : item));
+      selectPlaybook(body.playbook);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save rules');
+      setError(err instanceof Error ? err.message : 'Could not publish strategy');
     } finally {
       setSaving(false);
     }
   };
 
+  const toggleArchive = async () => {
+    if (!selected) return;
+    const token = localStorage.getItem('token');
+    const response = await fetch(`/api/playbooks/${selected.playbookId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ archived: !selected.archived }),
+    });
+    const body = await response.json();
+    if (!response.ok) { setError(body.error || 'Could not update strategy'); return; }
+    setPlaybooks(current => current.map(item => item.playbookId === body.playbook.playbookId ? body.playbook : item));
+  };
+
   return (
     <main className="page-content">
-      <div style={{ width: '100%', padding: '0 0 32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap', marginBottom: 28 }}>
+      <div style={{ width: '100%', paddingBottom: 32 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap', marginBottom: 24 }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <ShieldCheck size={25} color="var(--accent)" />
-              <h1 style={{ margin: 0, fontSize: 25, color: 'var(--text-primary)' }}>Trading Rules</h1>
+              <h1 style={{ margin: 0, fontSize: 25 }}>Strategy Playbooks</h1>
             </div>
-            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13.5, lineHeight: 1.55, maxWidth: 620 }}>
-              Build the checklist that defines your edge. Changes apply to future trades; completed trades keep their original rule snapshot.
+            <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 13.5 }}>
+              Build flexible strategies. Every publish creates an immutable version for audit and performance comparison.
             </p>
           </div>
-          <button className="btn-primary" onClick={save} disabled={saving || !dirty} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
-            {saved ? <Check size={16} /> : <Save size={16} />}
-            {saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}
+          <button className="btn-primary" onClick={publish} disabled={saving || !dirty} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {saved ? <Check size={16} /> : <Save size={16} />}{saving ? 'Publishing…' : saved ? 'Published' : creating ? 'Publish strategy' : 'Publish new version'}
           </button>
         </div>
 
-        {error && <div role="alert" style={{ padding: '12px 14px', marginBottom: 18, borderRadius: 10, background: 'var(--red-bg)', border: '1px solid var(--red-border)', color: 'var(--red)', fontSize: 13 }}>{error}</div>}
+        {error && <div role="alert" style={{ padding: 12, marginBottom: 16, borderRadius: 10, background: 'var(--red-bg)', border: '1px solid var(--red-border)', color: 'var(--red)' }}>{error}</div>}
 
-        <div style={{ padding: '13px 16px', borderRadius: 12, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 13, marginBottom: 18 }}>
-          <strong style={{ color: 'var(--text-primary)' }}>{activeCount} active rules.</strong> Archiving a rule removes it from future checklists without changing past trades.
-        </div>
+        {loading ? <div style={{ padding: 50, textAlign: 'center', color: 'var(--text-muted)' }}>Loading playbooks…</div> : (
+          <div className="playbook-layout">
+            <aside style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 12, position: 'sticky', top: 24 }}>
+              <button onClick={startNew} style={{ width: '100%', minHeight: 44, border: '1px dashed var(--accent)', borderRadius: 9, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}><Plus size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />New strategy</button>
+              <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+                {playbooks.map(playbook => (
+                  <button key={playbook.playbookId} onClick={() => selectPlaybook(playbook)} style={{ minHeight: 52, padding: '8px 10px', textAlign: 'left', borderRadius: 9, border: `1px solid ${selectedId === playbook.playbookId ? 'var(--accent)' : 'transparent'}`, background: selectedId === playbook.playbookId ? 'var(--accent-soft)' : 'transparent', color: playbook.archived ? 'var(--text-muted)' : 'var(--text-primary)', cursor: 'pointer' }}>
+                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontWeight: 700 }}>{playbook.name}<ChevronRight size={14} /></span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>v{latest(playbook)?.versionNumber || 0} · {playbook.archived ? 'Archived' : 'Active'}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
 
-        {loading ? (
-          <div style={{ color: 'var(--text-muted)', padding: 40, textAlign: 'center' }}>Loading your rules…</div>
-        ) : (
-          <div style={{ display: 'grid', gap: 18 }}>
-            {(['pre_trade', 'execution'] as RuleCategory[]).map(category => {
-              const active = rules.filter(rule => rule.category === category && rule.enabled).sort((a, b) => a.order - b.order);
-              const archived = rules.filter(rule => rule.category === category && !rule.enabled);
-              return (
-                <section key={category} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 16, padding: '22px 22px 18px', boxShadow: 'var(--shadow-card)' }}>
-                  <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 16 }}>{CATEGORY_COPY[category].title}</h2>
-                  <p style={{ margin: '5px 0 18px', color: 'var(--text-muted)', fontSize: 12.5 }}>{CATEGORY_COPY[category].description}</p>
+            <div style={{ display: 'grid', gap: 16 }}>
+              <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+                <div className="playbook-header-grid">
+                  <label style={{ display: 'grid', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>Strategy name<input value={name} onChange={e => { setName(e.target.value); markDirty(); }} placeholder="e.g. London ORB" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 9, padding: '0 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
+                  <label style={{ display: 'grid', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>Description<input value={description} onChange={e => { setDescription(e.target.value); markDirty(); }} placeholder="When and why this strategy applies" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 9, padding: '0 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
+                </div>
+                {!creating && selected && (
+                  <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+                    <FileClock size={14} /> Version {latest(selected)?.versionNumber} · {selected.versions.length} immutable version{selected.versions.length === 1 ? '' : 's'} · {totalRules} rules
+                    <button onClick={toggleArchive} style={{ marginLeft: 'auto', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 10px' }}><Archive size={13} style={{ verticalAlign: 'middle', marginRight: 5 }} />{selected.archived ? 'Restore' : 'Archive strategy'}</button>
+                  </div>
+                )}
+              </section>
+
+              {blocks.map(block => (
+                <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+                  <div className="playbook-block-header">
+                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Block name<input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Category<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{(['setup', 'context', 'entry', 'risk', 'execution', 'custom'] as BlockCategory[]).map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></label>
+                    <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
+                  </div>
 
                   <div style={{ display: 'grid', gap: 9 }}>
-                    {active.map((rule, index) => (
-                      <div key={rule.ruleId} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', gap: 8, alignItems: 'center' }}>
-                        <label style={{ display: 'grid', gap: 4 }}>
-                          <span className="sr-only">Rule {index + 1}</span>
-                          <input value={rule.label} maxLength={160} onChange={event => update(rule.ruleId, { label: event.target.value })} placeholder="Describe a clear, observable rule" style={{ minHeight: 44, width: '100%', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)', padding: '0 12px', fontFamily: 'var(--font-sans)', fontSize: 13 }} />
-                        </label>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button aria-label={`Move ${rule.label || 'rule'} up`} title="Move up" disabled={index === 0} onClick={() => move(category, rule.ruleId, -1)} className="icon-btn"><ArrowUp size={15} /></button>
-                          <button aria-label={`Move ${rule.label || 'rule'} down`} title="Move down" disabled={index === active.length - 1} onClick={() => move(category, rule.ruleId, 1)} className="icon-btn"><ArrowDown size={15} /></button>
-                        </div>
-                        <button aria-label={`Archive ${rule.label || 'rule'}`} title="Archive rule" onClick={() => update(rule.ruleId, { enabled: false })} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={15} /></button>
+                    {block.rules.map((rule, ruleIndex) => (
+                      <div key={rule.ruleId} className="playbook-rule-row">
+                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Rule {ruleIndex + 1}<input value={rule.label} onChange={e => updateRule(block.blockId, rule.ruleId, { label: e.target.value })} placeholder="Observable condition" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label>
+                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Answer type<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType, options: [] })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(INPUT_LABELS) as InputType[]).map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label>
+                        {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<input value={rule.options.join(', ')} onChange={e => updateRule(block.blockId, rule.ruleId, { options: e.target.value.split(',').map(item => item.trim()).filter(Boolean) })} placeholder="A, B, C" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
+                        <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
                       </div>
                     ))}
                   </div>
-
-                  <button onClick={() => addRule(category)} style={{ marginTop: 12, minHeight: 44, display: 'flex', alignItems: 'center', gap: 7, background: 'transparent', border: '1px dashed var(--border)', borderRadius: 9, color: 'var(--accent)', padding: '0 13px', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600 }}>
-                    <Plus size={15} /> Add rule
-                  </button>
-
-                  {archived.length > 0 && (
-                    <details style={{ marginTop: 16 }}>
-                      <summary style={{ color: 'var(--text-muted)', fontSize: 12.5, cursor: 'pointer' }}>Archived rules ({archived.length})</summary>
-                      <div style={{ display: 'grid', gap: 7, marginTop: 10 }}>
-                        {archived.map(rule => (
-                          <div key={rule.ruleId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '9px 11px', background: 'var(--bg-elevated)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12.5 }}>
-                            <span>{rule.label}</span>
-                            <button onClick={() => update(rule.ruleId, { enabled: true, order: active.length })} style={{ minHeight: 36, display: 'flex', alignItems: 'center', gap: 6, border: 'none', background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }}><RotateCcw size={14} /> Restore</button>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
+                  <button onClick={() => addRule(block.blockId)} style={{ marginTop: 10, minHeight: 40, border: '1px dashed var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', padding: '0 12px' }}><Plus size={14} style={{ verticalAlign: 'middle', marginRight: 5 }} />Add rule</button>
                 </section>
-              );
-            })}
+              ))}
+
+              <button onClick={() => { setBlocks(current => [...current, blankBlock()]); markDirty(); }} style={{ minHeight: 48, border: '1px dashed var(--accent)', borderRadius: 12, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}><CopyPlus size={16} style={{ verticalAlign: 'middle', marginRight: 7 }} />Add playbook block</button>
+
+              <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+                <label style={{ display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 12 }}>What changed in this version?<input value={changeNote} onChange={e => { setChangeNote(e.target.value); markDirty(); }} placeholder="e.g. Added Order Block location requirement" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
+                <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>Publishing never overwrites old versions. Trades already using a version keep their exact snapshot.</p>
+              </section>
+            </div>
           </div>
         )}
-
-        <button onClick={() => { setRules(DEFAULTS.map(rule => ({ ...rule }))); setDirty(true); setSaved(false); }} style={{ marginTop: 18, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', minHeight: 44, display: 'flex', alignItems: 'center', gap: 7 }}>
-          <RotateCcw size={14} /> Restore starter rules
-        </button>
       </div>
     </main>
   );

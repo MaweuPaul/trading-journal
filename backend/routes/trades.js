@@ -123,12 +123,30 @@ function normalizeBlocks(input) {
     const name = String(block.name || '').trim();
     if (!name || name.length > 100) throw new Error('Every block needs a name');
     const rules = Array.isArray(block.rules) ? block.rules : [];
+    const evidence = Array.isArray(block.evidence) ? block.evidence : [];
     if (rules.length > 50) throw new Error('A block can contain at most 50 rules');
+    if (evidence.length > 20) throw new Error('A block can contain at most 20 screenshots');
     return {
       blockId: String(block.blockId || id('block')),
       name,
       category: normalizePlaybookCategory(block.category),
       order: blockIndex,
+      evidence: evidence.map((item, evidenceIndex) => {
+        const url = String(item.url || '').trim();
+        if (!url || (!url.startsWith('https://') && !url.startsWith('/'))) throw new Error('Every screenshot needs a valid URL');
+        const caption = String(item.caption || '').trim();
+        if (caption.length < 10) throw new Error(`Screenshot ${evidenceIndex + 1} in "${name}" needs a descriptive caption`);
+        return {
+          evidenceId: String(item.evidenceId || id('evidence')),
+          url,
+          publicId: String(item.publicId || '').slice(0, 300),
+          caption: caption.slice(0, 500),
+          kind: ['reference', 'valid', 'invalid'].includes(item.kind) ? item.kind : 'reference',
+          linkedRuleId: String(item.linkedRuleId || '').slice(0, 100),
+          uploadedAt: item.uploadedAt || new Date().toISOString(),
+          order: evidenceIndex,
+        };
+      }),
       rules: rules.map((rule, ruleIndex) => {
         const label = String(rule.label || '').trim();
         if (!label || label.length > 160) throw new Error('Every rule needs a label');
@@ -243,6 +261,34 @@ async function savePlaybooks(userId, playbooks) {
 router.get('/playbooks', auth, async (req, res) => {
   try {
     res.json({ playbooks: await getPlaybooks(req.user.userId) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/playbooks/evidence', auth, async (req, res) => {
+  try {
+    const { imageData, caption = '', kind = 'reference' } = req.body;
+    if (!imageData || typeof imageData !== 'string' || !/^data:image\/(png|jpe?g|webp);base64,/i.test(imageData)) {
+      return res.status(400).json({ error: 'Upload a PNG, JPEG, or WebP screenshot.' });
+    }
+    if (!CLOUDINARY_READY) return res.status(500).json({ error: 'Cloudinary is not configured on the backend.' });
+    const upload = await cloudinary.uploader.upload(imageData, {
+      folder: `trade-journal/${req.user.userId}/playbooks`,
+      resource_type: 'image',
+      context: `content=playbook_evidence|kind=${kind}|caption=${String(caption).replace(/[|=]/g, ' ').slice(0, 180)}`,
+      overwrite: false,
+    });
+    res.status(201).json({ evidence: {
+      evidenceId: id('evidence'),
+      url: upload.secure_url,
+      publicId: upload.public_id,
+      caption: String(caption).trim().slice(0, 500),
+      kind: ['reference', 'valid', 'invalid'].includes(kind) ? kind : 'reference',
+      linkedRuleId: '',
+      uploadedAt: new Date().toISOString(),
+      order: 0,
+    } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

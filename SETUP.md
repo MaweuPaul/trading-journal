@@ -179,7 +179,7 @@ Create the owner through `/signup` if environment seeding was not enabled, then 
 ### Create the first rule-driven playbook
 
 1. Open `/rules` and create a strategy or add recommended lifecycle stages.
-2. Edit each rule's answer type, guidance, validation, and choices.
+2. Choose the primitive answer type—Yes/No, Number, Text, Single choice, or Multiple choice—then choose a Number/Text format when needed.
 3. Add at least one instructional example image to each new rule. Images are required by default.
 4. If a rule does not benefit from an image, expand **Field guidance and validation** and turn off **Require instructional image examples**.
 5. Add a caption explaining what the trader should notice and classify the example as Reference, Valid, or Invalid.

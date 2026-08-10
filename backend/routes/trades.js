@@ -72,6 +72,16 @@ const DEFAULT_TRADING_RULES = [
   { ruleId: 'exec-fear', label: 'No manual close out of fear', category: 'execution', enabled: true, order: 4 },
 ];
 
+const PLAYBOOK_LIFECYCLE_CATEGORIES = [
+  'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
+];
+
+function normalizePlaybookCategory(category) {
+  const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
+  const normalized = legacyMap[category] || category;
+  return PLAYBOOK_LIFECYCLE_CATEGORIES.includes(normalized) ? normalized : 'custom';
+}
+
 function id(prefix) {
   return `${prefix}-${new mongoose.Types.ObjectId()}`;
 }
@@ -117,7 +127,7 @@ function normalizeBlocks(input) {
     return {
       blockId: String(block.blockId || id('block')),
       name,
-      category: ['setup', 'context', 'entry', 'risk', 'execution', 'custom'].includes(block.category) ? block.category : 'custom',
+      category: normalizePlaybookCategory(block.category),
       order: blockIndex,
       rules: rules.map((rule, ruleIndex) => {
         const label = String(rule.label || '').trim();

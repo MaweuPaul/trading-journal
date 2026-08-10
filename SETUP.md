@@ -180,8 +180,8 @@ Create the owner through `/signup` if environment seeding was not enabled, then 
 
 1. Open `/rules` and create a strategy or add recommended lifecycle stages.
 2. Choose the primitive answer type—Yes/No, Number, Text, Single choice, or Multiple choice—then choose a Number/Text format when needed.
-3. Add at least one instructional example image to each new rule. Images are required by default.
-4. If a rule does not benefit from an image, expand **Field guidance and validation** and turn off **Require instructional image examples**.
+3. Add instructional example images where they make the rule easier to understand. Images are optional by default.
+4. Enable **Require image confirmation** beside the example section only for rules where visual confirmation is mandatory, then configure the minimum and maximum image count under **Field guidance and validation**.
 5. Add a caption explaining what the trader should notice and classify the example as Reference, Valid, or Invalid.
 6. Enter the required version-change explanation and publish.
 7. Use **Read playbook** to verify the resulting visual manual.

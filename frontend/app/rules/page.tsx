@@ -117,7 +117,7 @@ type TemplateCategory = Exclude<BlockCategory, 'custom'>;
 type TemplateRule = Omit<PlaybookRule, 'ruleId'>;
 
 const templateRule = (label: string, inputType: InputType, helpText: string, extra: Partial<TemplateRule> = {}): TemplateRule => ({
-  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: true, minimumImages: 1, maximumImages: 6 }, ...extra,
+  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, ...extra,
 });
 
 const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: TemplateRule[] }> = {
@@ -203,7 +203,7 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
     rules: block.rules.map(rule => ({
       ...rule,
       examples: rule.examples || [],
-      exampleRequirement: rule.exampleRequirement || { required: true, minimumImages: 1, maximumImages: 6 },
+      exampleRequirement: rule.exampleRequirement || { required: false, minimumImages: 0, maximumImages: 6 },
     })),
   }));
 }
@@ -211,7 +211,7 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
 function blockIsReady(block: PlaybookBlock) {
   return block.rules.length > 0
     && block.rules.every(rule => rule.label.trim())
-    && block.rules.every(rule => (rule.examples || []).length >= (rule.exampleRequirement?.minimumImages || 0))
+    && block.rules.every(rule => !rule.exampleRequirement?.required || (rule.examples || []).length >= (rule.exampleRequirement.minimumImages || 1))
     && (block.evidence || []).every(item => item.caption.trim().length >= 10);
 }
 
@@ -283,10 +283,6 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
             <input type="number" min="1" value={validation.maxLength ?? ''} onChange={event => onChange({ validation: { ...validation, maxLength: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
         </>}
-        <label style={{ ...labelStyle, gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: 7, minHeight: 38 }}>
-          <input type="checkbox" checked={rule.exampleRequirement?.required || false} onChange={event => onChange({ exampleRequirement: { required: event.target.checked, minimumImages: event.target.checked ? Math.max(1, rule.exampleRequirement?.minimumImages || 0) : 0, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} />
-          Require instructional image examples before publishing this rule
-        </label>
         {(rule.exampleRequirement?.required || false) && <>
           <label style={labelStyle}>Minimum example images
             <input type="number" min="1" max="12" value={rule.exampleRequirement?.minimumImages || 1} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: Number(event.target.value) || 1, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} style={inputStyle} />
@@ -378,7 +374,7 @@ function BlockEvidenceEditor({ block, onChange, onError }: { block: PlaybookBloc
   );
 }
 
-function RuleExamplesEditor({ rule, onChange, onError }: { rule: PlaybookRule; onChange: (examples: PlaybookEvidence[]) => void; onError: (message: string) => void }) {
+function RuleExamplesEditor({ rule, onChange, onRequirementChange, onError }: { rule: PlaybookRule; onChange: (examples: PlaybookEvidence[]) => void; onRequirementChange: (requirement: PlaybookRule['exampleRequirement']) => void; onError: (message: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const examples = rule.examples || [];
   const maximum = rule.exampleRequirement?.maximumImages || 6;
@@ -418,6 +414,7 @@ function RuleExamplesEditor({ rule, onChange, onError }: { rule: PlaybookRule; o
     <div className="playbook-rule-examples">
       <div className="playbook-rule-examples-heading">
         <div><strong>Rule examples</strong><span>Teach exactly how this condition should and should not look.</span></div>
+        <label className="playbook-rule-example-toggle"><input type="checkbox" checked={rule.exampleRequirement?.required || false} onChange={event => onRequirementChange({ required: event.target.checked, minimumImages: event.target.checked ? Math.max(1, rule.exampleRequirement?.minimumImages || 0) : 0, maximumImages: rule.exampleRequirement?.maximumImages || 6 })} /><span aria-hidden="true" /><strong>Require image confirmation</strong></label>
         <label className={`btn-ghost playbook-evidence-upload${uploading || examples.length >= maximum ? ' disabled' : ''}`}><ImagePlus size={13} />{uploading ? 'Uploading…' : 'Add example'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || examples.length >= maximum} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} /></label>
       </div>
       {rule.exampleRequirement?.required && <div className={`playbook-rule-example-requirement ${examples.length >= (rule.exampleRequirement.minimumImages || 1) ? 'met' : 'missing'}`}>{examples.length}/{rule.exampleRequirement.minimumImages || 1} required examples added</div>}
@@ -523,7 +520,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: true, minimumImages: 1, maximumImages: 6 } }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 } }],
     } : block));
     markDirty();
   };
@@ -669,7 +666,7 @@ export default function PlaybooksPage() {
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
                         <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />
-                        <RuleExamplesEditor rule={rule} onChange={examples => updateRule(block.blockId, rule.ruleId, { examples })} onError={setError} />
+                        <RuleExamplesEditor rule={rule} onChange={examples => updateRule(block.blockId, rule.ruleId, { examples })} onRequirementChange={exampleRequirement => updateRule(block.blockId, rule.ruleId, { exampleRequirement })} onError={setError} />
                       </div>
                     ))}
                   </div>

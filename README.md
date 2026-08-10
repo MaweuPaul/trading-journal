@@ -49,7 +49,7 @@ The trade journal is derived from the selected published playbook rather than fr
 
 1. Each playbook stage contains rules with answer configuration, help text, validation, and instructional examples.
 2. The rule editor exposes five primitive answer types: Yes/No, Number, Text, Single choice, and Multiple choice. Percentage, Currency, Price, Duration, R:R, and Rating are Number formats; Long explanation, Date, and Time are Text formats.
-3. Newly added rules require at least one instructional image by default. The rule's **Field guidance and validation** panel contains a toggle to make images optional and controls for the minimum and maximum image count.
+3. Instructional images are optional by default. Enable **Require image confirmation** on a rule only when traders must provide visual confirmation; enabled rules expose minimum and maximum image controls.
 4. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
 5. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version.
 6. The first save permanently attaches the complete snapshot to the trade.

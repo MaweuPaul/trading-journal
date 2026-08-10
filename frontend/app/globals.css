@@ -1092,10 +1092,18 @@ tbody td.text {
   background: var(--bg-surface);
 }
 .playbook-rule-examples { grid-column: 1 / -1; display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.playbook-rule-examples-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.playbook-rule-examples-heading > div { display: grid; gap: 1px; }
+.playbook-rule-examples-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.playbook-rule-examples-heading > div { display: grid; flex: 1 1 220px; gap: 1px; }
 .playbook-rule-examples-heading strong { color: var(--text-primary); font-size: 11px; }
 .playbook-rule-examples-heading span { color: var(--text-muted); font-size: 9.5px; }
+.playbook-rule-example-toggle { position: relative; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+.playbook-rule-example-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.playbook-rule-example-toggle > span { position: relative; width: 34px; height: 20px; flex: 0 0 auto; border-radius: 999px; background: var(--border-light); transition: background 150ms ease, box-shadow 150ms ease; }
+.playbook-rule-example-toggle > span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: transform 150ms ease; }
+.playbook-rule-example-toggle input:checked + span { background: var(--accent); }
+.playbook-rule-example-toggle input:checked + span::after { transform: translateX(14px); }
+.playbook-rule-example-toggle input:focus-visible + span { box-shadow: 0 0 0 2px var(--accent-mid); }
+.playbook-rule-example-toggle > strong { font-size: 9.5px; color: var(--text-secondary); }
 .playbook-rule-example-requirement { width: fit-content; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 800; }
 .playbook-rule-example-requirement.met { background: var(--green-bg); color: var(--green); }
 .playbook-rule-example-requirement.missing { background: var(--red-bg); color: var(--red); }

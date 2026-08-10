@@ -1011,7 +1011,7 @@ tbody td.text {
   position: absolute;
   z-index: 1200;
   left: 50%;
-  bottom: calc(100% + 8px);
+  top: calc(100% + 8px);
   width: 250px;
   padding: 9px 11px;
   border-radius: 9px;
@@ -1036,7 +1036,7 @@ tbody td.text {
   transform: translateX(-50%) translateY(0);
 }
 @media (max-width: 620px) {
-  .info-hint-tooltip { position: fixed; left: 16px; right: 16px; bottom: 18px; width: auto; transform: translateY(4px); }
+  .info-hint-tooltip { position: fixed; left: 16px; right: 16px; top: auto; bottom: 18px; width: auto; transform: translateY(4px); }
   .info-hint:hover .info-hint-tooltip,
   .info-hint:focus-within .info-hint-tooltip { transform: translateY(0); }
 }

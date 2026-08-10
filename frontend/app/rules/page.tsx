@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
 type BlockCategory = 'setup' | 'context' | 'entry' | 'risk' | 'execution' | 'custom';
@@ -203,6 +204,7 @@ export default function PlaybooksPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <ShieldCheck size={25} color="var(--accent)" />
               <h1 style={{ margin: 0, fontSize: 25 }}>Strategy Playbooks</h1>
+              <InfoHint label="What are playbooks?" text="A playbook is your complete trading strategy. It groups setup, context, entry, risk, and execution rules into a version that can be attached to trades and measured by Edge Coach." />
             </div>
             <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 13.5 }}>
               Build flexible strategies. Every publish creates an immutable version for audit and performance comparison.
@@ -232,12 +234,12 @@ export default function PlaybooksPage() {
             <div style={{ display: 'grid', gap: 16 }}>
               <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
                 <div className="playbook-header-grid">
-                  <label style={{ display: 'grid', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>Strategy name<input value={name} onChange={e => { setName(e.target.value); markDirty(); }} placeholder="e.g. London ORB" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 9, padding: '0 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
+                  <label style={{ display: 'grid', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}><span>Strategy name<InfoHint text="Use a distinct name for the setup you want to measure, such as London ORB or FVG Continuation." /></span><input value={name} onChange={e => { setName(e.target.value); markDirty(); }} placeholder="e.g. London ORB" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 9, padding: '0 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
                   <label style={{ display: 'grid', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>Description<input value={description} onChange={e => { setDescription(e.target.value); markDirty(); }} placeholder="When and why this strategy applies" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 9, padding: '0 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
                 </div>
                 {!creating && selected && (
                   <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-                    <FileClock size={14} /> Version {latest(selected)?.versionNumber} · {selected.versions.length} immutable version{selected.versions.length === 1 ? '' : 's'} · {totalRules} rules
+                    <FileClock size={14} /> Version {latest(selected)?.versionNumber} · {selected.versions.length} immutable version{selected.versions.length === 1 ? '' : 's'} · {totalRules} rules <InfoHint text="Published versions cannot be overwritten. Existing trades retain the exact rules they used, while new trades use the newest published version." />
                     <button onClick={toggleArchive} style={{ marginLeft: 'auto', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 10px' }}><Archive size={13} style={{ verticalAlign: 'middle', marginRight: 5 }} />{selected.archived ? 'Restore' : 'Archive strategy'}</button>
                   </div>
                 )}
@@ -246,7 +248,7 @@ export default function PlaybooksPage() {
               {blocks.map(block => (
                 <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
                   <div className="playbook-block-header">
-                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Block name<input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Category<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{(['setup', 'context', 'entry', 'risk', 'execution', 'custom'] as BlockCategory[]).map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></label>
                     <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
                   </div>
@@ -255,7 +257,7 @@ export default function PlaybooksPage() {
                     {block.rules.map((rule, ruleIndex) => (
                       <div key={rule.ruleId} className="playbook-rule-row">
                         <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Rule {ruleIndex + 1}<input value={rule.label} onChange={e => updateRule(block.blockId, rule.ruleId, { label: e.target.value })} placeholder="Observable condition" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label>
-                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Answer type<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType, options: [] })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(INPUT_LABELS) as InputType[]).map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label>
+                        <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}><span>Answer type<InfoHint text="Choose how this evidence is recorded on a trade. Structured answers such as Yes/No and choices are easiest for Edge Coach to compare." /></span><select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType, options: [] })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{(Object.keys(INPUT_LABELS) as InputType[]).map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label>
                         {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<input value={rule.options.join(', ')} onChange={e => updateRule(block.blockId, rule.ruleId, { options: e.target.value.split(',').map(item => item.trim()).filter(Boolean) })} placeholder="A, B, C" style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, padding: '0 9px', background: 'var(--bg-surface)', color: 'var(--text-primary)' }} /></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{INPUT_LABELS[rule.inputType]}</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
@@ -269,7 +271,7 @@ export default function PlaybooksPage() {
               <button onClick={() => { setBlocks(current => [...current, blankBlock()]); markDirty(); }} style={{ minHeight: 48, border: '1px dashed var(--accent)', borderRadius: 12, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}><CopyPlus size={16} style={{ verticalAlign: 'middle', marginRight: 7 }} />Add playbook block</button>
 
               <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
-                <label style={{ display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 12 }}>What changed in this version?<input value={changeNote} onChange={e => { setChangeNote(e.target.value); markDirty(); }} placeholder="e.g. Added Order Block location requirement" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
+                <label style={{ display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 12 }}><span>What changed in this version?<InfoHint text="This note creates an audit trail explaining why the strategy changed, making before-and-after performance easier to interpret." /></span><input value={changeNote} onChange={e => { setChangeNote(e.target.value); markDirty(); }} placeholder="e.g. Added Order Block location requirement" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
                 <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>Publishing never overwrites old versions. Trades already using a version keep their exact snapshot.</p>
               </section>
             </div>

@@ -2,6 +2,8 @@
 
 A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 trades, preserves an auditable record of strategy changes, and measures what actually contributes to performance.
 
+> New installation? Follow the complete [Setup Guide](SETUP.md).
+
 ## Features
 
 | Feature | Description |

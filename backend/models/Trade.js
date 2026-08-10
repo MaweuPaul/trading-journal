@@ -43,12 +43,13 @@ const tradeSchema = new mongoose.Schema({
 
   // -- Edge Coach: Post-Trade Execution Checklist ---------------------------
   executionChecklist: [{
+    ruleId:   { type: String, default: '' },
     rule:     String,   // e.g. 'Entry as planned', 'Stop not moved', 'Target respected'
     complied: Boolean,
   }],
 
   // -- Pre-trade entry checklist --------------------------------------------
-  checklist: [{ rule: String, complied: Boolean }],
+  checklist: [{ ruleId: { type: String, default: '' }, rule: String, complied: Boolean }],
 
   screenshots: [{
     url:        { type: String, required: true },

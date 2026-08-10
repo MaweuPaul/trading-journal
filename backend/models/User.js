@@ -17,6 +17,13 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  tradingRules: [{
+    ruleId: { type: String, required: true },
+    label: { type: String, required: true, trim: true, maxlength: 160 },
+    category: { type: String, enum: ['pre_trade', 'execution'], required: true },
+    enabled: { type: Boolean, default: true },
+    order: { type: Number, default: 0 },
+  }],
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

@@ -555,6 +555,9 @@ Expected results:
 - The Answer type dropdown shows only five primitives; specialized Number and Text behaviors appear only in the separate Format dropdown.
 - Turning on the image-confirmation toggle sets a minimum of one image and reveals its minimum/maximum controls.
 - Leaving the toggle off treats uploaded images as optional supporting examples; turning it on blocks publishing until the configured minimum number of captioned examples is present.
+- On a trade using that version, each image-confirmation rule shows a separate **Add trade screenshot** control beneath the rule answer and reference examples.
+- Saving is blocked until each required rule has its configured number of trade screenshots; a generic screenshot or a screenshot linked to another rule/version does not satisfy it.
+- The backend repeats this validation and stores the rule ID and immutable playbook-version ID on the screenshot, including offline staging and Cloudinary metadata.
 - Editing a recorded journal permits answer corrections but does not offer a version selector or allow the backend snapshot to be replaced.
 
 ## Legacy migration test

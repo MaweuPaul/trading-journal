@@ -208,11 +208,16 @@ function normalizeBlocks(input) {
   });
 }
 
-function validatePlaybookResponses(snapshot, input) {
+function validatePlaybookResponses(snapshot, input, screenshots = []) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const clean = {};
   for (const block of snapshot?.blocks || []) {
     for (const rule of block.rules || []) {
+      if (rule.exampleRequirement?.required) {
+        const minimumImages = Math.max(1, Number(rule.exampleRequirement.minimumImages) || 1);
+        const confirmations = screenshots.filter(screenshot => String(screenshot.playbookRuleId || '') === String(rule.ruleId) && String(screenshot.playbookVersionId || '') === String(snapshot.versionId));
+        if (confirmations.length < minimumImages) throw new Error(`Required trade screenshot confirmation is missing for: ${rule.label}`);
+      }
       const value = source[rule.ruleId];
       const missing = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
       if (missing) {
@@ -618,7 +623,8 @@ async function uploadOfflineScreenshots() {
           }
 
           // Build context tags with full trade metadata for reconstruction
-          const contextTags = buildCloudinaryContext(trade, meta.caption);
+          const evidenceLink = { playbookRuleId: meta.playbookRuleId || '', playbookVersionId: meta.playbookVersionId || '' };
+          const contextTags = buildCloudinaryContext(trade, meta.caption, evidenceLink);
 
           // Upload image from disk to Cloudinary
           const upload = await cloudinary.uploader.upload(imgPath, {
@@ -629,7 +635,7 @@ async function uploadOfflineScreenshots() {
           });
 
           // Upload sidecar metadata.json to Cloudinary (as raw file)
-          const sidecarData = JSON.stringify(buildSidecarMetadata(trade, meta.caption, upload.secure_url), null, 2);
+          const sidecarData = JSON.stringify(buildSidecarMetadata(trade, meta.caption, upload.secure_url, evidenceLink), null, 2);
           await cloudinary.uploader.upload(
             `data:application/json;base64,${Buffer.from(sidecarData).toString('base64')}`,
             {
@@ -648,6 +654,8 @@ async function uploadOfflineScreenshots() {
             url: upload.secure_url,
             publicId: upload.public_id,
             caption: meta.caption || '',
+            playbookRuleId: meta.playbookRuleId || '',
+            playbookVersionId: meta.playbookVersionId || '',
             uploadedAt: new Date(),
           });
           await trade.save();
@@ -672,7 +680,7 @@ async function uploadOfflineScreenshots() {
 }
 
 // Build Cloudinary context string with full trade metadata
-function buildCloudinaryContext(trade, caption) {
+function buildCloudinaryContext(trade, caption, evidenceLink = {}) {
   const t = typeof trade.toObject === 'function' ? trade.toObject() : trade;
   return [
     `dealId=${t.dealId}`,
@@ -695,18 +703,22 @@ function buildCloudinaryContext(trade, caption) {
     `grade=${t.grade || ''}`,
     `tags=${(t.tags || []).join(',')}`,
     `caption=${(caption || '').replace(/[|=]/g, ' ').slice(0, 200)}`,
+    `playbookRuleId=${evidenceLink.playbookRuleId || ''}`,
+    `playbookVersionId=${evidenceLink.playbookVersionId || ''}`,
     `journalVersion=2`,
   ].join('|');
 }
 
 // Build sidecar metadata object for the companion metadata.json file
-function buildSidecarMetadata(trade, caption, imageUrl) {
+function buildSidecarMetadata(trade, caption, imageUrl, evidenceLink = {}) {
   const t = typeof trade.toObject === 'function' ? trade.toObject() : trade;
   return {
     _schemaVersion: 2,
     exportedAt: new Date().toISOString(),
     imageUrl,
     caption: caption || '',
+    playbookRuleId: evidenceLink.playbookRuleId || '',
+    playbookVersionId: evidenceLink.playbookVersionId || '',
     trade: {
       _id: String(t._id),
       dealId: t.dealId,
@@ -1571,16 +1583,16 @@ router.put('/trades/:id', auth, async (req, res) => {
     let canonicalPlaybookSnapshot;
     let validatedPlaybookResponses;
     let lockedPlaybookSnapshot = null;
-    if (playbookId !== undefined) {
-      let existingTrade;
+    let existingTrade;
+    if (playbookId !== undefined || playbookResponses !== undefined) {
       if (mongoose.connection.readyState === 1) {
-        existingTrade = await Trade.findOne({ _id: req.params.id, user: req.user.userId }).select('playbookSnapshot').lean();
+        existingTrade = await Trade.findOne({ _id: req.params.id, user: req.user.userId }).select('playbookSnapshot screenshots').lean();
       } else {
         existingTrade = inMemoryTrades.find(t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId));
       }
       if (!existingTrade) return res.status(404).json({ error: 'Trade not found' });
       lockedPlaybookSnapshot = existingTrade.playbookSnapshot || null;
-      if (lockedPlaybookSnapshot && (
+      if (playbookId !== undefined && lockedPlaybookSnapshot && (
         String(playbookId || '') !== String(lockedPlaybookSnapshot.playbookId || '')
         || String(playbookVersionId || '') !== String(lockedPlaybookSnapshot.versionId || '')
       )) {
@@ -1589,7 +1601,7 @@ router.put('/trades/:id', auth, async (req, res) => {
     }
     if (lockedPlaybookSnapshot) {
       canonicalPlaybookSnapshot = lockedPlaybookSnapshot;
-      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses);
+      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses, existingTrade?.screenshots || []);
     } else if (playbookId !== undefined && playbookId) {
       const playbooks = await getPlaybooks(req.user.userId);
       const playbook = playbooks.find(item => item.playbookId === String(playbookId));
@@ -1607,7 +1619,7 @@ router.put('/trades/:id', auth, async (req, res) => {
         publishedAt: version.publishedAt,
         blocks: version.blocks,
       };
-      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses);
+      validatedPlaybookResponses = validatePlaybookResponses(canonicalPlaybookSnapshot, playbookResponses, existingTrade?.screenshots || []);
     }
 
     // Helper to apply all fields to a trade object
@@ -1642,7 +1654,7 @@ router.put('/trades/:id', auth, async (req, res) => {
         t.playbookSnapshot = canonicalPlaybookSnapshot || null;
         t.playbookResponses = validatedPlaybookResponses || {};
       } else if (playbookResponses !== undefined && t.playbookSnapshot) {
-        t.playbookResponses = playbookResponses && typeof playbookResponses === 'object' ? playbookResponses : {};
+        t.playbookResponses = validatedPlaybookResponses || {};
       }
       return t;
     }
@@ -1686,7 +1698,7 @@ router.put('/trades/:id', auth, async (req, res) => {
       update.playbookSnapshot = canonicalPlaybookSnapshot || null;
       update.playbookResponses = validatedPlaybookResponses || {};
     } else if (playbookResponses !== undefined) {
-      update.playbookResponses = playbookResponses && typeof playbookResponses === 'object' ? playbookResponses : {};
+      update.playbookResponses = validatedPlaybookResponses || {};
     }
 
     const updated = await Trade.findOneAndUpdate(
@@ -1712,7 +1724,9 @@ router.put('/trades/:id', auth, async (req, res) => {
 // POST /api/trades/:id/screenshots  upload a manually captured chart screenshot
 router.post('/trades/:id/screenshots', auth, async (req, res) => {
   try {
-    const { imageData, caption = '' } = req.body;
+    const { imageData, caption = '', playbookRuleId = '', playbookVersionId = '' } = req.body;
+    const linkedRuleId = String(playbookRuleId || '').trim().slice(0, 100);
+    const linkedVersionId = String(playbookVersionId || '').trim().slice(0, 100);
     if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:image/')) {
       return res.status(400).json({ error: 'imageData must be a base64 data URL image.' });
     }
@@ -1744,6 +1758,8 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
         tradeId: String(req.params.id),
         userId: String(req.user.userId),
         caption: String(caption).trim().slice(0, 180),
+        playbookRuleId: linkedRuleId,
+        playbookVersionId: linkedVersionId,
         savedAt: new Date().toISOString(),
         trade: {
           dealId: offlineTrade.dealId,
@@ -1781,6 +1797,8 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
           url: localUrl,
           publicId: localPublicId,
           caption: String(caption).trim().slice(0, 180),
+          playbookRuleId: linkedRuleId,
+          playbookVersionId: linkedVersionId,
           uploadedAt: new Date().toISOString(),
           offlinePending: true,
         });
@@ -1806,7 +1824,8 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
     }
 
     // Build Cloudinary context tags with all trade metadata for reconstruction
-    const contextTags = buildCloudinaryContext(trade, caption);
+    const evidenceLink = { playbookRuleId: linkedRuleId, playbookVersionId: linkedVersionId };
+    const contextTags = buildCloudinaryContext(trade, caption, evidenceLink);
 
     const upload = await cloudinary.uploader.upload(imageData, {
       folder: `trade-journal/${req.user.userId}/${trade._id}`,
@@ -1816,7 +1835,7 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
     });
 
     // Upload sidecar metadata.json to Cloudinary alongside the image (as raw)
-    const sidecarData = JSON.stringify(buildSidecarMetadata(trade, caption, upload.secure_url), null, 2);
+    const sidecarData = JSON.stringify(buildSidecarMetadata(trade, caption, upload.secure_url, evidenceLink), null, 2);
     try {
       await cloudinary.uploader.upload(
         `data:application/json;base64,${Buffer.from(sidecarData).toString('base64')}`,
@@ -1836,6 +1855,8 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
       url: upload.secure_url,
       publicId: upload.public_id,
       caption: String(caption).trim().slice(0, 180),
+      playbookRuleId: linkedRuleId,
+      playbookVersionId: linkedVersionId,
       uploadedAt: new Date(),
     });
 

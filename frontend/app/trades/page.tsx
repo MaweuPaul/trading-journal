@@ -24,6 +24,8 @@ interface TradeScreenshot {
   publicId: string;
   caption?: string;
   uploadedAt?: string;
+  playbookRuleId?: string;
+  playbookVersionId?: string;
 }
 
 interface Trade {
@@ -370,6 +372,18 @@ export default function TradesPage() {
       alert(`Complete the required playbook field: ${missingRequired.label}`);
       return;
     }
+    const missingImageRule = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
+      if (!rule.exampleRequirement?.required) return false;
+      const count = (selectedTrade.screenshots || []).filter(screenshot => screenshot.playbookRuleId === rule.ruleId && screenshot.playbookVersionId === draftPlaybookSnapshot.versionId).length;
+      return count < (rule.exampleRequirement.minimumImages || 1);
+    });
+    if (missingImageRule) {
+      const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingImageRule.ruleId));
+      const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
+      if (missingPhase) setActivePlaybookPhase(missingPhase.id);
+      alert(`Add ${missingImageRule.exampleRequirement?.minimumImages || 1} trade screenshot confirmation${(missingImageRule.exampleRequirement?.minimumImages || 1) === 1 ? '' : 's'} for: ${missingImageRule.label}`);
+      return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setSaving(true);
@@ -410,7 +424,10 @@ export default function TradesPage() {
         router.push('/login');
         return;
       }
-      if (!res.ok) throw new Error('Failed to update journal');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to update journal');
+      }
       const updatedTrade = await res.json();
       
       // Update locally in trades list
@@ -421,7 +438,7 @@ export default function TradesPage() {
       setSelectedTrade(null);
     } catch (e) {
       console.error(e);
-      alert('Error saving journal notes');
+      alert(e instanceof Error ? e.message : 'Error saving journal notes');
     } finally {
       setSaving(false);
     }
@@ -439,7 +456,7 @@ export default function TradesPage() {
     reader.readAsDataURL(file);
   }), []);
 
-  const uploadScreenshotDataUrl = useCallback(async (imageData: string) => {
+  const uploadScreenshotDataUrl = useCallback(async (imageData: string, rule?: PlaybookRule) => {
     if (!selectedTrade) return;
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -454,7 +471,9 @@ export default function TradesPage() {
         },
         body: JSON.stringify({
           imageData,
-          caption: screenshotCaption,
+          caption: rule ? `Trade confirmation: ${rule.label}` : screenshotCaption,
+          playbookRuleId: rule?.ruleId || '',
+          playbookVersionId: rule ? draftPlaybookSnapshot?.versionId || '' : '',
         }),
       });
 
@@ -474,9 +493,9 @@ export default function TradesPage() {
     } finally {
       setUploadingScreenshot(false);
     }
-  }, [router, screenshotCaption, selectedTrade]);
+  }, [draftPlaybookSnapshot?.versionId, router, screenshotCaption, selectedTrade]);
 
-  const uploadScreenshotFile = useCallback(async (file: File) => {
+  const uploadScreenshotFile = useCallback(async (file: File, rule?: PlaybookRule) => {
     if (!file.type.startsWith('image/')) {
       alert('Please choose an image file.');
       return;
@@ -488,7 +507,7 @@ export default function TradesPage() {
     }
 
     try {
-      await uploadScreenshotDataUrl(await fileToDataUrl(file));
+      await uploadScreenshotDataUrl(await fileToDataUrl(file), rule);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Screenshot upload failed');
@@ -987,7 +1006,7 @@ export default function TradesPage() {
 
                   {draftPlaybookSnapshot.blocks.filter(block => (JOURNAL_PHASES.find(phase => phase.id === activePlaybookPhase)?.categories || []).includes(block.category)).map(block => (
                     <div key={block.blockId} className="journal-playbook-stage">
-                      <div className="journal-playbook-stage-title"><strong>{block.name}</strong><span>{block.rules.filter(rule => rule.required).length} required</span></div>
+                      <div className="journal-playbook-stage-title"><strong>{block.name}</strong><span>{block.rules.filter(rule => rule.required || rule.exampleRequirement?.required).length} required</span></div>
                       {(block.evidence || []).length > 0 && <div className="journal-playbook-evidence">
                         {(block.evidence || []).map(item => <figure key={item.evidenceId} className={item.kind}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -998,7 +1017,7 @@ export default function TradesPage() {
                       <div style={{ display: 'grid', gap: 10 }}>
                         {block.rules.map(rule => (
                           <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
-                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required || rule.exampleRequirement?.required ? ' *' : ''}</span>
                             {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
                             {(rule.examples || []).length > 0 && <div className="journal-rule-examples">{(rule.examples || []).map(example => <figure key={example.evidenceId} className={example.kind}>
                               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1006,6 +1025,28 @@ export default function TradesPage() {
                               <figcaption><strong>{example.kind === 'valid' ? 'Valid' : example.kind === 'invalid' ? 'Avoid' : 'Reference'}</strong>{example.caption}</figcaption>
                             </figure>)}</div>}
                             {renderPlaybookInput(rule)}
+                            {rule.exampleRequirement?.required && (() => {
+                              const confirmations = (selectedTrade.screenshots || []).filter(screenshot => screenshot.playbookRuleId === rule.ruleId && screenshot.playbookVersionId === draftPlaybookSnapshot.versionId);
+                              const minimum = rule.exampleRequirement.minimumImages || 1;
+                              const complete = confirmations.length >= minimum;
+                              return <div className={`journal-rule-confirmation ${complete ? 'complete' : 'missing'}`}>
+                                <div className="journal-rule-confirmation-heading">
+                                  <div><strong><ImageIcon size={13} /> Trade screenshot confirmation</strong><span>Upload your chart from this trade—not the playbook reference.</span></div>
+                                  <span className="journal-rule-confirmation-count">{confirmations.length}/{minimum} required</span>
+                                </div>
+                                {confirmations.length > 0 && <div className="journal-rule-confirmation-grid">{confirmations.map(screenshot => <figure key={screenshot._id || screenshot.publicId}>
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={screenshot.url} alt={screenshot.caption || `Confirmation for ${rule.label}`} />
+                                  <figcaption>{screenshot.caption || rule.label}</figcaption>
+                                  <button type="button" onClick={() => void handleScreenshotDelete(screenshot._id)} aria-label={`Remove screenshot confirmation for ${rule.label}`}><Trash2 size={13} /></button>
+                                </figure>)}</div>}
+                                <label className={`journal-rule-confirmation-upload${uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages ? ' disabled' : ''}`}>
+                                  <Upload size={14} />{uploadingScreenshot ? 'Uploading…' : confirmations.length ? 'Add another screenshot' : 'Add trade screenshot'}
+                                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void uploadScreenshotFile(file, rule); }} />
+                                </label>
+                                {!complete && <span className="journal-rule-confirmation-error" role="alert">A screenshot is required before this journal can be saved.</span>}
+                              </div>;
+                            })()}
                           </div>
                         ))}
                       </div>

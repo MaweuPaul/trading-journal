@@ -115,6 +115,8 @@ interface PlaybookRule {
   unit?: string;
   defaultValue?: string | number | boolean | null;
   validation?: { min?: number | null; max?: number | null; minLength?: number | null; maxLength?: number | null };
+  examples?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid' }>;
+  exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
 }
 
 interface PlaybookBlock {
@@ -998,6 +1000,11 @@ export default function TradesPage() {
                           <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
                             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required ? ' *' : ''}</span>
                             {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
+                            {(rule.examples || []).length > 0 && <div className="journal-rule-examples">{(rule.examples || []).map(example => <figure key={example.evidenceId} className={example.kind}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={example.url} alt={example.caption} />
+                              <figcaption><strong>{example.kind === 'valid' ? 'Valid' : example.kind === 'invalid' ? 'Avoid' : 'Reference'}</strong>{example.caption}</figcaption>
+                            </figure>)}</div>}
                             {renderPlaybookInput(rule)}
                           </div>
                         ))}

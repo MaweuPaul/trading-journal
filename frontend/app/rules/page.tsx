@@ -24,6 +24,8 @@ interface PlaybookRule {
     minLength?: number | null;
     maxLength?: number | null;
   };
+  examples?: PlaybookEvidence[];
+  exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
   order?: number;
 }
 
@@ -98,7 +100,7 @@ type TemplateCategory = Exclude<BlockCategory, 'custom'>;
 type TemplateRule = Omit<PlaybookRule, 'ruleId'>;
 
 const templateRule = (label: string, inputType: InputType, helpText: string, extra: Partial<TemplateRule> = {}): TemplateRule => ({
-  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, ...extra,
+  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, ...extra,
 });
 
 const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: TemplateRule[] }> = {
@@ -187,7 +189,12 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
 function blockIsReady(block: PlaybookBlock) {
   return block.rules.length > 0
     && block.rules.every(rule => rule.label.trim())
+    && block.rules.every(rule => (rule.examples || []).length >= (rule.exampleRequirement?.minimumImages || 0))
     && (block.evidence || []).every(item => item.caption.trim().length >= 10);
+}
+
+function blockEvidenceCount(block: PlaybookBlock) {
+  return (block.evidence || []).length + block.rules.reduce((total, rule) => total + (rule.examples || []).length, 0);
 }
 
 function ChoiceOptionsInput({
@@ -252,6 +259,18 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
           </label>
           <label style={labelStyle}>Maximum characters
             <input type="number" min="1" value={validation.maxLength ?? ''} onChange={event => onChange({ validation: { ...validation, maxLength: optionalNumber(event.target.value) } })} style={inputStyle} />
+          </label>
+        </>}
+        <label style={{ ...labelStyle, gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: 7, minHeight: 38 }}>
+          <input type="checkbox" checked={rule.exampleRequirement?.required || false} onChange={event => onChange({ exampleRequirement: { required: event.target.checked, minimumImages: event.target.checked ? Math.max(1, rule.exampleRequirement?.minimumImages || 0) : 0, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} />
+          Require instructional image examples before publishing this rule
+        </label>
+        {(rule.exampleRequirement?.required || false) && <>
+          <label style={labelStyle}>Minimum example images
+            <input type="number" min="1" max="12" value={rule.exampleRequirement?.minimumImages || 1} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: Number(event.target.value) || 1, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} style={inputStyle} />
+          </label>
+          <label style={labelStyle}>Maximum example images
+            <input type="number" min="1" max="12" value={rule.exampleRequirement?.maximumImages || 6} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: rule.exampleRequirement?.minimumImages || 1, maximumImages: Number(event.target.value) || 6 } })} style={inputStyle} />
           </label>
         </>}
       </div>
@@ -333,6 +352,60 @@ function BlockEvidenceEditor({ block, onChange, onError }: { block: PlaybookBloc
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function RuleExamplesEditor({ rule, onChange, onError }: { rule: PlaybookRule; onChange: (examples: PlaybookEvidence[]) => void; onError: (message: string) => void }) {
+  const [uploading, setUploading] = useState(false);
+  const examples = rule.examples || [];
+  const maximum = rule.exampleRequirement?.maximumImages || 6;
+
+  const upload = async (file: File) => {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { onError('Use a PNG, JPEG, or WebP screenshot.'); return; }
+    if (file.size > 10 * 1024 * 1024) { onError('Screenshot must be smaller than 10 MB.'); return; }
+    if (examples.length >= maximum) { onError(`This rule allows at most ${maximum} example images.`); return; }
+    setUploading(true); onError('');
+    try {
+      const imageData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Could not read screenshot'));
+        reader.readAsDataURL(file);
+      });
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/playbooks/evidence', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ imageData, kind: 'reference' }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not upload screenshot');
+      onChange([...examples, { ...body.evidence, linkedRuleId: rule.ruleId, order: examples.length }]);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not upload screenshot');
+    } finally {
+      setUploading(false);
+    }
+  };
+  const update = (evidenceId: string, patch: Partial<PlaybookEvidence>) => onChange(examples.map(item => item.evidenceId === evidenceId ? { ...item, ...patch } : item));
+  const move = (index: number, offset: number) => {
+    const target = index + offset;
+    if (target < 0 || target >= examples.length) return;
+    const next = [...examples]; [next[index], next[target]] = [next[target], next[index]];
+    onChange(next.map((item, order) => ({ ...item, order })));
+  };
+
+  return (
+    <div className="playbook-rule-examples">
+      <div className="playbook-rule-examples-heading">
+        <div><strong>Rule examples</strong><span>Teach exactly how this condition should and should not look.</span></div>
+        <label className={`btn-ghost playbook-evidence-upload${uploading || examples.length >= maximum ? ' disabled' : ''}`}><ImagePlus size={13} />{uploading ? 'Uploading…' : 'Add example'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || examples.length >= maximum} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} /></label>
+      </div>
+      {rule.exampleRequirement?.required && <div className={`playbook-rule-example-requirement ${examples.length >= (rule.exampleRequirement.minimumImages || 1) ? 'met' : 'missing'}`}>{examples.length}/{rule.exampleRequirement.minimumImages || 1} required examples added</div>}
+      {examples.length > 0 && <div className="playbook-rule-example-grid">{examples.map((item, index) => <article key={item.evidenceId}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={item.url} alt={item.caption || `${rule.label} example`} />
+        <select value={item.kind} onChange={event => update(item.evidenceId, { kind: event.target.value as PlaybookEvidence['kind'] })}><option value="reference">Reference</option><option value="valid">Valid</option><option value="invalid">Invalid</option></select>
+        <textarea rows={2} value={item.caption} onChange={event => update(item.evidenceId, { caption: event.target.value })} placeholder="Explain what the trader should notice…" />
+        <div><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Move example earlier"><ArrowUp size={12} /></button><button type="button" disabled={index === examples.length - 1} onClick={() => move(index, 1)} aria-label="Move example later"><ArrowDown size={12} /></button><button type="button" onClick={() => onChange(examples.filter(example => example.evidenceId !== item.evidenceId))} aria-label="Remove example"><X size={12} /></button></div>
+      </article>)}</div>}
     </div>
   );
 }
@@ -428,7 +501,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {} }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 } }],
     } : block));
     markDirty();
   };
@@ -546,7 +619,7 @@ export default function PlaybooksPage() {
                     <span className="playbook-stage-number">{blockIndex + 1}</span>
                     <div>
                       <strong>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.label || 'Custom stage'} <span className={`playbook-stage-status ${blockIsReady(block) ? 'ready' : 'draft'}`}>{blockIsReady(block) ? 'Ready' : 'Needs details'}</span></strong>
-                      <span>{block.rules.length} field{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required · {(block.evidence || []).length} screenshot{(block.evidence || []).length === 1 ? '' : 's'}</span>
+                      <span>{block.rules.length} field{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required · {blockEvidenceCount(block)} screenshot{blockEvidenceCount(block) === 1 ? '' : 's'}</span>
                     </div>
                     <div className="playbook-stage-actions">
                       <button type="button" onClick={() => moveBlock(blockIndex, -1)} disabled={blockIndex === 0} aria-label={`Move ${block.name} earlier`}><ArrowUp size={14} /></button>
@@ -574,6 +647,7 @@ export default function PlaybooksPage() {
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
                         <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />
+                        <RuleExamplesEditor rule={rule} onChange={examples => updateRule(block.blockId, rule.ruleId, { examples })} onError={setError} />
                       </div>
                     ))}
                   </div>

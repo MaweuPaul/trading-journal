@@ -9,6 +9,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   Cell, PieChart, Pie, Legend,
 } from 'recharts';
+import InfoHint from '@/components/InfoHint';
 
 const API = '/api';
 const GRADE_COLOR: Record<string, string> = {
@@ -89,7 +90,7 @@ function ScoreRing({ score, size = 72 }: { score: number | null; size?: number }
   );
 }
 
-function SectionCard({ title, icon, children, accent }: { title: string; icon: React.ReactNode; children: React.ReactNode; accent?: string }) {
+function SectionCard({ title, icon, children, accent, help }: { title: string; icon: React.ReactNode; children: React.ReactNode; accent?: string; help?: string }) {
   return (
     <div style={{
       background: 'var(--bg-surface)', border: `1px solid ${accent ? accent + '33' : 'var(--border)'}`,
@@ -97,7 +98,7 @@ function SectionCard({ title, icon, children, accent }: { title: string; icon: R
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 18 }}>
         <span style={{ color: accent || 'var(--accent)' }}>{icon}</span>
-        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>{title}</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center' }}>{title}{help && <InfoHint text={help} label={`About ${title}`} />}</span>
       </div>
       {children}
     </div>
@@ -394,7 +395,7 @@ export default function CoachPage() {
               </SectionCard>
 
               {/* Plan Adherence */}
-              <SectionCard title="Plan Adherence Score" icon={<CheckCircle size={15} />} accent="#10b981">
+              <SectionCard title="Plan Adherence Score" icon={<CheckCircle size={15} />} accent="#10b981" help="The percentage of saved execution checklist items marked as followed. It measures discipline, not whether the strategy itself is profitable.">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                   <ScoreRing score={data!.planAdherence.score} />
                   <div style={{ flex: 1 }}>
@@ -499,7 +500,7 @@ export default function CoachPage() {
 
             {/* Versioned strategy audit */}
             {data!.playbookAnalytics.length > 0 && (
-              <SectionCard title="Strategy Versions" icon={<FileClock size={15} />} accent="#8b5cf6">
+              <SectionCard title="Strategy Versions" icon={<FileClock size={15} />} accent="#8b5cf6" help="Each published playbook version is measured separately so you can see whether a strategy change improved or weakened results.">
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Each version is measured separately, so later edits never rewrite the performance of earlier rules.</p>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {data!.playbookAnalytics.map(item => (
@@ -515,7 +516,7 @@ export default function CoachPage() {
             )}
 
             {data!.ruleEffectiveness.length > 0 && (
-              <SectionCard title="What Works — Rule Evidence" icon={<Target size={15} />} accent="#10b981">
+              <SectionCard title="What Works — Rule Evidence" icon={<Target size={15} />} accent="#10b981" help="Compares trade outcomes for each structured playbook answer. Larger samples are more dependable than a few isolated trades.">
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Outcomes are grouped by the exact answer saved on each immutable trade snapshot. Treat small samples as observations, not conclusions.</p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>

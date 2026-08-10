@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import InfoHint from '@/components/InfoHint';
 import { 
   SlidersHorizontal, ChevronLeft, ChevronRight, List, 
   X, Smile, Award, Tag, CheckSquare, Save, Info,
@@ -915,7 +916,7 @@ export default function TradesPage() {
 
                 {/* Immutable strategy playbook snapshot */}
                 <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Strategy Playbook</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center' }}>Strategy Playbook<InfoHint text="Select the published strategy used for this trade. Saving attaches an immutable snapshot, so later playbook edits cannot rewrite this trade's audit history." /></div>
                   <select value={draftPlaybookSnapshot?.playbookId || ''} onChange={event => selectPlaybookForTrade(event.target.value)} style={{ width: '100%', minHeight: 42, padding: '0 10px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 12 }}>
                     <option value="">— Select a published strategy —</option>
                     {playbooks.filter(playbook => !playbook.archived || playbook.playbookId === draftPlaybookSnapshot?.playbookId).map(playbook => {

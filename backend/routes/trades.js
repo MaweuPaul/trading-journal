@@ -72,6 +72,16 @@ const DEFAULT_TRADING_RULES = [
   { ruleId: 'exec-fear', label: 'No manual close out of fear', category: 'execution', enabled: true, order: 4 },
 ];
 
+const PLAYBOOK_LIFECYCLE_CATEGORIES = [
+  'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
+];
+
+function normalizePlaybookCategory(category) {
+  const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
+  const normalized = legacyMap[category] || category;
+  return PLAYBOOK_LIFECYCLE_CATEGORIES.includes(normalized) ? normalized : 'custom';
+}
+
 function id(prefix) {
   return `${prefix}-${new mongoose.Types.ObjectId()}`;
 }
@@ -117,7 +127,7 @@ function normalizeBlocks(input) {
     return {
       blockId: String(block.blockId || id('block')),
       name,
-      category: ['setup', 'context', 'entry', 'risk', 'execution', 'custom'].includes(block.category) ? block.category : 'custom',
+      category: normalizePlaybookCategory(block.category),
       order: blockIndex,
       rules: rules.map((rule, ruleIndex) => {
         const label = String(rule.label || '').trim();
@@ -127,12 +137,35 @@ function normalizeBlocks(input) {
           ? (Array.isArray(rule.options) ? rule.options.map(option => String(option).trim()).filter(Boolean).slice(0, 20) : [])
           : [];
         if (['single_choice', 'multi_choice'].includes(inputType) && options.length < 2) throw new Error(`"${label}" needs at least two choices`);
+        const validationSource = rule.validation && typeof rule.validation === 'object' && !Array.isArray(rule.validation)
+          ? rule.validation
+          : {};
+        const finiteOrNull = value => value === '' || value === undefined || value === null
+          ? null
+          : (Number.isFinite(Number(value)) ? Number(value) : null);
+        const validation = {
+          min: finiteOrNull(validationSource.min),
+          max: finiteOrNull(validationSource.max),
+          minLength: finiteOrNull(validationSource.minLength),
+          maxLength: finiteOrNull(validationSource.maxLength),
+        };
+        if (validation.min !== null && validation.max !== null && validation.min > validation.max) {
+          throw new Error(`Minimum cannot exceed maximum for: ${label}`);
+        }
+        if (validation.minLength !== null && validation.maxLength !== null && validation.minLength > validation.maxLength) {
+          throw new Error(`Minimum length cannot exceed maximum length for: ${label}`);
+        }
         return {
           ruleId: String(rule.ruleId || id('rule')),
           label,
           inputType,
           options,
           required: Boolean(rule.required),
+          helpText: String(rule.helpText || '').trim().slice(0, 500),
+          placeholder: String(rule.placeholder || '').trim().slice(0, 160),
+          unit: String(rule.unit || '').trim().slice(0, 30),
+          defaultValue: rule.defaultValue ?? null,
+          validation,
           order: ruleIndex,
         };
       }),
@@ -155,8 +188,12 @@ function validatePlaybookResponses(snapshot, input) {
       if (rule.inputType === 'single_choice' && !rule.options.includes(String(value))) throw new Error(`Invalid choice for: ${rule.label}`);
       if (rule.inputType === 'multi_choice' && (!Array.isArray(value) || value.some(item => !rule.options.includes(String(item))))) throw new Error(`Invalid choices for: ${rule.label}`);
       if (rule.inputType === 'number' && !Number.isFinite(Number(value))) throw new Error(`Invalid number for: ${rule.label}`);
+      if (rule.inputType === 'number' && rule.validation?.min !== null && rule.validation?.min !== undefined && Number(value) < rule.validation.min) throw new Error(`${rule.label} must be at least ${rule.validation.min}`);
+      if (rule.inputType === 'number' && rule.validation?.max !== null && rule.validation?.max !== undefined && Number(value) > rule.validation.max) throw new Error(`${rule.label} must be at most ${rule.validation.max}`);
       if (rule.inputType === 'rating' && (!Number.isFinite(Number(value)) || Number(value) < 1 || Number(value) > 10)) throw new Error(`Rating must be from 1 to 10: ${rule.label}`);
-      clean[rule.ruleId] = rule.inputType === 'text' ? String(value).slice(0, 2000) : value;
+      if (rule.inputType === 'text' && rule.validation?.minLength !== null && rule.validation?.minLength !== undefined && String(value).length < rule.validation.minLength) throw new Error(`${rule.label} needs at least ${rule.validation.minLength} characters`);
+      if (rule.inputType === 'text' && rule.validation?.maxLength !== null && rule.validation?.maxLength !== undefined && String(value).length > rule.validation.maxLength) throw new Error(`${rule.label} can contain at most ${rule.validation.maxLength} characters`);
+      clean[rule.ruleId] = rule.inputType === 'text' ? String(value).slice(0, rule.validation?.maxLength || 2000) : value;
     }
   }
   return clean;

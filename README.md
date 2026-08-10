@@ -14,9 +14,9 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Performance | Equity curve, drawdown, profit factor, expectancy, and R:R metrics |
 | Trading Calendar | Daily P&L heatmap with trade drill-down |
 | Analytics | Breakdowns by session, symbol, emotion, grade, weekday, setup, and tags |
-| Versioned Playbooks | Build custom strategies from flexible blocks and rules; every publish creates an immutable version |
-| Structured Trade Review | Record Yes/No, choice, number, rating, or text answers against the exact playbook version used |
-| Edge Coach Evidence | Compare strategy versions and rule answers by sample size, win rate, and average P&L |
+| Visual Strategy Playbooks | Build a complete strategy manual from lifecycle stages, detailed fields, and captioned chart evidence |
+| Structured Trade Review | Complete Plan, Manage, and Review fields against the exact immutable playbook version used |
+| Edge Coach Evidence | Compare versions, stage compliance, structured answers, and numeric fields by outcome and sample size |
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
@@ -29,13 +29,15 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 
 Playbooks use an append-only audit model:
 
-1. Create a strategy such as London ORB, FVG Continuation, or a completely custom setup.
-2. Add custom blocks such as Market Context, Location, Entry Confirmation, Risk, and Execution.
-3. Add rules with answer types: Yes/No, single choice, multiple choice, number, rating, or text.
-4. Publish the strategy to create version 1.
-5. Edit and publish again to create version 2. Version 1 is never overwritten.
-6. Review a trade against a published version. The trade stores the version ID, complete rule snapshot, and structured responses.
-7. Edge Coach compares versions and answers without changing historical results.
+1. Create a strategy from an empty canvas or editable lifecycle templates.
+2. Arrange stages from Strategy Concept through Context, Setup, Entry, Risk, Execution, Management, Exit, and Review.
+3. Add custom fields with guidance, units, defaults, choices, and validation.
+4. Add captioned reference, valid, and invalid chart screenshots to any stage or field.
+5. Publish the strategy to create an immutable schema-versioned snapshot.
+6. Read the published version as a visual book from `/rules/read`.
+7. Complete the attached playbook in the trade journal's Plan, Manage, and Review timeline.
+8. Publish later revisions as new versions; earlier versions and attached trades remain unchanged.
+9. Use Edge Coach to compare versions, lifecycle compliance, structured answers, and numeric-field outcomes.
 
 Removing a rule only excludes it from the next published version. Previous versions and attached trades retain the original rule. Archiving a playbook hides it from new selections without deleting its audit history.
 
@@ -49,7 +51,7 @@ For playbook-backed trades, Edge Coach reports:
 - Outcomes grouped by each structured rule answer.
 - Evidence labels based on sample size: insufficient (`<5`), developing (`5–19`), and strong (`20+`).
 
-Boolean, single-choice, multiple-choice, and rating answers currently feed effectiveness comparisons. Number and text answers remain preserved in the audit record for later numerical or qualitative analysis.
+Boolean, single-choice, multiple-choice, and rating answers feed answer-group comparisons. Number, percentage, currency, price, duration, risk-to-reward, and rating fields also feed numeric winning-versus-losing averages. Text remains preserved as qualitative audit evidence.
 
 ## Live and Demo Accounts
 
@@ -102,6 +104,7 @@ Next.js frontend (:3000)
     -> JWT-authenticated API proxy
     -> /trades  trade list, filters, journal, and playbook review
     -> /rules   versioned playbook builder
+    -> /rules/read visual published-playbook reader
     -> /coach   behavior and playbook evidence
     -> /archive backup, export, and recovery controls
 ```
@@ -197,6 +200,7 @@ requirements.txt
 | `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
 | `/api/auth/register` | POST | Create the owner only when the database contains zero users |
 | `/api/playbooks` | GET / POST | List playbooks or publish a new strategy |
+| `/api/playbooks/evidence` | POST | Upload reusable visual evidence for a draft playbook stage |
 | `/api/playbooks/:playbookId` | PUT | Publish a new immutable version |
 | `/api/playbooks/:playbookId` | PATCH | Archive or restore a strategy |
 | `/api/coach` | GET | Behavioral, version, and rule-answer analytics |

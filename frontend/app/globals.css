@@ -1113,11 +1113,39 @@ tbody td.text {
   color: var(--text-primary);
 }
 .playbook-add-stage button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.playbook-evidence-editor {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+.playbook-evidence-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.playbook-evidence-heading > div { display: grid; gap: 2px; }
+.playbook-evidence-heading strong { color: var(--text-primary); font-size: 12px; }
+.playbook-evidence-heading span { color: var(--text-muted); font-size: 10.5px; }
+.playbook-evidence-upload { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer; white-space: nowrap; }
+.playbook-evidence-upload input { display: none; }
+.playbook-evidence-upload.disabled { opacity: .6; pointer-events: none; }
+.playbook-evidence-empty { padding: 18px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-muted); font-size: 11px; text-align: center; }
+.playbook-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.playbook-evidence-card { position: relative; display: grid; grid-template-columns: minmax(150px, .7fr) minmax(180px, 1fr); gap: 9px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-surface); }
+.playbook-evidence-card > img { width: 100%; height: 150px; object-fit: cover; border: 1px solid var(--border); border-radius: 7px; background: #0f1629; }
+.playbook-evidence-card-fields { display: grid; gap: 6px; }
+.playbook-evidence-card-fields select,
+.playbook-evidence-card-fields textarea { width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px; background: var(--bg-elevated); color: var(--text-primary); font: inherit; font-size: 10.5px; }
+.playbook-evidence-card-fields textarea { resize: vertical; }
+.playbook-evidence-actions { position: absolute; top: 13px; left: 13px; display: flex; gap: 4px; }
+.playbook-evidence-actions button { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: rgba(255,255,255,.94); color: var(--text-secondary); cursor: pointer; }
+.playbook-evidence-actions button:disabled { opacity: .45; cursor: not-allowed; }
 @media (max-width: 1100px) {
   .playbook-layout { grid-template-columns: 1fr; }
   .playbook-layout aside { position: static !important; }
   .playbook-rule-row { grid-template-columns: minmax(220px, 1fr) 150px; }
   .playbook-add-stage { grid-template-columns: 1fr 1fr; }
+  .playbook-evidence-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 620px) {
   .playbook-header-grid,
@@ -1126,6 +1154,8 @@ tbody td.text {
   .playbook-field-details-grid { grid-template-columns: 1fr; }
   .playbook-field-details-grid > label { grid-column: auto !important; }
   .playbook-add-stage { grid-template-columns: 1fr; }
+  .playbook-evidence-heading { align-items: stretch; flex-direction: column; }
+  .playbook-evidence-card { grid-template-columns: 1fr; }
 }
 
 /* ══════════════════════════════

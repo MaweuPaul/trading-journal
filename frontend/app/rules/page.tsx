@@ -6,7 +6,7 @@ import { Archive, Check, ChevronRight, CopyPlus, FileClock, Plus, Save, ShieldCh
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'rating' | 'text';
-type BlockCategory = 'setup' | 'context' | 'entry' | 'risk' | 'execution' | 'custom';
+type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
 
 interface PlaybookRule {
   ruleId: string;
@@ -60,12 +60,25 @@ const INPUT_LABELS: Record<InputType, string> = {
   text: 'Text',
 };
 
+const BLOCK_CATEGORIES: Array<{ value: BlockCategory; label: string; description: string }> = [
+  { value: 'concept', label: '1. Strategy concept', description: 'The thesis, markets, sessions, and conditions behind the edge.' },
+  { value: 'context', label: '2. Market context', description: 'Bias, regime, liquidity, key levels, and higher-timeframe evidence.' },
+  { value: 'setup', label: '3. Setup & location', description: 'Where the opportunity must form and what makes the location valid.' },
+  { value: 'entry', label: '4. Entry confirmation', description: 'The precise trigger that authorizes the trade.' },
+  { value: 'risk', label: '5. Risk plan', description: 'Position sizing, stop placement, targets, and risk limits.' },
+  { value: 'execution', label: '6. Execution', description: 'How the order must be placed and verified.' },
+  { value: 'management', label: '7. Trade management', description: 'Break-even, partials, trailing, and intervention rules.' },
+  { value: 'exit', label: '8. Exit', description: 'Valid reasons and conditions for terminating the trade.' },
+  { value: 'review', label: '9. Post-trade review', description: 'Outcome, execution quality, lessons, and revision evidence.' },
+  { value: 'custom', label: 'Custom stage', description: 'A user-defined stage outside the standard lifecycle.' },
+];
+
 function uid(prefix: string) {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`;
 }
 
 function blankBlock(): PlaybookBlock {
-  return { blockId: uid('block'), name: 'New block', category: 'custom', rules: [] };
+  return { blockId: uid('block'), name: 'New stage', category: 'custom', rules: [] };
 }
 
 function latest(playbook: Playbook) {
@@ -73,7 +86,11 @@ function latest(playbook: Playbook) {
 }
 
 function cloneBlocks(blocks: PlaybookBlock[]) {
-  return JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[];
+  const legacyCategories: Record<string, BlockCategory> = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
+  return (JSON.parse(JSON.stringify(blocks)) as PlaybookBlock[]).map(block => ({
+    ...block,
+    category: legacyCategories[block.category] || block.category || 'custom',
+  }));
 }
 
 function ChoiceOptionsInput({
@@ -334,9 +351,10 @@ export default function PlaybooksPage() {
                 <section key={block.blockId} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
                   <div className="playbook-block-header">
                     <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
-                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Category<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{(['setup', 'context', 'entry', 'risk', 'execution', 'custom'] as BlockCategory[]).map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></label>
+                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
                     <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
                   </div>
+                  <p style={{ margin: '-5px 0 12px', color: 'var(--text-muted)', fontSize: 11 }}>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.description || BLOCK_CATEGORIES[BLOCK_CATEGORIES.length - 1].description}</p>
 
                   <div style={{ display: 'grid', gap: 9 }}>
                     {block.rules.map((rule, ruleIndex) => (

@@ -48,12 +48,13 @@ Existing flat trading rules are migrated into a starter playbook automatically.
 The trade journal is derived from the selected published playbook rather than from a fixed form:
 
 1. Each playbook stage contains rules with answer configuration, help text, validation, and instructional examples.
-2. Newly added rules require at least one instructional image by default. The rule's **Field guidance and validation** panel contains a toggle to make images optional and controls for the minimum and maximum image count.
-3. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
-4. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version.
-5. The first save permanently attaches the complete snapshot to the trade.
-6. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
-7. Publishing a newer playbook version affects only trades that attach that newer version.
+2. The rule editor exposes five primitive answer types: Yes/No, Number, Text, Single choice, and Multiple choice. Percentage, Currency, Price, Duration, R:R, and Rating are Number formats; Long explanation, Date, and Time are Text formats.
+3. Newly added rules require at least one instructional image by default. The rule's **Field guidance and validation** panel contains a toggle to make images optional and controls for the minimum and maximum image count.
+4. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
+5. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version.
+6. The first save permanently attaches the complete snapshot to the trade.
+7. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
+8. Publishing a newer playbook version affects only trades that attach that newer version.
 
 This creates a reliable audit chain: the rule teaches what to look for, its images demonstrate the condition, the trade records whether it happened, and Edge Coach compares that answer with the outcome.
 

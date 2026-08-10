@@ -188,6 +188,12 @@ export default function PlaybooksPage() {
     if (blocks.some(block => !block.name.trim() || block.rules.some(rule => !rule.label.trim()))) {
       setError('Every block and rule needs a name.'); return;
     }
+    if (!changeNote.trim()) {
+      setError('Explain what changed in this version before publishing.'); return;
+    }
+    if (changeNote.trim().length < 20) {
+      setError('The version change note must contain at least 20 characters. Include what changed and why.'); return;
+    }
     const token = localStorage.getItem('token');
     if (!token) return;
     setSaving(true); setError('');
@@ -297,8 +303,26 @@ export default function PlaybooksPage() {
               <button onClick={() => { setBlocks(current => [...current, blankBlock()]); markDirty(); }} style={{ minHeight: 48, border: '1px dashed var(--accent)', borderRadius: 12, background: 'transparent', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}><CopyPlus size={16} style={{ verticalAlign: 'middle', marginRight: 7 }} />Add playbook block</button>
 
               <section style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
-                <label style={{ display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 12 }}><span>What changed in this version?<InfoHint text="This note creates an audit trail explaining why the strategy changed, making before-and-after performance easier to interpret." /></span><input value={changeNote} onChange={e => { setChangeNote(e.target.value); markDirty(); }} placeholder="e.g. Added Order Block location requirement" style={{ minHeight: 44, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} /></label>
-                <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 11 }}>Publishing never overwrites old versions. Trades already using a version keep their exact snapshot.</p>
+                <label style={{ display: 'grid', gap: 7, color: 'var(--text-muted)', fontSize: 12 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    What changed in this version? <strong style={{ color: 'var(--red)', marginLeft: 4 }}>*</strong>
+                    <InfoHint text="Required audit note. Describe exactly what was added, removed, or adjusted; why you made the change; and what improvement you expect. This lets Edge Coach compare performance before and after the change." />
+                  </span>
+                  <textarea
+                    value={changeNote}
+                    onChange={e => { setChangeNote(e.target.value); markDirty(); }}
+                    required
+                    minLength={20}
+                    rows={5}
+                    aria-describedby="change-note-guidance change-note-count"
+                    placeholder={'Example:\nChanged: Added an Order Block tap requirement before an FVG entry.\nReason: FVG-only entries produced too many low-quality trades.\nExpected result: Fewer trades with a higher win rate and better average R.'}
+                    style={{ width: '100%', minHeight: 128, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 8, padding: '11px 12px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', font: 'inherit', lineHeight: 1.5 }}
+                  />
+                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 7, color: 'var(--text-muted)', fontSize: 11 }}>
+                  <span id="change-note-guidance">Include: what changed, why it changed, and the expected improvement. Publishing creates a permanent snapshot.</span>
+                  <span id="change-note-count" style={{ whiteSpace: 'nowrap', color: changeNote.trim().length > 0 && changeNote.trim().length < 20 ? 'var(--red)' : 'var(--text-muted)' }}>{changeNote.trim().length}/20 minimum</span>
+                </div>
               </section>
             </div>
           </div>

@@ -462,6 +462,7 @@ def process_replay_requests(wait_seconds=0):
         "15min": mt5.TIMEFRAME_M15,
         "1h": mt5.TIMEFRAME_H1,
         "4h": mt5.TIMEFRAME_H4,
+        "1day": mt5.TIMEFRAME_D1,
     }
     account = mt5.account_info()
     server = getattr(account, "server", "") if account else ""
@@ -496,7 +497,7 @@ def process_replay_requests(wait_seconds=0):
             try:
                 requests.post(
                     f"{API_BASE}/trades/{trade_id}/replay-failed",
-                    json={"error": str(exc)}, headers=headers, timeout=API_TIMEOUT,
+                    json={"error": str(exc), "interval": interval}, headers=headers, timeout=API_TIMEOUT,
                 )
             except requests.RequestException:
                 pass

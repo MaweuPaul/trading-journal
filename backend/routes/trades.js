@@ -128,8 +128,23 @@ function selectReplayInterval(durationMinutes) {
   return              { interval: '4h',    paddingMs: 2   * 24 * 60 * 60 * 1000 };
 }
 
-function replayWindow(trade) {
-  const { interval, paddingMs } = selectReplayInterval(trade.durationMinutes);
+const REPLAY_TIMEFRAMES = {
+  '1min': 30 * 60 * 1000,
+  '5min': 2 * 60 * 60 * 1000,
+  '15min': 6 * 60 * 60 * 1000,
+  '1h': 24 * 60 * 60 * 1000,
+  '4h': 4 * 24 * 60 * 60 * 1000,
+  '1day': 14 * 24 * 60 * 60 * 1000,
+};
+
+function requestedReplayInterval(value, durationMinutes) {
+  const requested = String(value || '');
+  return Object.hasOwn(REPLAY_TIMEFRAMES, requested) ? requested : selectReplayInterval(durationMinutes).interval;
+}
+
+function replayWindow(trade, requestedInterval) {
+  const interval = requestedReplayInterval(requestedInterval, trade.durationMinutes);
+  const paddingMs = REPLAY_TIMEFRAMES[interval];
   const openMs = new Date(trade.openTime).getTime();
   const closeMs = new Date(trade.closeTime).getTime();
   return {
@@ -145,10 +160,14 @@ function buildReplayResult(trade, candleData) {
   const candles = candleData.candles || [];
   const entryTs = Math.floor(new Date(trade.openTime).getTime() / 1000);
   const exitTs = Math.floor(new Date(trade.closeTime).getTime() / 1000);
-  let entryIndex = candles.findIndex(c => c.time >= entryTs);
-  let exitIndex = candles.findIndex(c => c.time >= exitTs);
-  if (entryIndex < 0) entryIndex = 0;
-  if (exitIndex < 0) exitIndex = Math.max(0, candles.length - 1);
+  const candleAt = timestamp => {
+    const next = candles.findIndex(c => c.time >= timestamp);
+    if (next < 0) return Math.max(0, candles.length - 1);
+    if (candles[next].time === timestamp || next === 0) return next;
+    return next - 1;
+  };
+  const entryIndex = candleAt(entryTs);
+  const exitIndex = candleAt(exitTs);
   return {
     ...candleData,
     entryPrice: trade.entryPrice, exitPrice: trade.exitPrice,
@@ -1699,7 +1718,7 @@ router.get('/replay-requests', auth, async (req, res) => {
       if (queued.status !== 'pending' && !stale) continue;
       queued.status = 'processing'; queued.updatedAt = now;
       queued.claimCount = (queued.claimCount || 0) + 1;
-      requests.push({ tradeId, ...queued.request });
+      requests.push({ tradeId: queued.tradeId || tradeId, ...queued.request });
       if (requests.length === 5) break;
     }
     res.json({ requests, debug: { backendInstance: REPLAY_INSTANCE_ID, polledAt: new Date(now).toISOString() } });
@@ -1725,6 +1744,8 @@ router.post('/trades/:id/replay-candles', auth, async (req, res) => {
       brokerSymbol: String(req.body.brokerSymbol || '').slice(0, 40),
       interval: String(req.body.interval || '1min').slice(0, 10), candles, cachedAt: new Date().toISOString(),
     };
+    const interval = requestedReplayInterval(candleData.interval, 0);
+    candleData.interval = interval;
     let trade;
     if (mongoose.connection.readyState === 1) {
       trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
@@ -1736,15 +1757,16 @@ router.post('/trades/:id/replay-candles', auth, async (req, res) => {
     if (candleData.brokerSymbol !== trade.symbol) return res.status(400).json({ error: 'Replay symbol does not match the trade broker symbol.' });
     if (mongoose.connection.readyState === 1) {
       const session = await ReplaySession.findOneAndUpdate(
-        { user: req.user.userId, tradeId: req.params.id },
+        { user: req.user.userId, tradeId: req.params.id, interval },
         { $set: { status: 'ready', result: candleData, error: '', expiresAt: new Date(Date.now() + REPLAY_CACHE_TTL_MS) } },
         { new: true }
       );
       if (!session) return res.status(404).json({ error: 'Replay request expired before MT5 returned its candles.' });
       return res.json({ ok: true, candles: candles.length, transport: 'mongodb-ttl' });
     }
-    replayCache.set(String(req.params.id), { ts: Date.now(), data: buildReplayResult(trade, candleData) });
-    replayRequests.delete(String(req.params.id));
+    const transientKey = `${req.params.id}:${interval}`;
+    replayCache.set(transientKey, { ts: Date.now(), data: buildReplayResult(trade, candleData) });
+    replayRequests.delete(transientKey);
     res.json({ ok: true, candles: candles.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1754,16 +1776,17 @@ router.post('/trades/:id/replay-candles', auth, async (req, res) => {
 router.post('/trades/:id/replay-failed', auth, async (req, res) => {
   try {
     const error = String(req.body.error || 'MT5 could not return replay candles.').slice(0, 500);
+    const interval = requestedReplayInterval(req.body.interval, 0);
     if (mongoose.connection.readyState === 1) {
       const session = await ReplaySession.findOneAndUpdate(
-        { user: req.user.userId, tradeId: req.params.id },
+        { user: req.user.userId, tradeId: req.params.id, interval },
         { $set: { status: 'failed', error, expiresAt: new Date(Date.now() + 5 * 60 * 1000) } },
         { new: true }
       );
       if (!session) return res.status(404).json({ error: 'Replay request not found' });
       return res.json({ ok: true });
     }
-    const queued = replayRequests.get(String(req.params.id));
+    const queued = replayRequests.get(`${req.params.id}:${interval}`);
     if (!queued || queued.userId !== String(req.user.userId)) return res.status(404).json({ error: 'Replay request not found' });
     queued.status = 'failed'; queued.updatedAt = Date.now(); queued.error = error;
     res.json({ ok: true });
@@ -1785,26 +1808,28 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
       );
     }
     if (!trade) return res.status(404).json({ error: 'Trade not found' });
+    const selectedInterval = requestedReplayInterval(req.query.interval, trade.durationMinutes);
 
-    const cacheKey = String(req.params.id);
+    const cacheKey = `${req.params.id}:${selectedInterval}`;
     const cached = replayCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS && Array.isArray(cached.data?.candles)) return res.json(cached.data);
     if (cached) replayCache.delete(cacheKey);
 
     if (mongoose.connection.readyState === 1 && req.query.fallback !== 'twelve') {
-      let session = await ReplaySession.findOne({ user: req.user.userId, tradeId: req.params.id, expiresAt: { $gt: new Date() } }).lean();
+      let session = await ReplaySession.findOne({ user: req.user.userId, tradeId: req.params.id, interval: selectedInterval, expiresAt: { $gt: new Date() } }).lean();
       if (session?.status === 'ready' && Array.isArray(session.result?.candles)) {
         return res.json(buildReplayResult(trade, session.result));
       }
       const retryFailed = session?.status === 'failed' && Date.now() - new Date(session.updatedAt).getTime() > 5000;
       if (!session || retryFailed) {
-        const window = replayWindow(trade);
+        const window = replayWindow(trade, selectedInterval);
         session = await ReplaySession.findOneAndUpdate(
-          { user: req.user.userId, tradeId: req.params.id },
+          { user: req.user.userId, tradeId: req.params.id, interval: selectedInterval },
           {
             $set: {
               status: 'pending', error: '', result: null, claimCount: 0, claimedAt: null,
               request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
+              interval: selectedInterval,
               expiresAt: new Date(Date.now() + REPLAY_CACHE_TTL_MS),
             },
           },
@@ -1831,9 +1856,9 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
     if (req.query.fallback !== 'twelve') {
       const existing = replayRequests.get(cacheKey);
       if (!existing || existing.userId !== String(req.user.userId) || (existing.status === 'failed' && Date.now() - existing.updatedAt > 5000)) {
-        const window = replayWindow(trade);
+        const window = replayWindow(trade, selectedInterval);
         replayRequests.set(cacheKey, {
-          userId: String(req.user.userId), status: 'pending', createdAt: Date.now(), updatedAt: Date.now(), error: '', claimCount: 0,
+          userId: String(req.user.userId), tradeId: String(req.params.id), status: 'pending', createdAt: Date.now(), updatedAt: Date.now(), error: '', claimCount: 0,
           request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
         });
       }
@@ -1861,7 +1886,8 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
 
     // ── Build Twelve Data request ───────────────────────────────────────────
     const normalizedSymbol = normalizeSymbolForReplay(trade.symbol);
-    const { interval, paddingMs } = selectReplayInterval(trade.durationMinutes);
+    const interval = selectedInterval;
+    const paddingMs = REPLAY_TIMEFRAMES[interval];
 
     const openMs  = new Date(trade.openTime).getTime();
     const closeMs = new Date(trade.closeTime).getTime();
@@ -1919,10 +1945,14 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
     // ── Locate entry/exit candle indices ────────────────────────────────────
     const entryTs = Math.floor(openMs  / 1000);
     const exitTs  = Math.floor(closeMs / 1000);
-    let entryIndex = candles.findIndex(c => c.time >= entryTs);
-    let exitIndex  = candles.findIndex(c => c.time >= exitTs);
-    if (entryIndex < 0) entryIndex = 0;
-    if (exitIndex  < 0) exitIndex  = candles.length - 1;
+    const candleAt = timestamp => {
+      const next = candles.findIndex(c => c.time >= timestamp);
+      if (next < 0) return candles.length - 1;
+      if (candles[next].time === timestamp || next === 0) return next;
+      return next - 1;
+    };
+    const entryIndex = candleAt(entryTs);
+    const exitIndex = candleAt(exitTs);
 
     const result = {
       candles,

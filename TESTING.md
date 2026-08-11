@@ -568,16 +568,18 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 2. Confirm `sync.py` logs its long-poll connection and `[REPLAY] Uploaded ... candles` within a few seconds of clicking Replay.
 3. Confirm the source label identifies MT5 and the broker server, and that it uses the exact broker symbol.
 4. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
-5. Close and reopen Replay within 30 minutes. Confirm it loads immediately from the MongoDB TTL session and that exported trade data contains no replay candles.
-6. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
-7. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
-8. Confirm entry and exit markers appear only after their corresponding candles are revealed.
-9. Enable **Zone**, draw rectangles, resize the browser, and confirm the zones remain aligned with candle time and price.
-10. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
-11. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-12. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-13. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-14. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+5. Switch through `1m`, `5m`, `15m`, `1H`, `4H`, and `1D`; confirm each control loads its labelled MT5 interval and keeps entry/exit markers on the candle containing the trade timestamp.
+6. Return to a previously loaded timeframe and confirm its TTL session loads immediately without overwriting the other intervals.
+7. Close and reopen Replay within 30 minutes. Confirm it loads immediately from the MongoDB TTL session and that exported trade data contains no replay candles.
+8. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
+9. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
+10. Confirm entry and exit markers appear only after their corresponding candles are revealed.
+11. Enable **Zone**, draw rectangles, resize the browser, and confirm the zones remain aligned with candle time and price.
+12. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
+13. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+14. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+15. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+16. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 

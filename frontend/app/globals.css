@@ -2520,6 +2520,16 @@ body:has(.login-container) .main-content {
   font-family: var(--font-sans);
   animation: replayFadeIn 0.18s ease;
 }
+body.replay-open .sidebar,
+body.replay-open .topbar,
+body.replay-open .mobile-drawer,
+body.replay-open .nav-drawer-overlay { display: none !important; }
+body.replay-open .main-content {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+}
 @keyframes replayFadeIn {
   from { opacity: 0; transform: scale(0.99); }
   to   { opacity: 1; transform: scale(1); }

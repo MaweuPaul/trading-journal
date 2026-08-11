@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeReplayAnnotations, normalizeReplayEvents } = require('../lib/replayAnnotations');
+const { normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview } = require('../lib/replayAnnotations');
 
 test('normalizes valid text, line, and zone annotations', () => {
   const annotations = normalizeReplayAnnotations('15min', [
@@ -37,4 +37,13 @@ test('rejects invalid Replay timeline events', () => {
   assert.throws(() => normalizeReplayEvents([{ eventId: 'event-1', timeframe: '2h', candleTime: 1, price: 1, eventType: 'mistake', title: 'Bad timeframe' }]), /unsupported timeframe/);
   assert.throws(() => normalizeReplayEvents([{ eventId: 'event-1', timeframe: '5min', candleTime: 1, price: 1, eventType: 'unknown', title: 'Bad type' }]), /unsupported type/);
   assert.throws(() => normalizeReplayEvents([{ eventId: 'event-1', timeframe: '5min', candleTime: 1, price: 1, eventType: 'lesson', title: '' }]), /needs a title/);
+});
+
+test('supports Quick Review drafts and validates completion', () => {
+  const draft = normalizeQuickReview({ followedPlan: false, primaryEmotion: 'FOMO' });
+  assert.equal(draft.completedAt, null);
+  assert.throws(() => normalizeQuickReview({ followedPlan: false, processGrade: 'C', lesson: 'Wait', completedAt: new Date().toISOString() }), /main mistake/);
+  const complete = normalizeQuickReview({ followedPlan: true, primaryStrength: 'Waited for confirmation', lesson: 'Repeat the process', processGrade: 'A', completedAt: new Date().toISOString() });
+  assert.equal(complete.processGrade, 'A');
+  assert.ok(complete.completedAt);
 });

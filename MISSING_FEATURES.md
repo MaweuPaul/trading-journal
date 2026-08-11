@@ -19,6 +19,7 @@ The journal already includes:
 - Stats for symbols, sessions, weekdays, tags, emotions, grades, and global checklist compliance
 - Full-screen Replay with MT5 requests, Twelve Data fallback, multiple timeframes, playback controls, drawing tools, and an integrated playbook journal
 - Candle-linked Replay events for observations, decisions, emotions, mistakes, violations, lessons, and custom trade moments
+- A default five-question Quick Review with conditional mistake/strength prompts and optional Deep Playbook mode
 - URL-persisted Trades filters, pagination, selected trade, Replay trade, timeframe, and journal phase
 - JSON backups and CSV export
 

@@ -583,11 +583,15 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 17. Add Confirmation, Management, Mistake, Lesson, and Custom events at different candles. Confirm the timeline orders them by candle time and displays its save state.
 18. Click a timeline event and confirm Replay reveals and centers its candle. Add an event on another timeframe, return to the first timeframe, click that event after switching back through its timeline, and confirm navigation loads the correct timeframe.
 19. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
-20. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
-21. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-22. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-23. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-24. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+20. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
+21. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
+22. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
+23. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
+24. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
+25. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+26. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+27. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+28. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 
@@ -596,6 +600,7 @@ Expected results:
 - The modal works at desktop and phone widths, locks background scrolling, supports Escape to close, and exposes visible keyboard focus.
 - Chart annotations persist through an ownership-scoped Replay Journal endpoint. Invalid types, timeframes, duplicate IDs, empty text, and invalid chart coordinates are rejected by the backend.
 - Timeline events persist in the same Replay Journal, but rule links are accepted only when they belong to the immutable playbook snapshot attached to that trade.
+- Quick Review accepts incomplete drafts but requires plan adherence, the appropriate mistake/strength answer, one lesson, and a valid process grade before completion.
 
 ## Legacy migration test
 

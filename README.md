@@ -216,6 +216,7 @@ requirements.txt
 | `/api/trades/:id/replay-journal` | GET | Load saved chart annotations for one trade and timeframe |
 | `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave text, line, and zone annotations for one timeframe |
 | `/api/trades/:id/replay-journal/events` | PUT | Validate and autosave the candle-linked trade-event timeline |
+| `/api/trades/:id/replay-journal/quick-review` | PUT | Autosave or complete the short process-focused review |
 | `/api/replay-requests` | GET | Let the authenticated local sync agent claim pending replay requests |
 | `/api/trades/:id/replay-candles` | POST | Validate and temporarily cache broker OHLC candles returned by `sync.py` |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
@@ -260,6 +261,8 @@ Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` vie
 The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Chart annotations include rectangle zones, line drawings, and colored text labels. They are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups. Replay shows their save state and provides undo, individual deletion, and protected clear-all controls.
 
 Replay's **Event** tool attaches observations, confirmations, entry/management/exit decisions, emotions, mistakes, rule violations, lessons, or custom events to exact candle time and price. Events can carry importance, notes, emotion, and a rule from the trade's immutable playbook snapshot. The journal timeline autosaves, orders events chronologically, renders chart markers as playback reveals them, and navigates back to an event even when it belongs to another timeframe.
+
+The journal panel opens in **Quick Review** so an ordinary trade can be reviewed in five short answers: plan adherence, primary emotion, the main mistake or repeatable strength, one lesson, and a process grade. Drafts autosave. **Mark Complete & Save** validates the review and mirrors its emotion and grade onto the trade for existing Stats and Edge Coach reports. **Deep Playbook** keeps the full immutable strategy review available when more evidence is warranted.
 
 ### `backend/.env`
 

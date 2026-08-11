@@ -66,4 +66,32 @@ function normalizeReplayEvents(input) {
   });
 }
 
-module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents };
+function normalizeQuickReview(input) {
+  const review = input && typeof input === 'object' ? input : {};
+  const followedPlan = typeof review.followedPlan === 'boolean' ? review.followedPlan : null;
+  const processGrade = ['A', 'B', 'C', 'D', 'F'].includes(String(review.processGrade || '')) ? String(review.processGrade) : '';
+  let completedAt = null;
+  if (review.completedAt) {
+    const parsed = new Date(review.completedAt);
+    if (Number.isNaN(parsed.getTime())) throw new Error('Quick Review completion time is invalid');
+    completedAt = parsed.toISOString();
+  }
+  const normalized = {
+    followedPlan,
+    primaryEmotion: String(review.primaryEmotion || '').trim().slice(0, 40),
+    primaryMistake: String(review.primaryMistake || '').trim().slice(0, 100),
+    primaryStrength: String(review.primaryStrength || '').trim().slice(0, 100),
+    lesson: String(review.lesson || '').trim().slice(0, 500),
+    processGrade,
+    completedAt,
+    updatedAt: new Date().toISOString(),
+  };
+  if (completedAt && followedPlan === null) throw new Error('Choose whether the trade followed the plan before completing Quick Review');
+  if (completedAt && !processGrade) throw new Error('Choose a process grade before completing Quick Review');
+  if (completedAt && !normalized.lesson) throw new Error('Write the main lesson before completing Quick Review');
+  if (completedAt && followedPlan === false && !normalized.primaryMistake) throw new Error('Record the main mistake when the plan was not followed');
+  if (completedAt && followedPlan === true && !normalized.primaryStrength) throw new Error('Record what should be repeated when the plan was followed');
+  return normalized;
+}
+
+module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview };

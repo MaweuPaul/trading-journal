@@ -233,9 +233,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.body.classList.add('replay-open');
     closeButtonRef.current?.focus();
     window.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', onKey); };
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.classList.remove('replay-open');
+      window.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
 
   const totalCandles = replayData?.candles.length ?? 1;

@@ -254,6 +254,8 @@ The shared TTL session works across cloud instances and expires after 30 minutes
 
 Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views. Switching timeframe requests only that broker interval, preserves the trade entry/exit timestamps, and leaves other timeframe sessions available until their TTL expires. The session identity is `user + trade + timeframe`, so multiple views never overwrite one another.
 
+The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Chart annotations include rectangle zones, line drawings, colored text labels, and a clear-all action; annotations are temporary and reset when the timeframe changes.
+
 ### `backend/.env`
 
 | Variable | Description |

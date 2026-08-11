@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   X, Play, Pause, SkipBack, SkipForward,
-  Square, Loader2, AlertTriangle, ExternalLink,
+  Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
   BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
@@ -34,6 +34,8 @@ interface ReplayDebug {
 }
 interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; debug?: ReplayDebug; }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
+interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
+interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
   entryPrice: number; exitPrice: number; openTime: string; closeTime: string;
@@ -106,9 +108,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [drawingTool, setDrawingTool] = useState<'none' | 'rect'>('none');
+  const [drawingTool, setDrawingTool] = useState<'none' | 'rect' | 'line' | 'text'>('none');
   const [rectColor, setRectColor] = useState(RECT_COLORS[0]);
   const [drawnRects, setDrawnRects] = useState<DrawnRect[]>([]);
+  const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
+  const [drawnTexts, setDrawnTexts] = useState<DrawnText[]>([]);
+  const [annotationText, setAnnotationText] = useState('');
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -164,9 +169,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     if (!token) return;
     const controller = new AbortController();
     const poll = async () => {
-      for (let attempt = 0; attempt < 25 && !controller.signal.aborted; attempt += 1) {
+      for (let attempt = 0; attempt < 8 && !controller.signal.aborted; attempt += 1) {
         try {
-          const response = await fetch(`${API}/trades/${tradeId}/replay?interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+          const response = await fetch(`${API}/trades/${tradeId}/replay?interval=${selectedInterval}&wait=8`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
           const data = await response.json() as ReplayData & ReplayPending;
           if (response.status === 202 || data.pending === true) {
             setReplayDebug(data.debug || null);
@@ -176,7 +181,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
               return;
             }
             setWaitingForMt5(true); setLoading(true);
-            await new Promise(resolve => setTimeout(resolve, 2500));
+            await new Promise(resolve => setTimeout(resolve, 200));
             continue;
           }
           if (!response.ok) { setError(data.error || 'Failed to load replay data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
@@ -277,29 +282,57 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
       ctx.beginPath(); ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1));
       ctx.fill(); ctx.stroke(); ctx.restore();
     }
+    for (const line of drawnLines) {
+      const x1 = chart.timeScale().timeToCoordinate(line.time1 as UTCTimestamp);
+      const x2 = chart.timeScale().timeToCoordinate(line.time2 as UTCTimestamp);
+      const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
+      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+      ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+    }
+    for (const note of drawnTexts) {
+      const x = chart.timeScale().timeToCoordinate(note.time as UTCTimestamp);
+      const y = series.priceToCoordinate(note.price);
+      if (x == null || y == null) continue;
+      ctx.save(); ctx.font = '600 12px sans-serif';
+      const width = ctx.measureText(note.text).width;
+      ctx.fillStyle = '#0a0d14dd'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
+      ctx.strokeStyle = note.color; ctx.strokeRect(x - 5, y - 17, width + 10, 23);
+      ctx.fillStyle = note.color; ctx.fillText(note.text, x, y); ctx.restore();
+    }
     if (currentPreview.current) {
       const { x1, y1, x2, y2 } = currentPreview.current;
       ctx.save(); ctx.strokeStyle = rectColor; ctx.fillStyle = rectColor + '18'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
-      ctx.beginPath(); ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1));
-      ctx.fill(); ctx.stroke(); ctx.restore();
+      ctx.beginPath();
+      if (drawingTool === 'line') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+      else { ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)); ctx.fill(); ctx.stroke(); }
+      ctx.restore();
     }
-  }, [drawnRects, rectColor]);
+  }, [drawingTool, drawnLines, drawnRects, drawnTexts, rectColor]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (drawingTool !== 'rect') return;
+    if (drawingTool === 'none') return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    if (drawingTool === 'text') {
+      const chart = chartRef.current, series = seriesRef.current;
+      const text = annotationText.trim();
+      if (!chart || !series || !text) return;
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
+      if (time != null && price != null) setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
+      return;
+    }
     drawStart.current = { x: e.clientX - r.left, y: e.clientY - r.top };
   };
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (drawingTool !== 'rect' || !drawStart.current) return;
+    if (!['rect', 'line'].includes(drawingTool) || !drawStart.current) return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
     redrawCanvas();
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (drawingTool !== 'rect' || !drawStart.current) return;
+    if (!['rect', 'line'].includes(drawingTool) || !drawStart.current) return;
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
     const r = canvas.getBoundingClientRect(); const x2 = e.clientX - r.left; const y2 = e.clientY - r.top;
@@ -309,7 +342,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
       const p1 = series.coordinateToPrice(drawStart.current.y);
       const p2 = series.coordinateToPrice(y2);
       if (t1 != null && t2 != null && p1 != null && p2 != null) {
-        setDrawnRects(prev => [...prev, { id: `rect-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor }]);
+        const shape = { id: `${drawingTool}-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor };
+        if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
+        else setDrawnRects(prev => [...prev, shape]);
       }
     }
     drawStart.current = null; currentPreview.current = null; redrawCanvas();
@@ -361,7 +396,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const setRuleAnswer = (ruleId: string, value: unknown) => setPlaybookResponses(current => ({ ...current, [ruleId]: value }));
   const switchTimeframe = (interval: string) => {
     if (interval === selectedInterval) return;
-    setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false); setDrawnRects([]);
+    setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
+    setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null;
     setSelectedInterval(interval);
   };
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
@@ -412,7 +448,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
           onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones">
           <Square size={13} /> Zone
         </button>
-        {drawingTool === 'rect' && (
+        <button className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`}
+          onClick={() => setDrawingTool(t => t === 'line' ? 'none' : 'line')} title="Draw a trend line">
+          <Minus size={13} /> Line
+        </button>
+        <button className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`}
+          onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart">
+          <TypeIcon size={13} /> Text
+        </button>
+        {drawingTool === 'text' && <input className="replay-annotation-input" aria-label="Chart annotation text" placeholder="Type label, then click chart" maxLength={80} value={annotationText} onChange={event => setAnnotationText(event.target.value)} />}
+        {drawingTool !== 'none' && (
           <div style={{ display: 'flex', gap: 4 }}>
             {RECT_COLORS.map(c => (
               <button key={c} onClick={() => setRectColor(c)}
@@ -421,10 +466,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
             ))}
           </div>
         )}
-        {drawnRects.length > 0 && (
+        {(drawnRects.length + drawnLines.length + drawnTexts.length) > 0 && (
           <button className="replay-tool-btn" style={{ color: '#ef4444' }}
-            onClick={() => { setDrawnRects([]); currentPreview.current = null; redrawCanvas(); }}>
-            Clear zones
+            onClick={() => { setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null; redrawCanvas(); }}>
+            Clear drawings
           </button>
         )}
         <button ref={closeButtonRef} className="replay-close-btn" onClick={onClose} title="Close (ESC)"><X size={14} /> Close</button>
@@ -434,7 +479,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
         <div className="replay-chart-wrap">
           <div ref={chartContainerRef} className="replay-chart-container" />
           <canvas ref={canvasRef}
-            className={`replay-canvas-overlay${drawingTool === 'rect' ? ' drawing-active' : ''}`}
+            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}`}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
             onMouseLeave={() => { if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
           {loading && (

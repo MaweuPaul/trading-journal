@@ -181,13 +181,13 @@ Create the owner through `/signup` if environment seeding was not enabled, then 
 1. Open `/rules` and create a strategy or add recommended lifecycle stages.
 2. Choose the primitive answer type—Yes/No, Number, Text, Single choice, or Multiple choice—then choose a Number/Text format when needed.
 3. Add instructional example images where they make the rule easier to understand. Images are optional by default.
-4. Enable **Require image confirmation** beside the example section only for rules where visual confirmation is mandatory, then configure the minimum and maximum image count under **Field guidance and validation**.
+4. Enable **Require image confirmation** beside the example section only for rules where every journal entry needs visual proof, then configure the minimum and maximum image count under **Field guidance and validation**.
 5. Add a caption explaining what the trader should notice and classify the example as Reference, Valid, or Invalid.
 6. Enter the required version-change explanation and publish.
 7. Use **Read playbook** to verify the resulting visual manual.
 8. Open a trade, select the published version, complete its generated Plan, Manage, and Review fields, and save.
 
-The first trade save creates an immutable audit snapshot. You can edit that journal's answers later, but you cannot replace its attached playbook or upgrade it to a newer version. New versions apply only to newly attached trades.
+The generated journal mirrors the selected version's rules. A required image-confirmation rule displays its playbook reference and a separate uploader for the trader's own chart; saving is blocked until the configured number of screenshots is attached to that rule. The first trade save creates an immutable audit snapshot. You can edit that journal's answers later, but you cannot replace its attached playbook or upgrade it to a newer version. New versions apply only to newly attached trades.
 
 ## 8. Configure MT5 synchronization
 

@@ -61,6 +61,8 @@ const tradeSchema = new mongoose.Schema({
     url:        { type: String, required: true },
     publicId:   { type: String, required: true },
     caption:    { type: String, default: '' },
+    playbookRuleId: { type: String, default: '' },
+    playbookVersionId: { type: String, default: '' },
     uploadedAt: { type: Date, default: Date.now },
   }],
   synced: { type: Date, default: Date.now },

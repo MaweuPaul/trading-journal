@@ -18,6 +18,7 @@ The journal already includes:
 - Edge Coach analysis for strategy versions, lifecycle-stage compliance, structured rule evidence, numeric fields, setup performance, exit reasons, and execution behavior
 - Stats for symbols, sessions, weekdays, tags, emotions, grades, and global checklist compliance
 - Full-screen Replay with MT5 requests, Twelve Data fallback, multiple timeframes, playback controls, drawing tools, and an integrated playbook journal
+- Candle-linked Replay events for observations, decisions, emotions, mistakes, violations, lessons, and custom trade moments
 - URL-persisted Trades filters, pagination, selected trade, Replay trade, timeframe, and journal phase
 - JSON backups and CSV export
 

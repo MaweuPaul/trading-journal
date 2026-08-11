@@ -129,12 +129,12 @@ function selectReplayInterval(durationMinutes) {
 }
 
 const REPLAY_TIMEFRAMES = {
-  '1min': 30 * 60 * 1000,
-  '5min': 2 * 60 * 60 * 1000,
-  '15min': 6 * 60 * 60 * 1000,
-  '1h': 24 * 60 * 60 * 1000,
-  '4h': 4 * 24 * 60 * 60 * 1000,
-  '1day': 14 * 24 * 60 * 60 * 1000,
+  '1min': 6 * 60 * 60 * 1000,
+  '5min': 36 * 60 * 60 * 1000,
+  '15min': 5 * 24 * 60 * 60 * 1000,
+  '1h': 21 * 24 * 60 * 60 * 1000,
+  '4h': 90 * 24 * 60 * 60 * 1000,
+  '1day': 540 * 24 * 60 * 60 * 1000,
 };
 
 function requestedReplayInterval(value, durationMinutes) {
@@ -1731,8 +1731,8 @@ router.get('/replay-requests', auth, async (req, res) => {
 router.post('/trades/:id/replay-candles', auth, async (req, res) => {
   try {
     const rawCandles = Array.isArray(req.body.candles) ? req.body.candles : [];
-    if (!rawCandles.length || rawCandles.length > 2000) {
-      return res.status(400).json({ error: 'Replay upload must contain between 1 and 2000 candles.' });
+    if (!rawCandles.length || rawCandles.length > 5000) {
+      return res.status(400).json({ error: 'Replay upload must contain between 1 and 5000 candles.' });
     }
     const candles = rawCandles.map(c => ({
       time: Number(c.time), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
@@ -1836,6 +1836,17 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
           { upsert: true, new: true, setDefaultsOnInsert: true }
         ).lean();
       }
+      const browserWaitMs = Math.min(10000, Math.max(0, Number(req.query.wait || 0) * 1000));
+      const browserDeadline = Date.now() + browserWaitMs;
+      while (browserWaitMs > 0 && ['pending', 'processing'].includes(session.status) && Date.now() < browserDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        session = await ReplaySession.findOne({ user: req.user.userId, tradeId: req.params.id, interval: selectedInterval, expiresAt: { $gt: new Date() } }).lean();
+        if (!session) break;
+        if (session.status === 'ready' && Array.isArray(session.result?.candles)) {
+          return res.json(buildReplayResult(trade, session.result));
+        }
+      }
+      if (!session) return res.status(410).json({ error: 'Replay request expired. Reopen Replay to request it again.' });
       const agent = await SyncRequest.findOne({ user: req.user.userId }).select('replayAgentLastSeen replayAgentInstance').lean();
       const lastAgentSeen = agent?.replayAgentLastSeen ? new Date(agent.replayAgentLastSeen).getTime() : null;
       return res.status(202).json({
@@ -1902,7 +1913,7 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
       `&end_date=${encodeURIComponent(endDate)}`,
       `&timezone=UTC`,
       `&format=JSON`,
-      `&outputsize=500`,
+      `&outputsize=1500`,
       `&apikey=${apiKey}`,
     ].join('');
 

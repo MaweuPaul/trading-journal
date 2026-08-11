@@ -2558,6 +2558,7 @@ body.replay-open .main-content {
 .replay-timeframes button { min-width: 36px; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: #7f8aa7; font: 700 10px var(--font-mono); cursor: pointer; transition: background .15s, color .15s; }
 .replay-timeframes button:hover { color: #c9d2e8; background: #182033; }
 .replay-timeframes button.active { color: white; background: #2563eb; box-shadow: 0 2px 8px #2563eb45; }
+.replay-annotation-input { width: 190px; min-height: 32px; box-sizing: border-box; padding: 5px 9px; border: 1px solid #3b82f6; border-radius: 8px; background: #0a0e14; color: #dbe4f7; font-size: 11px; }
 
 /* Main split */
 .replay-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -2760,6 +2761,7 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-topbar-meta { width: 100%; order: 3; }
   .replay-timeframes { order: 4; width: 100%; overflow-x: auto; }
   .replay-timeframes button { flex: 1; min-width: 44px; min-height: 40px; }
+  .replay-annotation-input { order: 5; width: 100%; min-height: 44px; }
   .replay-body { flex-direction: column; overflow-y: auto; }
   .replay-chart-wrap { flex: 0 0 48dvh; min-height: 300px; }
   .replay-journal-panel { flex: 0 0 auto; overflow: visible; border-left: 0; border-top: 1px solid #1a2035; }

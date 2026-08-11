@@ -52,6 +52,11 @@ const EMOTIONS = [
 ];
 const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
 const RECT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const REPLAY_TIMEFRAMES = [
+  { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
+  { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
+] as const;
+const defaultReplayTimeframe = (minutes: number) => minutes < 30 ? '1min' : minutes < 240 ? '5min' : minutes < 1440 ? '15min' : minutes < 10080 ? '1h' : '4h';
 const JOURNAL_PHASES = [
   { id: 'plan', label: 'Plan', categories: ['concept', 'context', 'setup', 'entry', 'risk', 'pre_trade'] },
   { id: 'manage', label: 'Execution', categories: ['execution', 'management', 'trade_management'] },
@@ -121,6 +126,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [confidenceRating, setConfidenceRating] = useState<number | null>(null);
   const [exitReason, setExitReason] = useState('');
   const [manuallyIntervened, setManuallyIntervened] = useState<boolean | null>(null);
+  const [selectedInterval, setSelectedInterval] = useState(() => defaultReplayTimeframe(tradeSummary.durationMinutes));
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -146,12 +152,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     if (!token) return;
     setLoading(true); setWaitingForMt5(false); setError(''); setIsSetupError(false);
     try {
-      const response = await fetch(`${API}/trades/${tradeId}/replay?fallback=twelve`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetch(`${API}/trades/${tradeId}/replay?fallback=twelve&interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json() as ReplayData & ReplayPending;
       if (!response.ok) { setError(data.error || 'Failed to load fallback chart data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
       applyReplay(data);
     } catch (e) { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); }
-  }, [applyReplay, tradeId]);
+  }, [applyReplay, selectedInterval, tradeId]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -160,7 +166,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     const poll = async () => {
       for (let attempt = 0; attempt < 25 && !controller.signal.aborted; attempt += 1) {
         try {
-          const response = await fetch(`${API}/trades/${tradeId}/replay`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+          const response = await fetch(`${API}/trades/${tradeId}/replay?interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
           const data = await response.json() as ReplayData & ReplayPending;
           if (response.status === 202 || data.pending === true) {
             setReplayDebug(data.debug || null);
@@ -185,7 +191,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     };
     poll();
     return () => controller.abort();
-  }, [applyReplay, tradeId]);
+  }, [applyReplay, selectedInterval, tradeId]);
 
   useEffect(() => {
     if (!replayData || !chartContainerRef.current) return;
@@ -353,6 +359,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
   }).length;
   const setRuleAnswer = (ruleId: string, value: unknown) => setPlaybookResponses(current => ({ ...current, [ruleId]: value }));
+  const switchTimeframe = (interval: string) => {
+    if (interval === selectedInterval) return;
+    setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false); setDrawnRects([]);
+    setSelectedInterval(interval);
+  };
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
     const value = playbookResponses[rule.ruleId];
     if (rule.inputType === 'boolean') return (
@@ -392,6 +403,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
           {tradeSummary.entryPrice.toFixed(5)} → {tradeSummary.exitPrice.toFixed(5)} · {fmtDur(tradeSummary.durationMinutes)} · {tradeSummary.lotSize.toFixed(2)} lots
         </span>
         <span className="replay-topbar-spacer" />
+        <div className="replay-timeframes" role="group" aria-label="Chart timeframe">
+          {REPLAY_TIMEFRAMES.map(timeframe => (
+            <button type="button" key={timeframe.value} aria-pressed={selectedInterval === timeframe.value} className={selectedInterval === timeframe.value ? 'active' : ''} onClick={() => switchTimeframe(timeframe.value)}>{timeframe.label}</button>
+          ))}
+        </div>
         <button className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`}
           onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones">
           <Square size={13} /> Zone

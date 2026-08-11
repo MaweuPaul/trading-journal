@@ -252,6 +252,8 @@ Keep `sync.py` and the logged-in MT5 desktop terminal running. `sync.py` holds a
 
 The shared TTL session works across cloud instances and expires after 30 minutes. Replay shows the provider and connection diagnostics. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version. Select **Use Twelve Data fallback** only when the terminal cannot supply the history.
 
+Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views. Switching timeframe requests only that broker interval, preserves the trade entry/exit timestamps, and leaves other timeframe sessions available until their TTL expires. The session identity is `user + trade + timeframe`, so multiple views never overwrite one another.
+
 ### `backend/.env`
 
 | Variable | Description |

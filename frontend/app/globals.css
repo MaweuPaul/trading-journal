@@ -2554,6 +2554,10 @@ body.replay-open .main-content {
 .replay-topbar-pnl.negative { background: #ef444418; color: #ef4444; border: 1px solid #ef444430; }
 .replay-topbar-meta { font-size: 11px; color: #8b95b0; }
 .replay-topbar-spacer { flex: 1; }
+.replay-timeframes { display: inline-flex; align-items: center; padding: 3px; border: 1px solid #25304a; border-radius: 9px; background: #090d13; }
+.replay-timeframes button { min-width: 36px; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: #7f8aa7; font: 700 10px var(--font-mono); cursor: pointer; transition: background .15s, color .15s; }
+.replay-timeframes button:hover { color: #c9d2e8; background: #182033; }
+.replay-timeframes button.active { color: white; background: #2563eb; box-shadow: 0 2px 8px #2563eb45; }
 
 /* Main split */
 .replay-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -2754,6 +2758,8 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-overlay { min-height: 100dvh; }
   .replay-topbar { padding: 8px 10px; }
   .replay-topbar-meta { width: 100%; order: 3; }
+  .replay-timeframes { order: 4; width: 100%; overflow-x: auto; }
+  .replay-timeframes button { flex: 1; min-width: 44px; min-height: 40px; }
   .replay-body { flex-direction: column; overflow-y: auto; }
   .replay-chart-wrap { flex: 0 0 48dvh; min-height: 300px; }
   .replay-journal-panel { flex: 0 0 auto; overflow: visible; border-left: 0; border-top: 1px solid #1a2035; }

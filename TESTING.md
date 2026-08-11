@@ -560,6 +560,28 @@ Expected results:
 - The backend repeats this validation and stores the rule ID and immutable playbook-version ID on the screenshot, including offline staging and Cloudinary metadata.
 - Editing a recorded journal permits answer corrections but does not offer a version selector or allow the backend snapshot to be replaced.
 
+## Trade replay acceptance test
+
+Configure `TWELVE_DATA_API_KEY` in `backend/.env`, restart the backend, and use a closed trade whose symbol is supported by Twelve Data.
+
+1. Open the trade drawer and select **Replay**.
+2. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
+3. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
+4. Confirm entry and exit markers appear only after their corresponding candles are revealed.
+5. Enable **Zone**, draw rectangles, resize the browser, and confirm the zones remain aligned with candle time and price.
+6. Update notes, emotion, grade, and tags, then select **Mark Complete & Save**.
+7. Reopen the trade and confirm those journal fields persisted.
+8. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+9. Remove the key temporarily and confirm Replay shows setup instructions. Restore the key, then test a rate-limited or unsupported symbol response.
+10. Test an Exness `USTEC` trade. Confirm it requests `NDX` and, when the Twelve Data subscription does not include indices, displays the provider's plan-coverage message rather than a generic HTTP 404.
+
+Expected results:
+
+- The Twelve Data key is used only by the backend proxy and never appears in browser requests.
+- Candle requests are normalized to UTC, time out after 15 seconds, and are cached for one hour per trade.
+- The modal works at desktop and phone widths, locks background scrolling, supports Escape to close, and exposes visible keyboard focus.
+- Rectangle zones are intentionally session-only in this phase; saved journal fields persist through the existing authenticated trade endpoint.
+
 ## Legacy migration test
 
 Use a backup containing playbooks created before the structured timeline update.

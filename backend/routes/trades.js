@@ -40,6 +40,11 @@ let inMemoryAccountEvents = [];
 let inMemoryUserRules = {};
 let inMemoryPlaybooks = {};
 const inMemorySyncRequests = {};
+
+// ── Trade Replay Cache (in-memory, 1-hour TTL) ─────────────────────────────
+// Keyed by trade _id. Avoids hammering Twelve Data on every re-open.
+const replayCache = new Map(); // { tradeId: { ts: number, data: object } }
+const REPLAY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
     inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
@@ -76,6 +81,46 @@ const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
 const PLAYBOOK_SCHEMA_VERSION = 3;
+
+// ── Trade Replay Helpers ───────────────────────────────────────────────────
+
+/**
+ * Convert an MT5 broker symbol name into the format Twelve Data expects.
+ * MT5 brokers often append 'm' (micro), 'n' (nano) or '.' suffix.
+ * Some brokers rename commodities: 'GOLD' instead of 'XAUUSD'.
+ */
+function normalizeSymbolForReplay(raw) {
+  const s = String(raw || '').toUpperCase().trim();
+  // Strip trailing lowercase modifiers: m, n, +, .
+  const clean = s.replace(/[mn+\.]+$/i, '');
+  const MAP = {
+    'GOLD':   'XAU/USD',  'XAUUSD':  'XAU/USD',
+    'SILVER': 'XAG/USD',  'XAGUSD':  'XAG/USD',
+    'USOIL':  'WTI/USD',  'UKOIL':   'BRENT/USD',
+    'BRENT':  'BRENT/USD','NATGAS':  'NATGAS/USD',
+    'BTCUSD': 'BTC/USD',  'ETHUSD':  'ETH/USD',
+    'XRPUSD': 'XRP/USD',  'BNBUSD':  'BNB/USD',
+    'NAS100': 'NDX',      'US30':    'DJI',
+    'SP500':  'SPX',      'UK100':   'FTSE100',
+    'GER40':  'DAX',      'GER30':   'DAX',
+    'FRA40':  'CAC40',    'JPN225':  'N225',
+    'AUS200': 'ASX200',
+  };
+  return MAP[clean] || clean;
+}
+
+/**
+ * Pick the best Twelve Data candle interval and chart padding window
+ * based on how long the trade was open.
+ */
+function selectReplayInterval(durationMinutes) {
+  const dm = Number(durationMinutes) || 0;
+  if (dm < 30)    return { interval: '1min',  paddingMs: 30  * 60       * 1000 };
+  if (dm < 240)   return { interval: '5min',  paddingMs: 2   * 60 * 60  * 1000 };
+  if (dm < 1440)  return { interval: '15min', paddingMs: 4   * 60 * 60  * 1000 };
+  if (dm < 10080) return { interval: '1h',    paddingMs: 12  * 60 * 60  * 1000 };
+  return              { interval: '4h',    paddingMs: 2   * 24 * 60 * 60 * 1000 };
+}
 
 function normalizePlaybookCategory(category) {
   const legacyMap = { pre_trade: 'setup', post_trade: 'review', trade_management: 'management' };
@@ -1562,6 +1607,132 @@ router.get('/trades', auth, async (req, res) => {
     res.json({ trades, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/trades/:id/replay  proxy Twelve Data OHLC candles for the trade replay chart
+router.get('/trades/:id/replay', auth, async (req, res) => {
+  try {
+    const apiKey = process.env.TWELVE_DATA_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: 'Trade replay is not configured. Add TWELVE_DATA_API_KEY to backend/.env and restart the server.',
+        setup: true,
+      });
+    }
+
+    // ── Find the trade ──────────────────────────────────────────────────────
+    let trade;
+    if (mongoose.connection.readyState === 1) {
+      trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
+        .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct notes emotion grade tags')
+        .lean();
+    } else {
+      trade = inMemoryTrades.find(
+        t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId)
+      );
+    }
+    if (!trade) return res.status(404).json({ error: 'Trade not found' });
+
+    // ── Check in-memory cache ───────────────────────────────────────────────
+    const cacheKey = String(req.params.id);
+    const cached = replayCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    // ── Build Twelve Data request ───────────────────────────────────────────
+    const normalizedSymbol = normalizeSymbolForReplay(trade.symbol);
+    const { interval, paddingMs } = selectReplayInterval(trade.durationMinutes);
+
+    const openMs  = new Date(trade.openTime).getTime();
+    const closeMs = new Date(trade.closeTime).getTime();
+    const startDate = new Date(openMs  - paddingMs).toISOString().replace('T', ' ').slice(0, 19);
+    const endDate   = new Date(closeMs + paddingMs).toISOString().replace('T', ' ').slice(0, 19);
+
+    const tdUrl = [
+      'https://api.twelvedata.com/time_series',
+      `?symbol=${encodeURIComponent(normalizedSymbol)}`,
+      `&interval=${interval}`,
+      `&start_date=${encodeURIComponent(startDate)}`,
+      `&end_date=${encodeURIComponent(endDate)}`,
+      `&timezone=UTC`,
+      `&format=JSON`,
+      `&outputsize=500`,
+      `&apikey=${apiKey}`,
+    ].join('');
+
+    const tdRes = await fetch(tdUrl, { signal: AbortSignal.timeout(15000) });
+    if (tdRes.status === 429) {
+      return res.status(429).json({ error: 'Twelve Data rate limit reached. Wait one minute and try replay again.' });
+    }
+    if (!tdRes.ok) {
+      return res.status(502).json({ error: `Twelve Data request failed (HTTP ${tdRes.status})` });
+    }
+    const body = await tdRes.json();
+
+    if (body.status === 'error') {
+      return res.status(422).json({
+        error: body.message || `No chart data available for ${trade.symbol}`,
+        code: body.code,
+      });
+    }
+
+    // ── Transform candles (Twelve Data returns newest-first → reverse) ──────
+    const values = Array.isArray(body.values) ? body.values : [];
+    if (values.length === 0) {
+      return res.status(422).json({
+        error: `No candles returned for ${normalizedSymbol} (${interval}). The symbol may not be supported on the free Twelve Data plan.`,
+      });
+    }
+
+    const candles = values.reverse().map(v => ({
+      time:  Math.floor(new Date((v.datetime + '').replace(' ', 'T') + 'Z').getTime() / 1000),
+      open:  parseFloat(v.open),
+      high:  parseFloat(v.high),
+      low:   parseFloat(v.low),
+      close: parseFloat(v.close),
+    }));
+
+    // ── Locate entry/exit candle indices ────────────────────────────────────
+    const entryTs = Math.floor(openMs  / 1000);
+    const exitTs  = Math.floor(closeMs / 1000);
+    let entryIndex = candles.findIndex(c => c.time >= entryTs);
+    let exitIndex  = candles.findIndex(c => c.time >= exitTs);
+    if (entryIndex < 0) entryIndex = 0;
+    if (exitIndex  < 0) exitIndex  = candles.length - 1;
+
+    const result = {
+      candles,
+      entryPrice:       trade.entryPrice,
+      exitPrice:        trade.exitPrice,
+      direction:        trade.direction,
+      symbol:           trade.symbol,
+      normalizedSymbol,
+      interval,
+      openTime:         trade.openTime,
+      closeTime:        trade.closeTime,
+      entryTimestamp:   entryTs,
+      exitTimestamp:    exitTs,
+      entryIndex,
+      exitIndex,
+      pnlUSD:           trade.pnlUSD,
+      pnlPct:           trade.pnlPct,
+      durationMinutes:  trade.durationMinutes,
+      lotSize:          trade.lotSize,
+      // Pre-fill existing journal data so the right panel shows current values
+      existingNotes:    trade.notes   || '',
+      existingEmotion:  trade.emotion || '',
+      existingGrade:    trade.grade   || '',
+      existingTags:     trade.tags    || [],
+    };
+
+    replayCache.set(cacheKey, { ts: Date.now(), data: result });
+    res.json(result);
+
+  } catch (err) {
+    console.error('[Replay]', err.message);
+    res.status(500).json({ error: err.message || 'Failed to load replay data' });
   }
 });
 

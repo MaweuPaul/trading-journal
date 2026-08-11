@@ -1,9 +1,9 @@
 ﻿'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   X, Play, Pause, SkipBack, SkipForward,
   Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
-  BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2,
+  BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -36,6 +36,7 @@ interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; 
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
+type ReplayAnnotation = (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' }) | (DrawnText & { type: 'text' });
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
   entryPrice: number; exitPrice: number; openTime: string; closeTime: string;
@@ -119,6 +120,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
   const [drawnTexts, setDrawnTexts] = useState<DrawnText[]>([]);
   const [annotationText, setAnnotationText] = useState('');
+  const [annotationSaveState, setAnnotationSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
+  const [annotationSaveError, setAnnotationSaveError] = useState('');
+  const [loadedAnnotationKey, setLoadedAnnotationKey] = useState('');
+  const [showAnnotationList, setShowAnnotationList] = useState(false);
+  const annotationBaselineRef = useRef('');
+  const activeAnnotationKeyRef = useRef('');
+  const annotationHistoryRef = useRef<Array<{ rects: DrawnRect[]; lines: DrawnLine[]; texts: DrawnText[] }>>([]);
+  const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -147,6 +156,72 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   useEffect(() => {
     if (drawingTool === 'text') annotationInputRef.current?.focus();
   }, [drawingTool]);
+
+  const allAnnotations = useMemo<ReplayAnnotation[]>(() => [
+    ...drawnRects.map(annotation => ({ ...annotation, type: 'rect' as const })),
+    ...drawnLines.map(annotation => ({ ...annotation, type: 'line' as const })),
+    ...drawnTexts.map(annotation => ({ ...annotation, type: 'text' as const })),
+  ], [drawnLines, drawnRects, drawnTexts]);
+  const annotationKey = `${tradeId}:${selectedInterval}`;
+  activeAnnotationKeyRef.current = annotationKey;
+  const pushAnnotationHistory = () => {
+    annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
+      rects: drawnRects.map(item => ({ ...item })), lines: drawnLines.map(item => ({ ...item })), texts: drawnTexts.map(item => ({ ...item })),
+    }];
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const controller = new AbortController();
+    setAnnotationSaveState('loading'); setAnnotationSaveError(''); setLoadedAnnotationKey(''); setShowAnnotationList(false);
+    fetch(`${API}/trades/${tradeId}/replay-journal?interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
+      .then(async response => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not load chart annotations');
+        const annotations = Array.isArray(body.annotations) ? body.annotations as ReplayAnnotation[] : [];
+        setDrawnRects(annotations.filter(item => item.type === 'rect').map(({ type: _type, ...item }) => item as DrawnRect));
+        setDrawnLines(annotations.filter(item => item.type === 'line').map(({ type: _type, ...item }) => item as DrawnLine));
+        setDrawnTexts(annotations.filter(item => item.type === 'text').map(({ type: _type, ...item }) => item as DrawnText));
+        annotationHistoryRef.current = [];
+        annotationBaselineRef.current = JSON.stringify(annotations);
+        setLoadedAnnotationKey(annotationKey); setAnnotationSaveState('saved');
+      })
+      .catch(error => {
+        if (error.name === 'AbortError') return;
+        setAnnotationSaveState('error'); setAnnotationSaveError(error.message || 'Could not load chart annotations');
+      });
+    return () => controller.abort();
+  }, [annotationKey, selectedInterval, tradeId]);
+
+  useEffect(() => {
+    if (loadedAnnotationKey !== annotationKey) return;
+    const serialized = JSON.stringify(allAnnotations);
+    if (serialized === annotationBaselineRef.current) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setAnnotationSaveState('saving'); setAnnotationSaveError('');
+    const timer = setTimeout(() => {
+      const annotations = JSON.parse(serialized) as ReplayAnnotation[];
+      annotationSaveQueueRef.current = annotationSaveQueueRef.current.then(async () => {
+        const response = await fetch(`${API}/trades/${tradeId}/replay-journal/annotations`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ interval: selectedInterval, annotations }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not save chart annotations');
+        if (activeAnnotationKeyRef.current === annotationKey) {
+          annotationBaselineRef.current = serialized;
+          setAnnotationSaveState('saved');
+        }
+      }).catch(error => {
+        if (activeAnnotationKeyRef.current === annotationKey) {
+          setAnnotationSaveState('error'); setAnnotationSaveError(error.message || 'Could not save chart annotations');
+        }
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [allAnnotations, annotationKey, loadedAnnotationKey, selectedInterval, tradeId]);
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -336,6 +411,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const x = e.clientX - r.left, y = e.clientY - r.top;
       const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
       if (time != null && price != null) {
+        pushAnnotationHistory();
         setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
         setAnnotationText('');
         queueMicrotask(() => annotationInputRef.current?.focus());
@@ -361,6 +437,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const p1 = series.coordinateToPrice(drawStart.current.y);
       const p2 = series.coordinateToPrice(y2);
       if (t1 != null && t2 != null && p1 != null && p2 != null) {
+        pushAnnotationHistory();
         const shape = { id: `${drawingTool}-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor };
         if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
         else setDrawnRects(prev => [...prev, shape]);
@@ -419,6 +496,21 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null;
     setSelectedInterval(interval);
     onIntervalChange?.(interval);
+  };
+  const undoAnnotation = () => {
+    const previous = annotationHistoryRef.current.pop();
+    if (!previous) return;
+    setDrawnRects(previous.rects); setDrawnLines(previous.lines); setDrawnTexts(previous.texts);
+  };
+  const deleteAnnotation = (annotation: ReplayAnnotation) => {
+    pushAnnotationHistory();
+    if (annotation.type === 'rect') setDrawnRects(current => current.filter(item => item.id !== annotation.id));
+    if (annotation.type === 'line') setDrawnLines(current => current.filter(item => item.id !== annotation.id));
+    if (annotation.type === 'text') setDrawnTexts(current => current.filter(item => item.id !== annotation.id));
+  };
+  const clearAnnotations = () => {
+    if (allAnnotations.length === 0 || !window.confirm(`Clear all ${allAnnotations.length} annotations from ${selectedInterval}?`)) return;
+    pushAnnotationHistory(); setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null; redrawCanvas();
   };
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
     const value = playbookResponses[rule.ruleId];
@@ -485,10 +577,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             ))}
           </div>
         )}
+        <span className={`replay-annotation-status ${annotationSaveState}`} title={annotationSaveError || 'Chart annotations save automatically'}>
+          {annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}
+        </span>
+        <button className="replay-tool-btn" disabled={annotationHistoryRef.current.length === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={13} /> Undo</button>
         {(drawnRects.length + drawnLines.length + drawnTexts.length) > 0 && (
-          <button className="replay-tool-btn" style={{ color: '#ef4444' }}
-            onClick={() => { setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null; redrawCanvas(); }}>
-            Clear drawings
+          <button className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>
+            Notes ({allAnnotations.length})
           </button>
         )}
         <button ref={closeButtonRef} className="replay-close-btn" onClick={onClose} title="Close (ESC)"><X size={14} /> Close</button>
@@ -509,6 +604,18 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                 onChange={event => setAnnotationText(event.target.value)}
               />
               <span>{annotationText.trim() ? 'Click the chart to place it' : 'Type your note first'}</span>
+            </div>
+          )}
+          {showAnnotationList && allAnnotations.length > 0 && (
+            <div className="replay-annotation-manager" aria-label="Chart annotations">
+              <div className="replay-annotation-manager-head"><strong>Saved annotations</strong><button type="button" onClick={clearAnnotations}>Clear all</button></div>
+              {allAnnotations.map((annotation, index) => (
+                <div className="replay-annotation-row" key={annotation.id}>
+                  <i style={{ background: annotation.color }} />
+                  <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Line' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : ` ${index + 1}`}</span>
+                  <button type="button" onClick={() => deleteAnnotation(annotation)} aria-label={`Delete ${annotation.type} annotation`}><Trash2 size={13} /></button>
+                </div>
+              ))}
             </div>
           )}
           <canvas ref={canvasRef}

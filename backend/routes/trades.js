@@ -3,6 +3,7 @@ const router = express.Router();
 const Trade = require('../models/Trade');
 const SyncRequest = require('../models/SyncRequest');
 const ReplaySession = require('../models/ReplaySession');
+const ReplayJournal = require('../models/ReplayJournal');
 const AccountEvent = require('../models/AccountEvent');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
@@ -10,11 +11,13 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
+const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations } = require('../lib/replayAnnotations');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
 const LOCAL_RULES_PATH = path.join(__dirname, '../local_user_rules.json');
 const LOCAL_PLAYBOOKS_PATH = path.join(__dirname, '../local_playbooks.json');
+const LOCAL_REPLAY_JOURNALS_PATH = path.join(__dirname, '../local_replay_journals.json');
 const OFFLINE_SCREENSHOTS_DIR = path.join(__dirname, '../public/screenshots');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -40,6 +43,7 @@ let inMemoryTrades = [];
 let inMemoryAccountEvents = [];
 let inMemoryUserRules = {};
 let inMemoryPlaybooks = {};
+let inMemoryReplayJournals = {};
 const inMemorySyncRequests = {};
 
 // ── Trade Replay Cache (in-memory, 30-minute TTL) ──────────────────────────
@@ -63,6 +67,9 @@ try {
   }
   if (fs.existsSync(LOCAL_PLAYBOOKS_PATH)) {
     inMemoryPlaybooks = JSON.parse(fs.readFileSync(LOCAL_PLAYBOOKS_PATH, 'utf8'));
+  }
+  if (fs.existsSync(LOCAL_REPLAY_JOURNALS_PATH)) {
+    inMemoryReplayJournals = JSON.parse(fs.readFileSync(LOCAL_REPLAY_JOURNALS_PATH, 'utf8'));
   }
 } catch (e) {
   console.error("Failed to load local persistent database:", e.message);
@@ -556,6 +563,14 @@ function saveLocalAccountEvents() {
   }
 }
 
+function saveLocalReplayJournals() {
+  try {
+    fs.writeFileSync(LOCAL_REPLAY_JOURNALS_PATH, JSON.stringify(inMemoryReplayJournals, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to save local Replay journals:', e.message);
+  }
+}
+
 function isOfflineTradeVisibleToUser(trade, userId) {
   if (String(userId) === 'mocked_admin_user_id') return true;
   if (!trade.user) return true;
@@ -637,9 +652,10 @@ async function backupMongoToLocal() {
   try {
     if (mongoose.connection.readyState === 1) {
       console.log(' Backing up MongoDB trades to local persistent database file...');
-      const [allTrades, allEvents] = await Promise.all([
+      const [allTrades, allEvents, allReplayJournals] = await Promise.all([
         Trade.find({}).sort({ closeTime: -1 }).lean(),
         AccountEvent.find({}).sort({ occurredAt: -1 }).lean(),
+        ReplayJournal.find({}).lean(),
       ]);
       
       // Map MongoDB _id to string for consstency
@@ -667,6 +683,17 @@ async function backupMongoToLocal() {
       }));
       saveLocalAccountEvents();
       console.log(` Successfully backed up ${inMemoryAccountEvents.length} account events from MongoDB to local JSON.`);
+
+      inMemoryReplayJournals = Object.fromEntries(allReplayJournals.map(journal => {
+        const formatted = {
+          ...journal, _id: String(journal._id), user: String(journal.user), trade: String(journal.trade),
+          createdAt: journal.createdAt ? new Date(journal.createdAt).toISOString() : null,
+          updatedAt: journal.updatedAt ? new Date(journal.updatedAt).toISOString() : null,
+        };
+        return [`${formatted.user}:${formatted.trade}`, formatted];
+      }));
+      saveLocalReplayJournals();
+      console.log(` Successfully backed up ${allReplayJournals.length} Replay journals from MongoDB to local JSON.`);
     }
   } catch (err) {
     console.error(' Failed to backup MongoDB trades to local JSON:', err.message);
@@ -1791,6 +1818,70 @@ router.post('/trades/:id/replay-failed', auth, async (req, res) => {
     queued.status = 'failed'; queued.updatedAt = Date.now(); queued.error = error;
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+async function findReplayTrade(tradeId, userId) {
+  if (mongoose.connection.readyState === 1) {
+    if (!mongoose.isValidObjectId(tradeId)) return null;
+    return Trade.findOne({ _id: tradeId, user: userId }).select('_id').lean();
+  }
+  return inMemoryTrades.find(trade => String(trade._id) === String(tradeId) && isOfflineTradeVisibleToUser(trade, userId)) || null;
+}
+
+// GET /api/trades/:id/replay-journal?interval=15min
+router.get('/trades/:id/replay-journal', auth, async (req, res) => {
+  try {
+    const interval = String(req.query.interval || '');
+    if (!REPLAY_ANNOTATION_INTERVALS.has(interval)) return res.status(400).json({ error: 'Unsupported Replay annotation timeframe' });
+    if (!await findReplayTrade(req.params.id, req.user.userId)) return res.status(404).json({ error: 'Trade not found' });
+    let journal;
+    if (mongoose.connection.readyState === 1) {
+      journal = await ReplayJournal.findOne({ user: req.user.userId, trade: req.params.id }).lean();
+    } else {
+      journal = inMemoryReplayJournals[`${req.user.userId}:${req.params.id}`] || null;
+    }
+    res.json({
+      schemaVersion: journal?.schemaVersion || 1,
+      revision: journal?.revision || 0,
+      interval,
+      annotations: journal?.annotationsByInterval?.[interval] || [],
+      updatedAt: journal?.updatedAt || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/trades/:id/replay-journal/annotations replaces one timeframe only.
+router.put('/trades/:id/replay-journal/annotations', auth, async (req, res) => {
+  try {
+    const interval = String(req.body.interval || '');
+    const annotations = normalizeReplayAnnotations(interval, req.body.annotations);
+    if (!await findReplayTrade(req.params.id, req.user.userId)) return res.status(404).json({ error: 'Trade not found' });
+    let journal;
+    if (mongoose.connection.readyState === 1) {
+      journal = await ReplayJournal.findOne({ user: req.user.userId, trade: req.params.id });
+      if (!journal) journal = new ReplayJournal({ user: req.user.userId, trade: req.params.id, annotationsByInterval: {} });
+      journal.annotationsByInterval = { ...(journal.annotationsByInterval || {}), [interval]: annotations };
+      journal.revision = Number(journal.revision || 0) + 1;
+      journal.markModified('annotationsByInterval');
+      await journal.save();
+    } else {
+      const key = `${req.user.userId}:${req.params.id}`;
+      const current = inMemoryReplayJournals[key] || { user: String(req.user.userId), trade: String(req.params.id), schemaVersion: 1, revision: 0, annotationsByInterval: {} };
+      journal = {
+        ...current,
+        revision: Number(current.revision || 0) + 1,
+        annotationsByInterval: { ...(current.annotationsByInterval || {}), [interval]: annotations },
+        updatedAt: new Date().toISOString(),
+      };
+      inMemoryReplayJournals[key] = journal;
+      saveLocalReplayJournals();
+    }
+    res.json({ revision: journal.revision, interval, annotations, updatedAt: journal.updatedAt || new Date().toISOString() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // GET /api/trades/:id/replay  requests MT5 first; ?fallback=twelve uses Twelve Data
@@ -2939,27 +3030,30 @@ router.get('/balance', auth, async (req, res) => {
 
 // ── EXPORT ROUTES ─────────────────────────────────────────────────────────
 
-// GET /api/export/json  Full backup download: all trades + account events
+// GET /api/export/json  Full backup download: trades, account events, and Replay annotations
 router.get('/export/json', auth, async (req, res) => {
   try {
-    let trades, events;
+    let trades, events, replayJournals;
 
     if (mongoose.connection.readyState === 1) {
-      [trades, events] = await Promise.all([
+      [trades, events, replayJournals] = await Promise.all([
         Trade.find({ user: req.user.userId }).sort({ closeTime: -1 }).lean(),
         AccountEvent.find({ user: req.user.userId }).sort({ occurredAt: -1 }).lean(),
+        ReplayJournal.find({ user: req.user.userId }).lean(),
       ]);
     } else {
       trades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
       events = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId));
+      replayJournals = Object.values(inMemoryReplayJournals).filter(journal => String(journal.user) === String(req.user.userId));
     }
 
     const payload = {
-      _schemaVersion: 1,
+      _schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       source: mongoose.connection.readyState === 1 ? 'mongodb' : 'local_cache',
       tradeCount: trades.length,
       accountEventCount: events.length,
+      replayJournalCount: replayJournals.length,
       trades: trades.map(t => ({
         ...t,
         _id: String(t._id),
@@ -2969,6 +3063,12 @@ router.get('/export/json', auth, async (req, res) => {
         ...e,
         _id: String(e._id),
         user: e.user ? String(e.user) : null,
+      })),
+      replayJournals: replayJournals.map(journal => ({
+        ...journal,
+        _id: journal._id ? String(journal._id) : undefined,
+        user: String(journal.user),
+        trade: String(journal.trade),
       })),
     };
 

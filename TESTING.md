@@ -575,20 +575,22 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 9. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
 10. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
 11. Confirm entry and exit markers appear only after their corresponding candles are revealed.
-12. Use **Zone** and **Line**, then enter a Text label and click the chart. Resize the browser and confirm all annotations remain aligned with candle time and price.
-13. Change timeframe and confirm temporary annotations from the previous timeframe are cleared rather than appearing at incorrect coordinates.
-14. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
-15. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-16. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-17. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-18. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+12. Use **Zone** and **Line**, then enter a Text label and click the chart. Confirm the status changes from **Saving notes…** to **Notes saved**. Resize the browser and confirm all annotations remain aligned with candle time and price.
+13. Refresh and reopen Replay. Confirm annotations reload on the same timeframe. Change timeframe, add different annotations, then return and confirm each timeframe restores only its own saved set.
+14. Open **Notes**, delete one annotation, and confirm it disappears and autosaves. Use **Undo**, then use **Clear all** and confirm the destructive action asks for confirmation.
+15. Download a JSON backup and confirm `replayJournals` contains saved annotations without Replay candle caches.
+16. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
+17. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+18. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+19. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+20. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 
 - The Twelve Data key is used only by the backend proxy and never appears in browser requests.
 - MT5 requests use UTC date ranges and their returned candles remain only in a 30-minute authenticated MongoDB TTL session; Twelve Data requests time out after 15 seconds and use a transient cache.
 - The modal works at desktop and phone widths, locks background scrolling, supports Escape to close, and exposes visible keyboard focus.
-- Rectangle zones are intentionally session-only in this phase; saved journal fields persist through the existing authenticated trade endpoint.
+- Chart annotations persist through an ownership-scoped Replay Journal endpoint. Invalid types, timeframes, duplicate IDs, empty text, and invalid chart coordinates are rejected by the backend.
 
 ## Legacy migration test
 

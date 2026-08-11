@@ -217,6 +217,7 @@ requirements.txt
 | `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave text, line, and zone annotations for one timeframe |
 | `/api/trades/:id/replay-journal/events` | PUT | Validate and autosave the candle-linked trade-event timeline |
 | `/api/trades/:id/replay-journal/quick-review` | PUT | Autosave or complete the short process-focused review |
+| `/api/trades/:id/replay-journal/draft` | PUT | Autosave unfinished journal answers and Replay position |
 | `/api/replay-requests` | GET | Let the authenticated local sync agent claim pending replay requests |
 | `/api/trades/:id/replay-candles` | POST | Validate and temporarily cache broker OHLC candles returned by `sync.py` |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
@@ -263,6 +264,8 @@ The browser also holds an 8-second Replay request open, allowing the backend to 
 Replay's **Event** tool attaches observations, confirmations, entry/management/exit decisions, emotions, mistakes, rule violations, lessons, or custom events to exact candle time and price. Events can carry importance, notes, emotion, and a rule from the trade's immutable playbook snapshot. The journal timeline autosaves, orders events chronologically, renders chart markers as playback reveals them, and navigates back to an event even when it belongs to another timeframe.
 
 The journal panel opens in **Quick Review** so an ordinary trade can be reviewed in five short answers: plan adherence, primary emotion, the main mistake or repeatable strength, one lesson, and a process grade. Drafts autosave. **Mark Complete & Save** validates the review and mirrors its emotion and grade onto the trade for existing Stats and Edge Coach reports. **Deep Playbook** keeps the full immutable strategy review available when more evidence is warranted.
+
+Replay also keeps an ownership-scoped server draft for unfinished notes, tags, playbook answers, detailed grades, outcome fields, timeframe, revealed candle, speed, and journal phase. The save indicator confirms when it is safe to refresh or close. URL parameters continue to hold shareable navigation state; private journal content is never placed in the URL or local storage.
 
 ### `backend/.env`
 

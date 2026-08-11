@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview } = require('../lib/replayAnnotations');
+const { normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft } = require('../lib/replayAnnotations');
 
 test('normalizes valid text, line, and zone annotations', () => {
   const annotations = normalizeReplayAnnotations('15min', [
@@ -46,4 +46,10 @@ test('supports Quick Review drafts and validates completion', () => {
   const complete = normalizeQuickReview({ followedPlan: true, primaryStrength: 'Waited for confirmation', lesson: 'Repeat the process', processGrade: 'A', completedAt: new Date().toISOString() });
   assert.equal(complete.processGrade, 'A');
   assert.ok(complete.completedAt);
+});
+
+test('normalizes unfinished Replay drafts without accepting unsafe sizes', () => {
+  const draft = normalizeReplayDraft({ notes: 'unfinished', tags: ['focus'], selectedInterval: '15min', replayIdx: 42, speed: 2, journalPhase: 'manage', playbookResponses: { rule: true } });
+  assert.equal(draft.selectedInterval, '15min'); assert.equal(draft.replayIdx, 42); assert.equal(draft.journalPhase, 'manage');
+  assert.throws(() => normalizeReplayDraft({ playbookResponses: { large: 'x'.repeat(100001) } }), /too large/);
 });

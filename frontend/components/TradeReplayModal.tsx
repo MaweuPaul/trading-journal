@@ -45,6 +45,7 @@ interface ReplayTimelineEvent {
 }
 interface ReplayEventDraft { eventType: string; customType: string; title: string; note: string; emotion: string; severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; }
 interface ReplayQuickReview { followedPlan: boolean | null; primaryEmotion: string; primaryMistake: string; primaryStrength: string; lesson: string; processGrade: string; completedAt: string | null; updatedAt?: string; }
+interface ReplayDraft { notes: string; emotion: string; grade: string; tags: string[]; playbookResponses: Record<string, unknown>; analysisGrade: string; executionGrade: string; plannedRR: string; confidenceRating: number | null; exitReason: string; manuallyIntervened: boolean | null; selectedInterval: string; replayIdx: number; speed: number; journalPhase: 'plan' | 'manage' | 'review'; updatedAt?: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
   entryPrice: number; exitPrice: number; openTime: string; closeTime: string;
@@ -160,6 +161,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const quickReviewBaselineRef = useRef('');
   const quickReviewLoadedRef = useRef('');
   const quickReviewSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [draftSaveState, setDraftSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
+  const [draftSaveError, setDraftSaveError] = useState('');
+  const pendingDraftRef = useRef<ReplayDraft | null>(null);
+  const draftBaselineRef = useRef('');
+  const draftAppliedTradeRef = useRef('');
+  const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const replayJournalInitializedRef = useRef(false);
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -227,6 +235,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           const review = { ...EMPTY_QUICK_REVIEW, ...(body.quickReview || {}) } as ReplayQuickReview;
           setQuickReview(review); quickReviewBaselineRef.current = JSON.stringify(review); quickReviewLoadedRef.current = tradeId;
         }
+        pendingDraftRef.current = body.draft && body.draft.updatedAt ? body.draft as ReplayDraft : null;
+        setDraftSaveState('loading');
         setLoadedAnnotationKey(annotationKey); setAnnotationSaveState('saved');
       })
       .catch(error => {
@@ -307,6 +317,44 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     return () => clearTimeout(timer);
   }, [quickReview, tradeId]);
 
+  useEffect(() => {
+    if (!replayData || draftAppliedTradeRef.current === tradeId || loadedAnnotationKey !== annotationKey) return;
+    const draft = pendingDraftRef.current;
+    if (draft) {
+      setNotes(draft.notes || ''); setEmotion(draft.emotion || ''); setGrade(draft.grade || ''); setTags(draft.tags || []);
+      setPlaybookResponses(draft.playbookResponses || {}); setAnalysisGrade(draft.analysisGrade || ''); setExecutionGrade(draft.executionGrade || '');
+      setPlannedRR(draft.plannedRR || ''); setConfidenceRating(draft.confidenceRating ?? null); setExitReason(draft.exitReason || '');
+      setManuallyIntervened(draft.manuallyIntervened ?? null); setSpeed(draft.speed || 1); setJournalPhase(draft.journalPhase || 'plan');
+      if (draft.selectedInterval === selectedInterval) setReplayIdx(Math.min(replayData.candles.length - 1, Math.max(0, draft.replayIdx || 0)));
+      draftBaselineRef.current = JSON.stringify({ ...draft, updatedAt: undefined });
+    }
+    draftAppliedTradeRef.current = tradeId; setDraftSaveState('saved');
+  }, [annotationKey, loadedAnnotationKey, replayData, selectedInterval, tradeId]);
+
+  const replayDraft = useMemo<ReplayDraft>(() => ({
+    notes, emotion, grade, tags, playbookResponses, analysisGrade, executionGrade, plannedRR, confidenceRating, exitReason,
+    manuallyIntervened, selectedInterval, replayIdx, speed, journalPhase,
+  }), [analysisGrade, confidenceRating, emotion, executionGrade, exitReason, grade, journalPhase, manuallyIntervened, notes, plannedRR, playbookResponses, replayIdx, selectedInterval, speed, tags]);
+
+  useEffect(() => {
+    if (draftAppliedTradeRef.current !== tradeId) return;
+    const serialized = JSON.stringify(replayDraft);
+    if (serialized === draftBaselineRef.current) return;
+    const token = localStorage.getItem('token'); if (!token) return;
+    setDraftSaveState('saving'); setDraftSaveError('');
+    const timer = setTimeout(() => {
+      const draft = JSON.parse(serialized) as ReplayDraft;
+      draftSaveQueueRef.current = draftSaveQueueRef.current.then(async () => {
+        const response = await fetch(`${API}/trades/${tradeId}/replay-journal/draft`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ draft }),
+        });
+        const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not save Replay draft');
+        draftBaselineRef.current = serialized; setDraftSaveState('saved');
+      }).catch(error => { setDraftSaveState('error'); setDraftSaveError(error.message || 'Could not save Replay draft'); });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [replayDraft, tradeId]);
+
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
       throw new Error('The replay service returned no candle data. Restart the backend and MT5 sync agent, then try again.');
@@ -314,13 +362,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const replay = { ...data };
     replay.candles = data.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
     setReplayData(replay);
-    setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
-    setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
-    setPlaybookResponses(data.playbookResponses || {});
-    setAnalysisGrade(data.analysisGrade || ''); setExecutionGrade(data.executionGrade || '');
-    setPlannedRR(data.plannedRR == null ? '' : String(data.plannedRR));
-    setConfidenceRating(data.confidenceRating ?? null); setExitReason(data.exitReason || '');
-    setManuallyIntervened(data.manuallyIntervened ?? null);
+    if (!replayJournalInitializedRef.current) {
+      setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
+      setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
+      setPlaybookResponses(data.playbookResponses || {});
+      setAnalysisGrade(data.analysisGrade || ''); setExecutionGrade(data.executionGrade || '');
+      setPlannedRR(data.plannedRR == null ? '' : String(data.plannedRR));
+      setConfidenceRating(data.confidenceRating ?? null); setExitReason(data.exitReason || '');
+      setManuallyIntervened(data.manuallyIntervened ?? null);
+      replayJournalInitializedRef.current = true;
+    }
     setReplayIdx(Math.max(0, data.entryIndex - 8));
     setWaitingForMt5(false); setError(''); setLoading(false);
     setReplayDebug(null);
@@ -833,6 +884,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         </div>
 
         <div className="replay-journal-panel">
+          <div className={`replay-draft-status ${draftSaveState}`} title={draftSaveError || 'Unfinished journal fields and Replay position save automatically'}>
+            <span>{draftSaveState === 'loading' ? 'Restoring draft…' : draftSaveState === 'saving' ? 'Saving draft…' : draftSaveState === 'error' ? 'Draft not saved' : 'Draft saved'}</span>
+            <small>{draftSaveState === 'error' ? draftSaveError : 'Safe to refresh or close'}</small>
+          </div>
           <section className="replay-timeline">
             <div className="replay-timeline-head">
               <div><span>Trade timeline</span><strong>{visibleTimelineEvents.length} on {selectedInterval} · {timelineEvents.length} total</strong></div>

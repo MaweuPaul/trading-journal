@@ -588,10 +588,14 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 22. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
 23. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
 24. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
-25. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-26. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-27. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-28. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+25. Change notes, tags, playbook answers, grades, outcome fields, Replay speed, phase, and revealed candle without choosing Mark Complete. Wait for **Draft saved**, refresh, and confirm every unfinished value is restored.
+26. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
+27. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
+28. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
+29. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+30. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+31. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+32. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 
@@ -601,6 +605,7 @@ Expected results:
 - Chart annotations persist through an ownership-scoped Replay Journal endpoint. Invalid types, timeframes, duplicate IDs, empty text, and invalid chart coordinates are rejected by the backend.
 - Timeline events persist in the same Replay Journal, but rule links are accepted only when they belong to the immutable playbook snapshot attached to that trade.
 - Quick Review accepts incomplete drafts but requires plan adherence, the appropriate mistake/strength answer, one lesson, and a valid process grade before completion.
+- Unfinished detailed journal fields and playback position persist in an authenticated server draft; private draft data is not encoded in shareable URLs.
 
 ## Legacy migration test
 

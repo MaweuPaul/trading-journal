@@ -94,4 +94,25 @@ function normalizeQuickReview(input) {
   return normalized;
 }
 
-module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview };
+function normalizeReplayDraft(input) {
+  const draft = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const interval = REPLAY_ANNOTATION_INTERVALS.has(String(draft.selectedInterval || '')) ? String(draft.selectedInterval) : '5min';
+  const journalPhase = ['plan', 'manage', 'review'].includes(String(draft.journalPhase || '')) ? String(draft.journalPhase) : 'plan';
+  const speed = [0.5, 1, 2, 5, 10].includes(Number(draft.speed)) ? Number(draft.speed) : 1;
+  const replayIdx = Math.max(0, Math.min(100000, Math.floor(Number(draft.replayIdx) || 0)));
+  const tags = Array.isArray(draft.tags) ? draft.tags.map(value => String(value).trim().slice(0, 40)).filter(Boolean).slice(0, 20) : [];
+  const playbookResponses = draft.playbookResponses && typeof draft.playbookResponses === 'object' && !Array.isArray(draft.playbookResponses) ? draft.playbookResponses : {};
+  if (JSON.stringify(playbookResponses).length > 100000) throw new Error('Replay draft playbook answers are too large');
+  return {
+    notes: String(draft.notes || '').slice(0, 10000), emotion: String(draft.emotion || '').slice(0, 40),
+    grade: ['A', 'B', 'C', 'D', 'F'].includes(String(draft.grade || '')) ? String(draft.grade) : '', tags,
+    playbookResponses, analysisGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(draft.analysisGrade || '')) ? String(draft.analysisGrade) : '',
+    executionGrade: ['A', 'B', 'C', 'D', 'F'].includes(String(draft.executionGrade || '')) ? String(draft.executionGrade) : '',
+    plannedRR: draft.plannedRR === '' || draft.plannedRR == null ? '' : String(draft.plannedRR).slice(0, 30),
+    confidenceRating: Number.isFinite(Number(draft.confidenceRating)) ? Math.max(1, Math.min(10, Number(draft.confidenceRating))) : null,
+    exitReason: String(draft.exitReason || '').slice(0, 40), manuallyIntervened: typeof draft.manuallyIntervened === 'boolean' ? draft.manuallyIntervened : null,
+    selectedInterval: interval, replayIdx, speed, journalPhase, updatedAt: new Date().toISOString(),
+  };
+}
+
+module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft };

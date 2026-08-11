@@ -8,6 +8,7 @@ const replayJournalSchema = new mongoose.Schema({
   annotationsByInterval: { type: mongoose.Schema.Types.Mixed, default: {} },
   events: { type: [mongoose.Schema.Types.Mixed], default: [] },
   quickReview: { type: mongoose.Schema.Types.Mixed, default: {} },
+  draft: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { timestamps: true });
 
 replayJournalSchema.index({ user: 1, trade: 1 }, { unique: true });

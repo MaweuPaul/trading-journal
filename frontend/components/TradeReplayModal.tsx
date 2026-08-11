@@ -44,6 +44,7 @@ interface ReplayTimelineEvent {
   screenshotIds: string[]; createdAt: string; updatedAt?: string;
 }
 interface ReplayEventDraft { eventType: string; customType: string; title: string; note: string; emotion: string; severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; }
+interface ReplayQuickReview { followedPlan: boolean | null; primaryEmotion: string; primaryMistake: string; primaryStrength: string; lesson: string; processGrade: string; completedAt: string | null; updatedAt?: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
   entryPrice: number; exitPrice: number; openTime: string; closeTime: string;
@@ -82,6 +83,7 @@ const REPLAY_EVENT_TYPES = [
   ['mistake', 'Mistake'], ['violation', 'Rule violation'], ['lesson', 'Lesson'], ['custom', 'Custom'],
 ] as const;
 const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '' };
+const EMPTY_QUICK_REVIEW: ReplayQuickReview = { followedPlan: null, primaryEmotion: '', primaryMistake: '', primaryStrength: '', lesson: '', processGrade: '', completedAt: null };
 const fmt = (n: number, dp = 2) => n.toFixed(dp);
 const fmtDur = (mins: number) => {
   if (mins < 60) return `${mins}m`;
@@ -151,6 +153,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const eventsLoadedTradeRef = useRef('');
   const eventSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingTimelineNavigationRef = useRef('');
+  const [reviewMode, setReviewMode] = useState<'quick' | 'playbook'>('quick');
+  const [quickReview, setQuickReview] = useState<ReplayQuickReview>(EMPTY_QUICK_REVIEW);
+  const [quickReviewSaveState, setQuickReviewSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [quickReviewError, setQuickReviewError] = useState('');
+  const quickReviewBaselineRef = useRef('');
+  const quickReviewLoadedRef = useRef('');
+  const quickReviewSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -214,6 +223,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           eventBaselineRef.current = JSON.stringify(events);
           eventsLoadedTradeRef.current = tradeId;
         }
+        if (quickReviewLoadedRef.current !== tradeId) {
+          const review = { ...EMPTY_QUICK_REVIEW, ...(body.quickReview || {}) } as ReplayQuickReview;
+          setQuickReview(review); quickReviewBaselineRef.current = JSON.stringify(review); quickReviewLoadedRef.current = tradeId;
+        }
         setLoadedAnnotationKey(annotationKey); setAnnotationSaveState('saved');
       })
       .catch(error => {
@@ -272,6 +285,27 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     }, 700);
     return () => clearTimeout(timer);
   }, [timelineEvents, tradeId]);
+
+  useEffect(() => {
+    if (quickReviewLoadedRef.current !== tradeId) return;
+    const serialized = JSON.stringify(quickReview);
+    if (serialized === quickReviewBaselineRef.current) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setQuickReviewSaveState('saving'); setQuickReviewError('');
+    const timer = setTimeout(() => {
+      const review = JSON.parse(serialized) as ReplayQuickReview;
+      quickReviewSaveQueueRef.current = quickReviewSaveQueueRef.current.then(async () => {
+        const response = await fetch(`${API}/trades/${tradeId}/replay-journal/quick-review`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ quickReview: review }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not save Quick Review');
+        quickReviewBaselineRef.current = serialized; setQuickReviewSaveState('saved');
+      }).catch(error => { setQuickReviewSaveState('error'); setQuickReviewError(error.message || 'Could not save Quick Review'); });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [quickReview, tradeId]);
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -534,16 +568,24 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const token = localStorage.getItem('token'); if (!token) return;
     setSaving(true);
     try {
+      const completedQuickReview = { ...quickReview, completedAt: new Date().toISOString() };
+      const quickResponse = await fetch(`${API}/trades/${tradeId}/replay-journal/quick-review`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ quickReview: completedQuickReview }),
+      });
+      if (!quickResponse.ok) { setReviewMode('quick'); throw new Error((await quickResponse.json()).error || 'Complete Quick Review before saving'); }
+      setQuickReview(completedQuickReview);
+      const finalEmotion = quickReview.primaryEmotion || emotion;
+      const finalGrade = quickReview.processGrade || grade;
       const res = await fetch(`${API}/trades/${tradeId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          notes, emotion, grade, tags, playbookResponses,
+          notes, emotion: finalEmotion, grade: finalGrade, tags, playbookResponses,
           analysisGrade, executionGrade, plannedRR: plannedRR === '' ? null : Number(plannedRR),
           confidenceRating, exitReason, manuallyIntervened,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
-      onSaved({ notes, emotion, grade, tags }); onClose();
+      onSaved({ notes, emotion: finalEmotion, grade: finalGrade, tags }); onClose();
     } catch (e) { alert(e instanceof Error ? e.message : 'Save failed'); }
     finally { setSaving(false); }
   };
@@ -806,6 +848,23 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               </article>
             ))}
           </section>
+          <div className="replay-review-mode" role="tablist" aria-label="Review depth">
+            <button type="button" role="tab" aria-selected={reviewMode === 'quick'} className={reviewMode === 'quick' ? 'active' : ''} onClick={() => setReviewMode('quick')}>Quick Review</button>
+            <button type="button" role="tab" aria-selected={reviewMode === 'playbook'} className={reviewMode === 'playbook' ? 'active' : ''} onClick={() => setReviewMode('playbook')}>Deep Playbook</button>
+          </div>
+          {reviewMode === 'quick' && (
+            <section className="replay-quick-review">
+              <div className="replay-quick-head"><div><span>20–30 second review</span><strong>Grade the process, not the P&amp;L</strong></div><small className={quickReviewSaveState} title={quickReviewError}>{quickReviewSaveState === 'saving' ? 'Saving…' : quickReviewSaveState === 'error' ? 'Not saved' : quickReview.completedAt ? 'Complete' : 'Draft saved'}</small></div>
+              <div className="replay-quick-question"><label>1. Did you follow the plan?</label><div className="replay-quick-options"><button type="button" className={quickReview.followedPlan === true ? 'selected good' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: true, primaryMistake: '', completedAt: null }))}>Yes</button><button type="button" className={quickReview.followedPlan === false ? 'selected bad' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: false, primaryStrength: '', completedAt: null }))}>No</button></div></div>
+              <div className="replay-quick-question"><label>2. What was the main emotion?</label><div className="replay-quick-emotions">{EMOTIONS.map(item => <button type="button" key={item.name} title={item.name} className={quickReview.primaryEmotion === item.name ? 'selected' : ''} onClick={() => { const value = quickReview.primaryEmotion === item.name ? '' : item.name; setQuickReview(current => ({ ...current, primaryEmotion: value, completedAt: null })); setEmotion(value); }}>{item.emoji}<span>{item.name}</span></button>)}</div></div>
+              {quickReview.followedPlan === false && <div className="replay-quick-question"><label>3. What was the main mistake?</label><input value={quickReview.primaryMistake} maxLength={100} onChange={event => setQuickReview(current => ({ ...current, primaryMistake: event.target.value, completedAt: null }))} placeholder="e.g. Entered before confirmation" /></div>}
+              {quickReview.followedPlan === true && <div className="replay-quick-question"><label>3. What should you repeat?</label><input value={quickReview.primaryStrength} maxLength={100} onChange={event => setQuickReview(current => ({ ...current, primaryStrength: event.target.value, completedAt: null }))} placeholder="e.g. Waited for the sweep and confirmation" /></div>}
+              {quickReview.followedPlan === null && <div className="replay-quick-hint">Choose Yes or No to reveal the next question.</div>}
+              <div className="replay-quick-question"><label>4. What is the main lesson?</label><textarea value={quickReview.lesson} maxLength={500} onChange={event => setQuickReview(current => ({ ...current, lesson: event.target.value, completedAt: null }))} placeholder="One clear action for the next trade" /></div>
+              <div className="replay-quick-question"><label>5. Process grade</label><div className="replay-quick-grades">{GRADES.map(item => <button type="button" key={item} className={quickReview.processGrade === item ? 'selected' : ''} onClick={() => { const value = quickReview.processGrade === item ? '' : item; setQuickReview(current => ({ ...current, processGrade: value, completedAt: null })); setGrade(value); }}>{item}</button>)}</div></div>
+            </section>
+          )}
+          {reviewMode === 'playbook' && <>
           <div className="replay-playbook-head">
             <div>
               <span>Strategy playbook</span>
@@ -879,6 +938,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               ))}
             </div>
           </div>
+          </>}
           <div className="replay-panel-section">
             <div className="replay-panel-label"><Tags size={13} /> Tags</div>
             <div className="replay-tags-row">

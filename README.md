@@ -19,6 +19,7 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Edge Coach Evidence | Compare versions, stage compliance, structured answers, and numeric fields by outcome and sample size |
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
+| Trade Replay | Replay historical candles around a trade, step through price action, mark chart zones, and update journal notes |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
@@ -211,6 +212,7 @@ requirements.txt
 |---|---|---|
 | `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
+| `/api/trades/:id/replay` | GET | Proxy and cache normalized Twelve Data candles for the authenticated trade |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
 | `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
 | `/api/auth/register` | POST | Create the owner only when the database contains zero users |

@@ -19,7 +19,7 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Edge Coach Evidence | Compare versions, stage compliance, structured answers, and numeric fields by outcome and sample size |
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
-| Trade Replay | Replay historical candles around a trade, step through price action, mark chart zones, and update journal notes |
+| Trade Replay | Request only the needed candles from the connected MT5 broker, cache them briefly, replay price action, and use Twelve Data only as a fallback |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
@@ -212,7 +212,9 @@ requirements.txt
 |---|---|---|
 | `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
-| `/api/trades/:id/replay` | GET | Proxy and cache normalized Twelve Data candles for the authenticated trade |
+| `/api/trades/:id/replay` | GET | Return temporarily cached candles or queue an on-demand MT5 replay request; `?fallback=twelve` uses the optional fallback |
+| `/api/replay-requests` | GET | Let the authenticated local sync agent claim pending replay requests |
+| `/api/trades/:id/replay-candles` | POST | Validate and temporarily cache broker OHLC candles returned by `sync.py` |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
 | `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
 | `/api/auth/register` | POST | Create the owner only when the database contains zero users |
@@ -243,6 +245,12 @@ All endpoints require authentication except login and health checks. Export and 
 | `SYNC_INTERVAL` | Polling interval in seconds |
 | `USER_EMAIL` | Journal admin email used by the sync process |
 | `USER_PASSWORD` | Journal admin password used by the sync process |
+
+### MT5-first trade replay
+
+Keep `sync.py` and the logged-in MT5 desktop terminal running. Opening Replay queues only the selected trade's broker symbol, time window, and appropriate timeframe. On its next sync cycle, `sync.py` uses `copy_rates_range` and returns those candles to a 30-minute backend memory cache. Candles are not written to the trade or downloaded for unrelated trades.
+
+The replay screen waits for approximately one configured sync cycle and shows its source. Reopening within the cache window is immediate; after expiry, Replay requests the small window again. Select **Use Twelve Data fallback** only when the terminal cannot supply the history. `TWELVE_DATA_API_KEY` is therefore optional for normal MT5 replay.
 
 ### `backend/.env`
 

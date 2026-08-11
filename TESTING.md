@@ -562,23 +562,26 @@ Expected results:
 
 ## Trade replay acceptance test
 
-Configure `TWELVE_DATA_API_KEY` in `backend/.env`, restart the backend, and use a closed trade whose symbol is supported by Twelve Data.
+Run the authenticated `sync.py` process with MT5 connected, then use a closed trade whose broker history is available. Configure `TWELVE_DATA_API_KEY` only to test the optional fallback.
 
-1. Open the trade drawer and select **Replay**.
-2. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
-3. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
-4. Confirm entry and exit markers appear only after their corresponding candles are revealed.
-5. Enable **Zone**, draw rectangles, resize the browser, and confirm the zones remain aligned with candle time and price.
-6. Update notes, emotion, grade, and tags, then select **Mark Complete & Save**.
-7. Reopen the trade and confirm those journal fields persisted.
-8. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-9. Remove the key temporarily and confirm Replay shows setup instructions. Restore the key, then test a rate-limited or unsupported symbol response.
-10. Test an Exness `USTEC` trade. Confirm it requests `NDX` and, when the Twelve Data subscription does not include indices, displays the provider's plan-coverage message rather than a generic HTTP 404.
+1. Open the trade drawer and select **Replay**. Confirm it says it is waiting for exact MT5 broker candles.
+2. Confirm `sync.py` logs `[REPLAY] Uploaded ... candles` within one sync cycle.
+3. Confirm the source label identifies MT5 and the broker server, and that it uses the exact broker symbol.
+4. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
+5. Close and reopen Replay within 30 minutes. Confirm it loads immediately from the temporary cache and that exported trade data contains no replay candles.
+6. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
+7. Confirm entry and exit markers appear only after their corresponding candles are revealed.
+8. Enable **Zone**, draw rectangles, resize the browser, and confirm the zones remain aligned with candle time and price.
+9. Update notes, emotion, grade, and tags, select **Mark Complete & Save**, reopen the trade, and confirm they persisted.
+10. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+11. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+12. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+13. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 
 - The Twelve Data key is used only by the backend proxy and never appears in browser requests.
-- Candle requests are normalized to UTC, time out after 15 seconds, and are cached for one hour per trade.
+- MT5 requests use UTC date ranges and their returned candles remain only in a 30-minute authenticated memory cache; Twelve Data requests time out after 15 seconds and use the same transient cache.
 - The modal works at desktop and phone widths, locks background scrolling, supports Escape to close, and exposes visible keyboard focus.
 - Rectangle zones are intentionally session-only in this phase; saved journal fields persist through the existing authenticated trade endpoint.
 

@@ -103,6 +103,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [waitingForMt5, setWaitingForMt5] = useState(false);
   const [replayDebug, setReplayDebug] = useState<ReplayDebug | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const annotationInputRef = useRef<HTMLInputElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -142,6 +143,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       ? initialInterval
       : defaultReplayTimeframe(tradeSummary.durationMinutes)
   );
+
+  useEffect(() => {
+    if (drawingTool === 'text') annotationInputRef.current?.focus();
+  }, [drawingTool]);
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -330,7 +335,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       if (!chart || !series || !text) return;
       const x = e.clientX - r.left, y = e.clientY - r.top;
       const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
-      if (time != null && price != null) setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
+      if (time != null && price != null) {
+        setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
+        setAnnotationText('');
+        queueMicrotask(() => annotationInputRef.current?.focus());
+      }
       return;
     }
     drawStart.current = { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -467,7 +476,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart">
           <TypeIcon size={13} /> Text
         </button>
-        {drawingTool === 'text' && <input className="replay-annotation-input" aria-label="Chart annotation text" placeholder="Type label, then click chart" maxLength={80} value={annotationText} onChange={event => setAnnotationText(event.target.value)} />}
         {drawingTool !== 'none' && (
           <div style={{ display: 'flex', gap: 4 }}>
             {RECT_COLORS.map(c => (
@@ -489,6 +497,20 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       <div className="replay-body">
         <div className="replay-chart-wrap">
           <div ref={chartContainerRef} className="replay-chart-container" />
+          {drawingTool === 'text' && (
+            <div className="replay-chart-text-editor" role="group" aria-label="Write on chart">
+              <TypeIcon size={15} />
+              <input
+                ref={annotationInputRef}
+                aria-label="Text to place on chart"
+                placeholder="Write a note…"
+                maxLength={80}
+                value={annotationText}
+                onChange={event => setAnnotationText(event.target.value)}
+              />
+              <span>{annotationText.trim() ? 'Click the chart to place it' : 'Type your note first'}</span>
+            </div>
+          )}
           <canvas ref={canvasRef}
             className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}`}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}

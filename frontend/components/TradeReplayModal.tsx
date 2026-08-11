@@ -20,7 +20,12 @@ interface ReplayData {
   existingNotes: string; existingEmotion: string; existingGrade: string; existingTags: string[];
   source?: 'mt5' | 'twelve'; sourceLabel?: string;
 }
-interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; }
+interface ReplayDebug {
+  state: 'pending' | 'processing' | 'failed'; queuedAt: string; waitSeconds: number;
+  claimCount: number; lastError: string; agentSeenOnThisInstance: boolean;
+  lastAgentSeenAt: string | null; backendInstance: string;
+}
+interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; debug?: ReplayDebug; }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
@@ -47,12 +52,31 @@ const fmtDur = (mins: number) => {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 };
 
+function ReplayDiagnostics({ debug }: { debug: ReplayDebug }) {
+  const agentLabel = debug.agentSeenOnThisInstance ? 'Connected to this API instance' : 'Not detected on this API instance';
+  return (
+    <div className="replay-debug" role="status" aria-label="MT5 replay diagnostics">
+      <div className="replay-debug-title">Connection diagnostics</div>
+      <div><span>Request</span><strong>{debug.state} · {debug.waitSeconds}s</strong></div>
+      <div><span>MT5 agent</span><strong className={debug.agentSeenOnThisInstance ? 'ok' : 'warn'}>{agentLabel}</strong></div>
+      <div><span>Claims</span><strong>{debug.claimCount}</strong></div>
+      <div><span>API instance</span><code>{debug.backendInstance}</code></div>
+      {debug.lastAgentSeenAt && <div><span>Last agent poll</span><strong>{new Date(debug.lastAgentSeenAt).toLocaleTimeString()}</strong></div>}
+      {debug.lastError && <div className="replay-debug-error"><span>MT5 error</span><strong>{debug.lastError}</strong></div>}
+      {!debug.agentSeenOnThisInstance && (
+        <p>Check that sync.py is running and API_BASE points to this live backend. On multi-instance hosting, this also identifies an in-memory queue mismatch.</p>
+      )}
+    </div>
+  );
+}
+
 export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSaved }: Props) {
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isSetupError, setIsSetupError] = useState(false);
   const [waitingForMt5, setWaitingForMt5] = useState(false);
+  const [replayDebug, setReplayDebug] = useState<ReplayDebug | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -87,6 +111,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
     setReplayIdx(Math.max(0, data.entryIndex - 8));
     setWaitingForMt5(false); setError(''); setLoading(false);
+    setReplayDebug(null);
   }, []);
 
   const loadTwelveFallback = useCallback(async () => {
@@ -111,6 +136,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
           const response = await fetch(`${API}/trades/${tradeId}/replay`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
           const data = await response.json() as ReplayData & ReplayPending;
           if (response.status === 202 || data.pending === true) {
+            setReplayDebug(data.debug || null);
+            if (data.debug?.state === 'failed') {
+              setWaitingForMt5(true); setLoading(false);
+              setError(data.debug.lastError || 'MT5 could not return candles for this trade.');
+              return;
+            }
             setWaitingForMt5(true); setLoading(true);
             await new Promise(resolve => setTimeout(resolve, 2500));
             continue;
@@ -335,6 +366,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
               <div className="replay-spinner" />
               <h4>{waitingForMt5 ? 'Waiting for MT5…' : 'Loading chart data…'}</h4>
               <p>{waitingForMt5 ? `Requesting exact ${tradeSummary.symbol} candles from your broker terminal` : 'Preparing trade replay'}</p>
+              {replayDebug && <ReplayDiagnostics debug={replayDebug} />}
               {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
             </div>
           )}
@@ -343,6 +375,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
               <AlertTriangle size={32} color="#f59e0b" />
               <h4>{isSetupError ? 'Replay Not Configured' : 'Chart Data Unavailable'}</h4>
               <p>{error}</p>
+              {replayDebug && <ReplayDiagnostics debug={replayDebug} />}
               {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
               {isSetupError && (
                 <>

@@ -2589,6 +2589,17 @@ body.replay-open .main-content {
   font-size: 12px; font-weight: 600; transition: background 0.15s;
 }
 .replay-setup-link:hover { background: #3b82f630; }
+.replay-debug {
+  width: min(420px, 100%); padding: 12px 14px; border-radius: 10px;
+  background: #131820; border: 1px solid #27314a; text-align: left;
+  display: grid; gap: 7px; color: #8b95b0;
+}
+.replay-debug-title { color: #c9d2e8; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.replay-debug > div:not(.replay-debug-title) { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; font-size: 11px; }
+.replay-debug strong, .replay-debug code { color: #c9d2e8; font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+.replay-debug strong.ok { color: #34d399; }
+.replay-debug strong.warn, .replay-debug-error strong { color: #fbbf24; }
+.replay-chart-state .replay-debug p { max-width: none; padding-top: 8px; border-top: 1px solid #27314a; font-size: 11px; color: #a7b0c7; }
 
 /* Journal panel (right) */
 .replay-journal-panel {

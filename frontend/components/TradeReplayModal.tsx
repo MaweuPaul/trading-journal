@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   X, Play, Pause, SkipBack, SkipForward,
   Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
-  BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2,
+  BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -37,6 +37,13 @@ interface DrawnRect { id: string; time1: number; time2: number; price1: number; 
 interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
 type ReplayAnnotation = (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' }) | (DrawnText & { type: 'text' });
+interface ReplayTimelineEvent {
+  eventId: string; timeframe: string; candleTime: number; price: number;
+  eventType: string; customType: string; title: string; note: string; emotion: string;
+  severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; playbookVersionId: string;
+  screenshotIds: string[]; createdAt: string; updatedAt?: string;
+}
+interface ReplayEventDraft { eventType: string; customType: string; title: string; note: string; emotion: string; severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
   entryPrice: number; exitPrice: number; openTime: string; closeTime: string;
@@ -69,6 +76,12 @@ const JOURNAL_PHASES = [
   { id: 'manage', label: 'Execution', categories: ['execution', 'management', 'trade_management'] },
   { id: 'review', label: 'Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
 ] as const;
+const REPLAY_EVENT_TYPES = [
+  ['observation', 'Observation'], ['confirmation', 'Confirmation'], ['entry', 'Entry decision'],
+  ['management', 'Management'], ['exit', 'Exit decision'], ['emotion', 'Emotion'],
+  ['mistake', 'Mistake'], ['violation', 'Rule violation'], ['lesson', 'Lesson'], ['custom', 'Custom'],
+] as const;
+const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '' };
 const fmt = (n: number, dp = 2) => n.toFixed(dp);
 const fmtDur = (mins: number) => {
   if (mins < 60) return `${mins}m`;
@@ -114,7 +127,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [drawingTool, setDrawingTool] = useState<'none' | 'rect' | 'line' | 'text'>('none');
+  const [drawingTool, setDrawingTool] = useState<'none' | 'rect' | 'line' | 'text' | 'event'>('none');
   const [rectColor, setRectColor] = useState(RECT_COLORS[0]);
   const [drawnRects, setDrawnRects] = useState<DrawnRect[]>([]);
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
@@ -128,6 +141,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const activeAnnotationKeyRef = useRef('');
   const annotationHistoryRef = useRef<Array<{ rects: DrawnRect[]; lines: DrawnLine[]; texts: DrawnText[] }>>([]);
   const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [timelineEvents, setTimelineEvents] = useState<ReplayTimelineEvent[]>([]);
+  const [eventSaveState, setEventSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [eventSaveError, setEventSaveError] = useState('');
+  const [eventDraft, setEventDraft] = useState<ReplayEventDraft>(EMPTY_EVENT_DRAFT);
+  const [eventLocation, setEventLocation] = useState<{ time: number; price: number } | null>(null);
+  const [editingEventId, setEditingEventId] = useState('');
+  const eventBaselineRef = useRef('');
+  const eventsLoadedTradeRef = useRef('');
+  const eventSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTimelineNavigationRef = useRef('');
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -185,6 +208,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         setDrawnTexts(annotations.filter(item => item.type === 'text').map(({ type: _type, ...item }) => item as DrawnText));
         annotationHistoryRef.current = [];
         annotationBaselineRef.current = JSON.stringify(annotations);
+        if (eventsLoadedTradeRef.current !== tradeId) {
+          const events = Array.isArray(body.events) ? body.events as ReplayTimelineEvent[] : [];
+          setTimelineEvents(events);
+          eventBaselineRef.current = JSON.stringify(events);
+          eventsLoadedTradeRef.current = tradeId;
+        }
         setLoadedAnnotationKey(annotationKey); setAnnotationSaveState('saved');
       })
       .catch(error => {
@@ -222,6 +251,27 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     }, 700);
     return () => clearTimeout(timer);
   }, [allAnnotations, annotationKey, loadedAnnotationKey, selectedInterval, tradeId]);
+
+  useEffect(() => {
+    if (eventsLoadedTradeRef.current !== tradeId) return;
+    const serialized = JSON.stringify(timelineEvents);
+    if (serialized === eventBaselineRef.current) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setEventSaveState('saving'); setEventSaveError('');
+    const timer = setTimeout(() => {
+      const events = JSON.parse(serialized) as ReplayTimelineEvent[];
+      eventSaveQueueRef.current = eventSaveQueueRef.current.then(async () => {
+        const response = await fetch(`${API}/trades/${tradeId}/replay-journal/events`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ events }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not save timeline events');
+        eventBaselineRef.current = serialized; setEventSaveState('saved');
+      }).catch(error => { setEventSaveState('error'); setEventSaveError(error.message || 'Could not save timeline events'); });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [timelineEvents, tradeId]);
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -344,8 +394,32 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         color: replayData.pnlUSD >= 0 ? '#10b981' : '#ef4444', shape: 'square',
         text: `${replayData.pnlUSD >= 0 ? '+' : ''}$${fmt(replayData.pnlUSD)}`, size: 1 });
     }
+    timelineEvents.filter(event => event.timeframe === selectedInterval).forEach(event => {
+      const candleIndex = replayData.candles.findIndex(candle => Number(candle.time) >= Number(event.candleTime));
+      if (candleIndex < 0 || candleIndex > replayIdx) return;
+      const label = REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType || 'Event';
+      markers.push({
+        time: replayData.candles[candleIndex].time as UTCTimestamp,
+        position: event.price >= replayData.candles[candleIndex].high ? 'aboveBar' : 'belowBar',
+        color: event.severity === 'critical' ? '#ef4444' : event.severity === 'important' ? '#f59e0b' : '#60a5fa',
+        shape: 'circle', text: label, size: 1,
+      });
+    });
     markersRef.current.setMarkers(markers);
-  }, [replayIdx, replayData]);
+  }, [replayIdx, replayData, selectedInterval, timelineEvents]);
+
+  useEffect(() => {
+    if (!replayData || !pendingTimelineNavigationRef.current) return;
+    const event = timelineEvents.find(item => item.eventId === pendingTimelineNavigationRef.current && item.timeframe === selectedInterval);
+    if (!event) return;
+    const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
+    if (index < 0) return;
+    pendingTimelineNavigationRef.current = '';
+    queueMicrotask(() => {
+      setPlaying(false); setReplayIdx(index);
+      chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, index - 30), to: Math.min(replayData.candles.length - 1, index + 10) });
+    });
+  }, [replayData, selectedInterval, timelineEvents]);
 
   useEffect(() => {
     if (!replayData) return;
@@ -404,6 +478,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (drawingTool === 'none') return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    if (drawingTool === 'event') {
+      const chart = chartRef.current, series = seriesRef.current;
+      if (!chart || !series) return;
+      const time = chart.timeScale().coordinateToTime(e.clientX - r.left);
+      const price = series.coordinateToPrice(e.clientY - r.top);
+      if (time != null && price != null) {
+        setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setEventLocation({ time: Number(time), price });
+      }
+      return;
+    }
     if (drawingTool === 'text') {
       const chart = chartRef.current, series = seriesRef.current;
       const text = annotationText.trim();
@@ -485,6 +569,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const activePhase = JOURNAL_PHASES.find(phase => phase.id === journalPhase) || JOURNAL_PHASES[0];
   const phaseBlocks = playbook?.blocks.filter(block => activePhase.categories.includes(block.category as never)) || [];
   const allPlaybookRules = playbook?.blocks.flatMap(block => block.rules) || [];
+  const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval).sort((a, b) => a.candleTime - b.candleTime);
   const answeredRules = allPlaybookRules.filter(rule => {
     const value = playbookResponses[rule.ruleId];
     return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
@@ -511,6 +596,37 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const clearAnnotations = () => {
     if (allAnnotations.length === 0 || !window.confirm(`Clear all ${allAnnotations.length} annotations from ${selectedInterval}?`)) return;
     pushAnnotationHistory(); setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null; redrawCanvas();
+  };
+  const saveTimelineEvent = () => {
+    if (!eventLocation || !eventDraft.title.trim()) return;
+    const existing = timelineEvents.find(event => event.eventId === editingEventId);
+    const event: ReplayTimelineEvent = {
+      eventId: existing?.eventId || `event-${Date.now()}`,
+      timeframe: existing?.timeframe || selectedInterval,
+      candleTime: eventLocation.time, price: eventLocation.price,
+      eventType: eventDraft.eventType, customType: eventDraft.eventType === 'custom' ? eventDraft.customType.trim() : '',
+      title: eventDraft.title.trim().slice(0, 100), note: eventDraft.note.trim().slice(0, 1000), emotion: eventDraft.emotion,
+      severity: eventDraft.severity, playbookRuleId: eventDraft.playbookRuleId,
+      playbookVersionId: eventDraft.playbookRuleId ? replayData?.playbookSnapshot?.versionId || '' : '',
+      screenshotIds: existing?.screenshotIds || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    setTimelineEvents(current => [...current.filter(item => item.eventId !== event.eventId), event].sort((a, b) => a.candleTime - b.candleTime));
+    setEventLocation(null); setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setDrawingTool('none');
+  };
+  const editTimelineEvent = (event: ReplayTimelineEvent) => {
+    setEditingEventId(event.eventId); setEventLocation({ time: event.candleTime, price: event.price });
+    setEventDraft({ eventType: event.eventType, customType: event.customType || '', title: event.title, note: event.note || '', emotion: event.emotion || '', severity: event.severity, playbookRuleId: event.playbookRuleId || '' });
+  };
+  const deleteTimelineEvent = (eventId: string) => setTimelineEvents(current => current.filter(event => event.eventId !== eventId));
+  const navigateToTimelineEvent = (event: ReplayTimelineEvent) => {
+    if (!replayData || event.timeframe !== selectedInterval) {
+      if (event.timeframe !== selectedInterval) { pendingTimelineNavigationRef.current = event.eventId; switchTimeframe(event.timeframe); }
+      return;
+    }
+    const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
+    if (index < 0) return;
+    setPlaying(false); setReplayIdx(Math.max(replayIdx, index));
+    queueMicrotask(() => chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, index - 30), to: Math.min(replayData.candles.length - 1, index + 10) }));
   };
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
     const value = playbookResponses[rule.ruleId];
@@ -568,7 +684,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart">
           <TypeIcon size={13} /> Text
         </button>
-        {drawingTool !== 'none' && (
+        <button className={`replay-tool-btn${drawingTool === 'event' ? ' active' : ''}`}
+          onClick={() => { setDrawingTool(tool => tool === 'event' ? 'none' : 'event'); setEventLocation(null); setEditingEventId(''); }} title="Attach a journal event to a candle">
+          <MapPin size={13} /> Event
+        </button>
+        {['rect', 'line', 'text'].includes(drawingTool) && (
           <div style={{ display: 'flex', gap: 4 }}>
             {RECT_COLORS.map(c => (
               <button key={c} onClick={() => setRectColor(c)}
@@ -604,6 +724,23 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                 onChange={event => setAnnotationText(event.target.value)}
               />
               <span>{annotationText.trim() ? 'Click the chart to place it' : 'Type your note first'}</span>
+            </div>
+          )}
+          {eventLocation && (
+            <div className="replay-event-editor" role="dialog" aria-label={editingEventId ? 'Edit timeline event' : 'Add timeline event'}>
+              <div className="replay-event-editor-head"><strong>{editingEventId ? 'Edit chart event' : 'What happened here?'}</strong><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); }}>×</button></div>
+              <div className="replay-event-editor-grid">
+                <label>Event type<select value={eventDraft.eventType} onChange={event => setEventDraft(current => ({ ...current, eventType: event.target.value }))}>{REPLAY_EVENT_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                <label>Importance<select value={eventDraft.severity} onChange={event => setEventDraft(current => ({ ...current, severity: event.target.value as ReplayEventDraft['severity'] }))}><option value="minor">Minor</option><option value="important">Important</option><option value="critical">Critical</option></select></label>
+              </div>
+              {eventDraft.eventType === 'custom' && <label>Custom type<input maxLength={60} value={eventDraft.customType} onChange={event => setEventDraft(current => ({ ...current, customType: event.target.value }))} placeholder="e.g. News reaction" /></label>}
+              <label>Short title<input autoFocus maxLength={100} value={eventDraft.title} onChange={event => setEventDraft(current => ({ ...current, title: event.target.value }))} placeholder="e.g. Entered before confirmation" /></label>
+              <label>Details<textarea maxLength={1000} value={eventDraft.note} onChange={event => setEventDraft(current => ({ ...current, note: event.target.value }))} placeholder="What did you see, decide, or feel?" /></label>
+              <div className="replay-event-editor-grid">
+                <label>Emotion<select value={eventDraft.emotion} onChange={event => setEventDraft(current => ({ ...current, emotion: event.target.value }))}><option value="">None</option>{EMOTIONS.map(item => <option key={item.name}>{item.name}</option>)}</select></label>
+                <label>Playbook rule<select value={eventDraft.playbookRuleId} onChange={event => setEventDraft(current => ({ ...current, playbookRuleId: event.target.value }))}><option value="">No linked rule</option>{allPlaybookRules.map(rule => <option value={rule.ruleId} key={rule.ruleId}>{rule.label}</option>)}</select></label>
+              </div>
+              <div className="replay-event-editor-actions"><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); }}>Cancel</button><button type="button" className="primary" disabled={!eventDraft.title.trim()} onClick={saveTimelineEvent}>{editingEventId ? 'Update event' : 'Add to timeline'}</button></div>
             </div>
           )}
           {showAnnotationList && allAnnotations.length > 0 && (
@@ -654,6 +791,21 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         </div>
 
         <div className="replay-journal-panel">
+          <section className="replay-timeline">
+            <div className="replay-timeline-head">
+              <div><span>Trade timeline</span><strong>{visibleTimelineEvents.length} on {selectedInterval} · {timelineEvents.length} total</strong></div>
+              <small className={eventSaveState} title={eventSaveError}>{eventSaveState === 'saving' ? 'Saving…' : eventSaveState === 'error' ? 'Not saved' : 'Saved'}</small>
+            </div>
+            {visibleTimelineEvents.length === 0 ? (
+              <button type="button" className="replay-timeline-empty" onClick={() => setDrawingTool('event')}><MapPin size={14} /> Select Event, then click a candle to tell the trade story.</button>
+            ) : visibleTimelineEvents.map(event => (
+              <article className="replay-timeline-event" key={event.eventId} onClick={() => navigateToTimelineEvent(event)}>
+                <i className={event.severity} />
+                <div><span>{new Date(event.candleTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType}</span><strong>{event.title}</strong>{event.note && <p>{event.note}</p>}</div>
+                <div className="replay-timeline-actions"><button type="button" onClick={click => { click.stopPropagation(); editTimelineEvent(event); }}>Edit</button><button type="button" onClick={click => { click.stopPropagation(); if (window.confirm('Delete this timeline event?')) deleteTimelineEvent(event.eventId); }}><Trash2 size={12} /></button></div>
+              </article>
+            ))}
+          </section>
           <div className="replay-playbook-head">
             <div>
               <span>Strategy playbook</span>

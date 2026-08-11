@@ -31,4 +31,39 @@ function normalizeReplayAnnotations(interval, input) {
   });
 }
 
-module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations };
+const REPLAY_EVENT_TYPES = new Set(['observation', 'confirmation', 'entry', 'management', 'exit', 'emotion', 'mistake', 'violation', 'lesson', 'custom']);
+const REPLAY_EVENT_SEVERITIES = new Set(['minor', 'important', 'critical']);
+
+function normalizeReplayEvents(input) {
+  if (!Array.isArray(input)) throw new Error('events must be an array');
+  if (input.length > 300) throw new Error('A trade can have at most 300 timeline events');
+  const ids = new Set();
+  return input.map((event, index) => {
+    const eventId = String(event?.eventId || '').trim();
+    if (!/^[A-Za-z0-9:_-]{1,100}$/.test(eventId)) throw new Error(`Timeline event ${index + 1} has an invalid ID`);
+    if (ids.has(eventId)) throw new Error(`Timeline event ID ${eventId} is duplicated`);
+    ids.add(eventId);
+    const timeframe = String(event.timeframe || '');
+    if (!REPLAY_ANNOTATION_INTERVALS.has(timeframe)) throw new Error(`Timeline event ${index + 1} has an unsupported timeframe`);
+    const eventType = String(event.eventType || '');
+    if (!REPLAY_EVENT_TYPES.has(eventType)) throw new Error(`Timeline event ${index + 1} has an unsupported type`);
+    const candleTime = Number(event.candleTime); const price = Number(event.price);
+    if (!Number.isFinite(candleTime) || !Number.isFinite(price)) throw new Error(`Timeline event ${index + 1} has invalid chart coordinates`);
+    const title = String(event.title || '').trim().slice(0, 100);
+    if (!title) throw new Error(`Timeline event ${index + 1} needs a title`);
+    const severity = REPLAY_EVENT_SEVERITIES.has(String(event.severity || '')) ? String(event.severity) : 'important';
+    return {
+      eventId, timeframe, candleTime, price, eventType,
+      customType: eventType === 'custom' ? String(event.customType || '').trim().slice(0, 60) : '',
+      title, note: String(event.note || '').trim().slice(0, 1000),
+      emotion: String(event.emotion || '').trim().slice(0, 40), severity,
+      playbookRuleId: String(event.playbookRuleId || '').trim().slice(0, 100),
+      playbookVersionId: String(event.playbookVersionId || '').trim().slice(0, 100),
+      screenshotIds: Array.isArray(event.screenshotIds) ? event.screenshotIds.map(value => String(value).slice(0, 100)).slice(0, 10) : [],
+      createdAt: event.createdAt ? new Date(event.createdAt).toISOString() : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+}
+
+module.exports = { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents };

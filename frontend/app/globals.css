@@ -2574,6 +2574,40 @@ body.replay-open .main-content {
 .replay-annotation-row { min-height: 35px; border-bottom: 1px solid #182033; font-size: 10.5px; }
 .replay-annotation-row i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .replay-annotation-row span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replay-event-editor { position: absolute; z-index: 6; top: 14px; left: 14px; width: min(430px, calc(100% - 28px)); display: grid; gap: 9px; padding: 13px; box-sizing: border-box; border: 1px solid #f59e0b80; border-radius: 12px; background: #0a0e14f7; color: #c9d2e8; box-shadow: 0 14px 36px #000b; pointer-events: auto; }
+.replay-event-editor-head, .replay-event-editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.replay-event-editor-head strong { font-size: 12px; color: #f8fafc; }
+.replay-event-editor-head button { border: 0; background: transparent; color: #8b95b0; cursor: pointer; font-size: 20px; }
+.replay-event-editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.replay-event-editor label { display: grid; gap: 4px; color: #8e9ab7; font-size: 10px; }
+.replay-event-editor input, .replay-event-editor select, .replay-event-editor textarea { width: 100%; min-height: 34px; box-sizing: border-box; border: 1px solid #303b55; border-radius: 7px; outline: none; background: #111722; color: #eef3ff; padding: 7px 8px; font: 11px var(--font-sans); }
+.replay-event-editor textarea { min-height: 68px; resize: vertical; }
+.replay-event-editor input:focus, .replay-event-editor select:focus, .replay-event-editor textarea:focus { border-color: #f59e0b; }
+.replay-event-editor-actions { justify-content: flex-end; }
+.replay-event-editor-actions button { min-height: 34px; border: 1px solid #303b55; border-radius: 7px; background: #151b26; color: #aeb9d2; padding: 6px 11px; cursor: pointer; }
+.replay-event-editor-actions button.primary { border-color: #d97706; background: #d97706; color: white; font-weight: 700; }
+.replay-event-editor-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.replay-timeline { display: grid; gap: 7px; padding: 11px; border: 1px solid #27314a; border-radius: 10px; background: #10151d; }
+.replay-timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.replay-timeline-head > div { display: grid; gap: 2px; }
+.replay-timeline-head span { color: #64708e; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.replay-timeline-head strong { color: #dbe4f7; font-size: 11px; }
+.replay-timeline-head small { color: #34d399; font-size: 9px; }
+.replay-timeline-head small.saving { color: #93c5fd; }
+.replay-timeline-head small.error { color: #fb7185; }
+.replay-timeline-empty { min-height: 54px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed #303b55; border-radius: 8px; background: transparent; color: #7f8aa7; font-size: 10.5px; cursor: pointer; }
+.replay-timeline-event { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 8px 5px; border-top: 1px solid #1f283b; cursor: pointer; }
+.replay-timeline-event > i { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #60a5fa; }
+.replay-timeline-event > i.important { background: #f59e0b; }
+.replay-timeline-event > i.critical { background: #ef4444; }
+.replay-timeline-event > div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.replay-timeline-event span { color: #64708e; font-size: 9px; }
+.replay-timeline-event strong { color: #dbe4f7; font-size: 11px; }
+.replay-timeline-event p { margin: 0; color: #8e9ab7; font-size: 10px; line-height: 1.4; }
+.replay-timeline-actions { display: flex; gap: 2px; opacity: .3; }
+.replay-timeline-event:hover .replay-timeline-actions { opacity: 1; }
+.replay-timeline-actions button { border: 0; border-radius: 5px; background: transparent; color: #8e9ab7; padding: 4px; cursor: pointer; font-size: 9px; }
+.replay-timeline-actions button:hover { background: #263149; color: white; }
 
 /* Main split */
 .replay-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -2778,6 +2812,8 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-timeframes button { flex: 1; min-width: 44px; min-height: 40px; }
   .replay-chart-text-editor { top: 10px; left: 10px; right: 10px; grid-template-columns: auto minmax(0, 1fr); }
   .replay-annotation-manager { top: 10px; right: 10px; left: 10px; width: auto; }
+  .replay-event-editor { top: 10px; left: 10px; right: 10px; width: auto; }
+  .replay-event-editor-grid { grid-template-columns: 1fr; }
   .replay-body { flex-direction: column; overflow-y: auto; }
   .replay-chart-wrap { flex: 0 0 48dvh; min-height: 300px; }
   .replay-journal-panel { flex: 0 0 auto; overflow: visible; border-left: 0; border-top: 1px solid #1a2035; }

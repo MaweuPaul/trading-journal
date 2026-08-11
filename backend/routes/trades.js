@@ -11,7 +11,7 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
-const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations } = require('../lib/replayAnnotations');
+const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents } = require('../lib/replayAnnotations');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -1823,7 +1823,7 @@ router.post('/trades/:id/replay-failed', auth, async (req, res) => {
 async function findReplayTrade(tradeId, userId) {
   if (mongoose.connection.readyState === 1) {
     if (!mongoose.isValidObjectId(tradeId)) return null;
-    return Trade.findOne({ _id: tradeId, user: userId }).select('_id').lean();
+    return Trade.findOne({ _id: tradeId, user: userId }).select('_id playbookSnapshot').lean();
   }
   return inMemoryTrades.find(trade => String(trade._id) === String(tradeId) && isOfflineTradeVisibleToUser(trade, userId)) || null;
 }
@@ -1845,10 +1845,41 @@ router.get('/trades/:id/replay-journal', auth, async (req, res) => {
       revision: journal?.revision || 0,
       interval,
       annotations: journal?.annotationsByInterval?.[interval] || [],
+      events: journal?.events || [],
       updatedAt: journal?.updatedAt || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/trades/:id/replay-journal/events replaces the ordered event timeline.
+router.put('/trades/:id/replay-journal/events', auth, async (req, res) => {
+  try {
+    const events = normalizeReplayEvents(req.body.events);
+    const trade = await findReplayTrade(req.params.id, req.user.userId);
+    if (!trade) return res.status(404).json({ error: 'Trade not found' });
+    const snapshot = trade.playbookSnapshot || null;
+    const snapshotRuleIds = new Set(snapshot?.blocks?.flatMap(block => block.rules || []).map(rule => String(rule.ruleId)) || []);
+    const invalidLink = events.find(event => event.playbookRuleId && (!snapshot || event.playbookVersionId !== String(snapshot.versionId) || !snapshotRuleIds.has(event.playbookRuleId)));
+    if (invalidLink) return res.status(400).json({ error: `Timeline event cannot link to rule ${invalidLink.playbookRuleId} outside this trade's playbook snapshot` });
+    let journal;
+    if (mongoose.connection.readyState === 1) {
+      journal = await ReplayJournal.findOne({ user: req.user.userId, trade: req.params.id });
+      if (!journal) journal = new ReplayJournal({ user: req.user.userId, trade: req.params.id, annotationsByInterval: {}, events: [] });
+      journal.events = events;
+      journal.revision = Number(journal.revision || 0) + 1;
+      await journal.save();
+    } else {
+      const key = `${req.user.userId}:${req.params.id}`;
+      const current = inMemoryReplayJournals[key] || { user: String(req.user.userId), trade: String(req.params.id), schemaVersion: 1, revision: 0, annotationsByInterval: {}, events: [] };
+      journal = { ...current, events, revision: Number(current.revision || 0) + 1, updatedAt: new Date().toISOString() };
+      inMemoryReplayJournals[key] = journal;
+      saveLocalReplayJournals();
+    }
+    res.json({ revision: journal.revision, events, updatedAt: journal.updatedAt || new Date().toISOString() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

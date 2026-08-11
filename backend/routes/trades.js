@@ -2241,6 +2241,7 @@ router.post('/sync', auth, async (req, res) => {
 
     let inserted = 0;
     let skipped = 0;
+    let accountTypesUpdated = 0;
     const userRules = await getUserRules(req.user.userId);
     const checklistSnapshot = userRules
       .filter(rule => rule.category === 'pre_trade' && rule.enabled !== false)

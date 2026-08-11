@@ -10,6 +10,9 @@ frontend/.env*.local
 
 # ── Local fallback database (contains real trade data) ──────────────
 backend/local_trades.json
+backend/local_account_events.json
+backend/local_playbooks.json
+backend/local_replay_journals.json
 
 # ── Screenshot uploads (served via Cloudinary, not stored in repo) ──
 backend/public/screenshots/

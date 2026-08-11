@@ -20,6 +20,7 @@ interface ReplayData {
   existingNotes: string; existingEmotion: string; existingGrade: string; existingTags: string[];
   source?: 'mt5' | 'twelve'; sourceLabel?: string;
 }
+interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 export interface TradeReplaySummary {
   symbol: string; direction: string; pnlUSD: number; pnlPct: number;
@@ -76,8 +77,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [saving, setSaving] = useState(false);
 
   const applyReplay = useCallback((data: ReplayData) => {
-    const replay = data;
-    replay.candles = replay.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
+    if (!Array.isArray(data?.candles) || data.candles.length === 0) {
+      throw new Error('The replay service returned no candle data. Restart the backend and MT5 sync agent, then try again.');
+    }
+    const replay = { ...data };
+    replay.candles = data.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
     setReplayData(replay);
     setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
     setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
@@ -91,9 +95,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     setLoading(true); setWaitingForMt5(false); setError(''); setIsSetupError(false);
     try {
       const response = await fetch(`${API}/trades/${tradeId}/replay?fallback=twelve`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await response.json();
+      const data = await response.json() as ReplayData & ReplayPending;
       if (!response.ok) { setError(data.error || 'Failed to load fallback chart data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
-      applyReplay(data as ReplayData);
+      applyReplay(data);
     } catch (e) { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); }
   }, [applyReplay, tradeId]);
 
@@ -105,14 +109,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
       for (let attempt = 0; attempt < 25 && !controller.signal.aborted; attempt += 1) {
         try {
           const response = await fetch(`${API}/trades/${tradeId}/replay`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
-          const data = await response.json();
-          if (response.status === 202) {
+          const data = await response.json() as ReplayData & ReplayPending;
+          if (response.status === 202 || data.pending === true) {
             setWaitingForMt5(true); setLoading(true);
             await new Promise(resolve => setTimeout(resolve, 2500));
             continue;
           }
           if (!response.ok) { setError(data.error || 'Failed to load replay data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
-          applyReplay(data as ReplayData);
+          applyReplay(data);
           return;
         } catch (e) {
           if ((e as Error).name !== 'AbortError') { setError((e as Error).message || 'Network error'); setLoading(false); }

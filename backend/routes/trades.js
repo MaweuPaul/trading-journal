@@ -1730,7 +1730,7 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
 
     const cacheKey = String(req.params.id);
     const cached = replayCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS) return res.json(cached.data);
+    if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS && Array.isArray(cached.data?.candles)) return res.json(cached.data);
     if (cached) replayCache.delete(cacheKey);
 
     if (req.query.fallback !== 'twelve') {

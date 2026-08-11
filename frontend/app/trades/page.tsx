@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
 import { 
@@ -173,11 +173,23 @@ function formatDate(iso: string) {
   });
 }
 
-export default function TradesPage() {
+function TradesPageContent() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryTradeRestored = useRef<string | null>(null);
+  const updateQuery = useCallback((updates: Record<string, string | number | null | undefined>) => {
+    const next = new URLSearchParams(searchParams.toString());
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === '' || (key === 'page' && Number(value) === 1)) next.delete(key);
+      else next.set(key, String(value));
+    });
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page')) || 1));
   const [loading, setLoading] = useState(true);
   const [hasToken, setHasToken] = useState(false);
   const [tradingRules, setTradingRules] = useState<TradingRule[]>([]);
@@ -212,11 +224,11 @@ export default function TradesPage() {
   }, [hasToken]);
 
   // Filters
-  const [symbol, setSymbol]       = useState('');
-  const [direction, setDirection] = useState('');
-  const [accountTypeFilter, setAccountTypeFilter] = useState('');
-  const [from, setFrom]           = useState('');
-  const [to, setTo]               = useState('');
+  const [symbol, setSymbol]       = useState(() => searchParams.get('symbol') || '');
+  const [direction, setDirection] = useState(() => searchParams.get('direction') || '');
+  const [accountTypeFilter, setAccountTypeFilter] = useState(() => searchParams.get('account') || '');
+  const [from, setFrom]           = useState(() => searchParams.get('from') || '');
+  const [to, setTo]               = useState(() => searchParams.get('to') || '');
   const [symbols, setSymbols]     = useState<string[]>([]);
 
   // Journal Drawer State
@@ -295,6 +307,7 @@ export default function TradesPage() {
 
   const resetFilters = () => {
     setSymbol(''); setDirection(''); setAccountTypeFilter(''); setFrom(''); setTo(''); setPage(1);
+    updateQuery({ symbol: null, direction: null, account: null, from: null, to: null, page: null });
   };
 
   const handleRowClick = (trade: Trade) => {
@@ -306,6 +319,7 @@ export default function TradesPage() {
       return active.length > 0 ? active : fallback.map(rule => ({ ...rule }));
     };
     setSelectedTrade(trade);
+    updateQuery({ trade: trade._id });
     setDraftNotes(trade.notes || '');
     setDraftEmotion(trade.emotion || '');
     setDraftGrade(trade.grade || '');
@@ -340,6 +354,23 @@ export default function TradesPage() {
     setDraftPlaybookResponses(trade.playbookResponses || {});
     setActivePlaybookPhase('plan');
   };
+
+  useEffect(() => {
+    const requestedId = searchParams.get('replay') || searchParams.get('trade');
+    if (!requestedId || queryTradeRestored.current === requestedId) return;
+    const requestedTrade = trades.find(trade => trade._id === requestedId);
+    if (!requestedTrade) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      queryTradeRestored.current = requestedId;
+      handleRowClick(requestedTrade);
+      if (searchParams.get('replay')) setReplayTradeId(requestedId);
+    });
+    return () => { cancelled = true; };
+    // Restoring is intentionally keyed to the loaded result set and URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, searchParams]);
 
   const handleAddTag = (e: React.FormEvent) => {
     e.preventDefault();
@@ -706,14 +737,14 @@ export default function TradesPage() {
       <div className="filters-bar">
         <div className="filter-group">
           <label>Symbol</label>
-          <select value={symbol} onChange={e => { setSymbol(e.target.value); setPage(1); }}>
+          <select value={symbol} onChange={e => { setSymbol(e.target.value); setPage(1); updateQuery({ symbol: e.target.value, page: null }); }}>
             <option value="">All pairs</option>
             {symbols.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         <div className="filter-group">
           <label>Direction</label>
-          <select value={direction} onChange={e => { setDirection(e.target.value); setPage(1); }}>
+          <select value={direction} onChange={e => { setDirection(e.target.value); setPage(1); updateQuery({ direction: e.target.value, page: null }); }}>
             <option value="">All</option>
             <option value="BUY">BUY</option>
             <option value="SELL">SELL</option>
@@ -721,7 +752,7 @@ export default function TradesPage() {
         </div>
         <div className="filter-group">
           <label>Account</label>
-          <select value={accountTypeFilter} onChange={e => { setAccountTypeFilter(e.target.value); setPage(1); }}>
+          <select value={accountTypeFilter} onChange={e => { setAccountTypeFilter(e.target.value); setPage(1); updateQuery({ account: e.target.value, page: null }); }}>
             <option value="">Live &amp; Demo</option>
             <option value="live">Live only</option>
             <option value="demo">Demo only</option>
@@ -729,11 +760,11 @@ export default function TradesPage() {
         </div>
         <div className="filter-group">
           <label>From date</label>
-          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} />
+          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); updateQuery({ from: e.target.value, page: null }); }} />
         </div>
         <div className="filter-group">
           <label>To date</label>
-          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} />
+          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); updateQuery({ to: e.target.value, page: null }); }} />
         </div>
         <button className="btn btn-ghost" onClick={resetFilters} style={{ alignSelf: 'flex-end', flexShrink: 0 }}>
           <SlidersHorizontal size={13} />
@@ -865,11 +896,11 @@ export default function TradesPage() {
                 Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
               </span>
               <div className="pagination-controls">
-                <button className="page-btn" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+                <button className="page-btn" disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); updateQuery({ page: next }); }}>
                   <ChevronLeft size={14} />
                 </button>
                 <span className="page-current">{page} / {totalPages}</span>
-                <button className="page-btn" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+                <button className="page-btn" disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); updateQuery({ page: next }); }}>
                   <ChevronRight size={14} />
                 </button>
               </div>
@@ -883,7 +914,7 @@ export default function TradesPage() {
       ══════════════════════════════ */}
       {selectedTrade && (
         <>
-          <div className="drawer-overlay" onClick={() => setSelectedTrade(null)} />
+          <div className="drawer-overlay" onClick={() => { setSelectedTrade(null); updateQuery({ trade: null }); }} />
           <div className="drawer">
             <div className="drawer-header">
               <div>
@@ -909,10 +940,10 @@ export default function TradesPage() {
                   </button>
                 </div>
               </div>
-              <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => setReplayTradeId(selectedTrade._id)} title="Open chart replay for this trade">
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => { setReplayTradeId(selectedTrade._id); updateQuery({ trade: selectedTrade._id, replay: selectedTrade._id }); }} title="Open chart replay for this trade">
                 <Play size={14} /> Replay
               </button>
-              <button className="drawer-close" onClick={() => setSelectedTrade(null)}>
+              <button className="drawer-close" onClick={() => { setSelectedTrade(null); updateQuery({ trade: null }); }}>
                 <X size={16} />
               </button>
             </div>
@@ -1561,7 +1592,7 @@ export default function TradesPage() {
               </button>
               <button 
                 className="btn btn-ghost" 
-                onClick={() => setSelectedTrade(null)}
+                onClick={() => { setSelectedTrade(null); updateQuery({ trade: null }); }}
                 disabled={saving}
               >
                 Cancel
@@ -1613,7 +1644,11 @@ export default function TradesPage() {
           durationMinutes: selectedTrade.durationMinutes,
           lotSize: selectedTrade.lotSize,
         }}
-        onClose={() => setReplayTradeId(null)}
+        initialInterval={searchParams.get('tf') || undefined}
+        initialJournalPhase={(searchParams.get('phase') as JournalPhase) || undefined}
+        onIntervalChange={interval => updateQuery({ tf: interval })}
+        onJournalPhaseChange={phase => updateQuery({ phase })}
+        onClose={() => { setReplayTradeId(null); updateQuery({ replay: null, tf: null, phase: null }); }}
         onSaved={updates => {
           setTrades(current => current.map(trade => trade._id === replayTradeId ? { ...trade, ...updates } : trade));
           setSelectedTrade(current => current ? { ...current, ...updates } : current);
@@ -1622,8 +1657,13 @@ export default function TradesPage() {
           setDraftGrade(updates.grade);
           setDraftTags(updates.tags);
           setReplayTradeId(null);
+          updateQuery({ replay: null, tf: null, phase: null });
         }}
       />}
     </div>
   );
+}
+
+export default function TradesPage() {
+  return <Suspense fallback={<div className="loading-wrap"><div className="spinner" /></div>}><TradesPageContent /></Suspense>;
 }

@@ -43,6 +43,10 @@ export interface TradeReplaySummary {
 }
 interface Props {
   tradeId: string; tradeSummary: TradeReplaySummary;
+  initialInterval?: string;
+  initialJournalPhase?: 'plan' | 'manage' | 'review';
+  onIntervalChange?: (interval: string) => void;
+  onJournalPhaseChange?: (phase: 'plan' | 'manage' | 'review') => void;
   onClose: () => void;
   onSaved: (updates: { notes: string; emotion: string; grade: string; tags: string[] }) => void;
 }
@@ -91,7 +95,7 @@ function ReplayDiagnostics({ debug }: { debug: ReplayDebug }) {
   );
 }
 
-export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSaved }: Props) {
+export default function TradeReplayModal({ tradeId, tradeSummary, initialInterval, initialJournalPhase, onIntervalChange, onJournalPhaseChange, onClose, onSaved }: Props) {
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -123,7 +127,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
-  const [journalPhase, setJournalPhase] = useState<'plan' | 'manage' | 'review'>('plan');
+  const [journalPhase, setJournalPhase] = useState<'plan' | 'manage' | 'review'>(() =>
+    initialJournalPhase && ['plan', 'manage', 'review'].includes(initialJournalPhase) ? initialJournalPhase : 'plan'
+  );
   const [playbookResponses, setPlaybookResponses] = useState<Record<string, unknown>>({});
   const [analysisGrade, setAnalysisGrade] = useState('');
   const [executionGrade, setExecutionGrade] = useState('');
@@ -131,7 +137,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [confidenceRating, setConfidenceRating] = useState<number | null>(null);
   const [exitReason, setExitReason] = useState('');
   const [manuallyIntervened, setManuallyIntervened] = useState<boolean | null>(null);
-  const [selectedInterval, setSelectedInterval] = useState(() => defaultReplayTimeframe(tradeSummary.durationMinutes));
+  const [selectedInterval, setSelectedInterval] = useState(() =>
+    initialInterval && REPLAY_TIMEFRAMES.some(timeframe => timeframe.value === initialInterval)
+      ? initialInterval
+      : defaultReplayTimeframe(tradeSummary.durationMinutes)
+  );
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -399,6 +409,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
     setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null;
     setSelectedInterval(interval);
+    onIntervalChange?.(interval);
   };
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
     const value = playbookResponses[rule.ruleId];
@@ -525,7 +536,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
             <>
               <div className="replay-phase-tabs" role="tablist" aria-label="Journal phase">
                 {JOURNAL_PHASES.map(phase => (
-                  <button type="button" role="tab" aria-selected={journalPhase === phase.id} key={phase.id} className={journalPhase === phase.id ? 'active' : ''} onClick={() => setJournalPhase(phase.id)}>{phase.label}</button>
+                  <button type="button" role="tab" aria-selected={journalPhase === phase.id} key={phase.id} className={journalPhase === phase.id ? 'active' : ''} onClick={() => { setJournalPhase(phase.id); onJournalPhaseChange?.(phase.id); }}>{phase.label}</button>
                 ))}
               </div>
               <div className="replay-playbook-rules">

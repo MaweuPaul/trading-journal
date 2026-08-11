@@ -5,6 +5,8 @@ const syncRequestSchema = new mongoose.Schema({
   forceFullSync: { type: Boolean, default: false },
   requestedAt: { type: Date, default: Date.now },
   completedAt: { type: Date, default: null },
+  replayAgentLastSeen: { type: Date, default: null },
+  replayAgentInstance: { type: String, default: '' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('SyncRequest', syncRequestSchema);

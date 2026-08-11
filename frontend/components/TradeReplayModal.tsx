@@ -11,6 +11,9 @@ import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time
 const API = '/api';
 
 interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; }
+interface ReplayPlaybookRule { ruleId: string; label: string; inputType: string; options?: string[]; required?: boolean; helpText?: string; }
+interface ReplayPlaybookBlock { blockId: string; name: string; category: string; rules: ReplayPlaybookRule[]; }
+interface ReplayPlaybookSnapshot { name: string; versionNumber: number; versionId: string; blocks: ReplayPlaybookBlock[]; }
 interface ReplayData {
   candles: Candle[]; entryPrice: number; exitPrice: number;
   direction: 'BUY' | 'SELL'; symbol: string; normalizedSymbol: string; interval: string;
@@ -19,11 +22,15 @@ interface ReplayData {
   durationMinutes: number; lotSize: number;
   existingNotes: string; existingEmotion: string; existingGrade: string; existingTags: string[];
   source?: 'mt5' | 'twelve'; sourceLabel?: string;
+  analysisGrade?: string; executionGrade?: string; plannedRR?: number | null; exitReason?: string;
+  manuallyIntervened?: boolean | null; confidenceRating?: number | null; accountType?: string;
+  playbookSnapshot?: ReplayPlaybookSnapshot | null; playbookResponses?: Record<string, unknown>;
 }
 interface ReplayDebug {
   state: 'pending' | 'processing' | 'failed'; queuedAt: string; waitSeconds: number;
   claimCount: number; lastError: string; agentSeenOnThisInstance: boolean;
   lastAgentSeenAt: string | null; backendInstance: string;
+  transport?: 'mongodb-long-poll' | string;
 }
 interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; debug?: ReplayDebug; }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
@@ -45,6 +52,11 @@ const EMOTIONS = [
 ];
 const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
 const RECT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const JOURNAL_PHASES = [
+  { id: 'plan', label: 'Plan', categories: ['concept', 'context', 'setup', 'entry', 'risk', 'pre_trade'] },
+  { id: 'manage', label: 'Execution', categories: ['execution', 'management', 'trade_management'] },
+  { id: 'review', label: 'Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
+] as const;
 const fmt = (n: number, dp = 2) => n.toFixed(dp);
 const fmtDur = (mins: number) => {
   if (mins < 60) return `${mins}m`;
@@ -53,18 +65,20 @@ const fmtDur = (mins: number) => {
 };
 
 function ReplayDiagnostics({ debug }: { debug: ReplayDebug }) {
-  const agentLabel = debug.agentSeenOnThisInstance ? 'Connected to this API instance' : 'Not detected on this API instance';
+  const sharedTransport = debug.transport === 'mongodb-long-poll';
+  const agentLabel = debug.agentSeenOnThisInstance ? (sharedTransport ? 'Connected to live backend' : 'Connected to this API instance') : 'Not detected by live backend';
   return (
     <div className="replay-debug" role="status" aria-label="MT5 replay diagnostics">
       <div className="replay-debug-title">Connection diagnostics</div>
       <div><span>Request</span><strong>{debug.state} · {debug.waitSeconds}s</strong></div>
       <div><span>MT5 agent</span><strong className={debug.agentSeenOnThisInstance ? 'ok' : 'warn'}>{agentLabel}</strong></div>
       <div><span>Claims</span><strong>{debug.claimCount}</strong></div>
+      {sharedTransport && <div><span>Transport</span><strong className="ok">MongoDB long poll</strong></div>}
       <div><span>API instance</span><code>{debug.backendInstance}</code></div>
       {debug.lastAgentSeenAt && <div><span>Last agent poll</span><strong>{new Date(debug.lastAgentSeenAt).toLocaleTimeString()}</strong></div>}
       {debug.lastError && <div className="replay-debug-error"><span>MT5 error</span><strong>{debug.lastError}</strong></div>}
       {!debug.agentSeenOnThisInstance && (
-        <p>Check that sync.py is running and API_BASE points to this live backend. On multi-instance hosting, this also identifies an in-memory queue mismatch.</p>
+        <p>Check that sync.py is running and API_BASE points to this live backend.</p>
       )}
     </div>
   );
@@ -99,6 +113,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [journalPhase, setJournalPhase] = useState<'plan' | 'manage' | 'review'>('plan');
+  const [playbookResponses, setPlaybookResponses] = useState<Record<string, unknown>>({});
+  const [analysisGrade, setAnalysisGrade] = useState('');
+  const [executionGrade, setExecutionGrade] = useState('');
+  const [plannedRR, setPlannedRR] = useState('');
+  const [confidenceRating, setConfidenceRating] = useState<number | null>(null);
+  const [exitReason, setExitReason] = useState('');
+  const [manuallyIntervened, setManuallyIntervened] = useState<boolean | null>(null);
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
@@ -109,6 +131,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     setReplayData(replay);
     setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
     setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
+    setPlaybookResponses(data.playbookResponses || {});
+    setAnalysisGrade(data.analysisGrade || ''); setExecutionGrade(data.executionGrade || '');
+    setPlannedRR(data.plannedRR == null ? '' : String(data.plannedRR));
+    setConfidenceRating(data.confidenceRating ?? null); setExitReason(data.exitReason || '');
+    setManuallyIntervened(data.manuallyIntervened ?? null);
     setReplayIdx(Math.max(0, data.entryIndex - 8));
     setWaitingForMt5(false); setError(''); setLoading(false);
     setReplayDebug(null);
@@ -288,7 +315,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
     try {
       const res = await fetch(`${API}/trades/${tradeId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ notes, emotion, grade, tags }),
+        body: JSON.stringify({
+          notes, emotion, grade, tags, playbookResponses,
+          analysisGrade, executionGrade, plannedRR: plannedRR === '' ? null : Number(plannedRR),
+          confidenceRating, exitReason, manuallyIntervened,
+        }),
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
       onSaved({ notes, emotion, grade, tags }); onClose();
@@ -313,6 +344,35 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const totalCandles = replayData?.candles.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
   const isProfit = tradeSummary.pnlUSD >= 0;
+  const playbook = replayData?.playbookSnapshot;
+  const activePhase = JOURNAL_PHASES.find(phase => phase.id === journalPhase) || JOURNAL_PHASES[0];
+  const phaseBlocks = playbook?.blocks.filter(block => activePhase.categories.includes(block.category as never)) || [];
+  const allPlaybookRules = playbook?.blocks.flatMap(block => block.rules) || [];
+  const answeredRules = allPlaybookRules.filter(rule => {
+    const value = playbookResponses[rule.ruleId];
+    return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
+  }).length;
+  const setRuleAnswer = (ruleId: string, value: unknown) => setPlaybookResponses(current => ({ ...current, [ruleId]: value }));
+  const renderRuleInput = (rule: ReplayPlaybookRule) => {
+    const value = playbookResponses[rule.ruleId];
+    if (rule.inputType === 'boolean') return (
+      <div className="replay-rule-options">
+        {[true, false].map(option => <button type="button" key={String(option)} className={value === option ? 'selected' : ''} onClick={() => setRuleAnswer(rule.ruleId, option)}>{option ? 'Yes' : 'No'}</button>)}
+      </div>
+    );
+    if (rule.inputType === 'single_choice') return (
+      <select className="replay-rule-input" value={String(value ?? '')} onChange={event => setRuleAnswer(rule.ruleId, event.target.value)}>
+        <option value="">Select an answer</option>{(rule.options || []).map(option => <option key={option}>{option}</option>)}
+      </select>
+    );
+    if (rule.inputType === 'multi_choice') {
+      const selected = Array.isArray(value) ? value as string[] : [];
+      return <div className="replay-rule-options wrap">{(rule.options || []).map(option => <button type="button" key={option} className={selected.includes(option) ? 'selected' : ''} onClick={() => setRuleAnswer(rule.ruleId, selected.includes(option) ? selected.filter(item => item !== option) : [...selected, option])}>{option}</button>)}</div>;
+    }
+    const numeric = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward', 'rating'].includes(rule.inputType);
+    if (rule.inputType === 'long_text') return <textarea className="replay-rule-input" value={String(value ?? '')} onChange={event => setRuleAnswer(rule.ruleId, event.target.value)} />;
+    return <input className="replay-rule-input" type={numeric ? 'number' : rule.inputType === 'date' ? 'date' : rule.inputType === 'time' ? 'time' : 'text'} value={String(value ?? '')} onChange={event => setRuleAnswer(rule.ruleId, numeric && event.target.value !== '' ? Number(event.target.value) : event.target.value)} />;
+  };
 
   return (
     <div className="replay-overlay" role="dialog" aria-modal="true" aria-label="Trade Replay">
@@ -393,6 +453,53 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
         </div>
 
         <div className="replay-journal-panel">
+          <div className="replay-playbook-head">
+            <div>
+              <span>Strategy playbook</span>
+              <strong>{playbook ? `${playbook.name} · v${playbook.versionNumber}` : 'No playbook attached'}</strong>
+            </div>
+            {playbook && <div className="replay-compliance">{answeredRules}/{allPlaybookRules.length}</div>}
+          </div>
+          {playbook && (
+            <>
+              <div className="replay-phase-tabs" role="tablist" aria-label="Journal phase">
+                {JOURNAL_PHASES.map(phase => (
+                  <button type="button" role="tab" aria-selected={journalPhase === phase.id} key={phase.id} className={journalPhase === phase.id ? 'active' : ''} onClick={() => setJournalPhase(phase.id)}>{phase.label}</button>
+                ))}
+              </div>
+              <div className="replay-playbook-rules">
+                {phaseBlocks.length === 0 && <div className="replay-empty-phase">No rules in this phase.</div>}
+                {phaseBlocks.map(block => (
+                  <section key={block.blockId} className="replay-rule-block">
+                    <h4>{block.name}</h4>
+                    {block.rules.map(rule => (
+                      <div key={rule.ruleId} className="replay-rule-field">
+                        <label>{rule.label}{rule.required && <span> *</span>}</label>
+                        {rule.helpText && <p>{rule.helpText}</p>}
+                        {renderRuleInput(rule)}
+                      </div>
+                    ))}
+                  </section>
+                ))}
+              </div>
+            </>
+          )}
+          {journalPhase === 'review' && (
+            <section className="replay-rule-block">
+              <h4>Outcome review</h4>
+              <div className="replay-grade-pair">
+                {[{ label: 'Analysis', value: analysisGrade, set: setAnalysisGrade }, { label: 'Execution', value: executionGrade, set: setExecutionGrade }].map(group => (
+                  <div key={group.label}><label>{group.label} grade</label><div className="replay-rule-options">{GRADES.map(item => <button type="button" key={item} className={group.value === item ? 'selected' : ''} onClick={() => group.set(group.value === item ? '' : item)}>{item}</button>)}</div></div>
+                ))}
+              </div>
+              <div className="replay-review-grid">
+                <label>Planned R:R<input className="replay-rule-input" type="number" min="0" step="0.1" value={plannedRR} onChange={event => setPlannedRR(event.target.value)} /></label>
+                <label>Exit reason<select className="replay-rule-input" value={exitReason} onChange={event => setExitReason(event.target.value)}><option value="">Select</option>{['TP', 'SL', 'Fear', 'Revenge', 'News', 'ManualClose', 'FOMO', 'PartialClose', 'Other'].map(item => <option key={item}>{item}</option>)}</select></label>
+              </div>
+              <label className="replay-confidence">Pre-trade confidence <strong>{confidenceRating ?? '—'}/10</strong><input type="range" min="1" max="10" value={confidenceRating ?? 5} onChange={event => setConfidenceRating(Number(event.target.value))} /></label>
+              <div className="replay-rule-field"><label>Manually intervened?</label><div className="replay-rule-options">{[{ label: 'Yes', value: true }, { label: 'No', value: false }, { label: 'Unknown', value: null }].map(item => <button type="button" key={item.label} className={manuallyIntervened === item.value ? 'selected' : ''} onClick={() => setManuallyIntervened(item.value)}>{item.label}</button>)}</div></div>
+            </section>
+          )}
           <div className="replay-panel-section">
             <div className="replay-panel-label"><BookOpenText size={13} /> Journal Notes</div>
             <textarea className="replay-panel-textarea"

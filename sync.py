@@ -22,6 +22,7 @@ Configuration:
 import time
 import logging
 import argparse
+import threading
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
@@ -427,7 +428,7 @@ def sync_account_events(events):
         return 0, 0
 
 
-def process_replay_requests():
+def process_replay_requests(wait_seconds=0):
     """Fulfil on-demand replay requests with exact candles from this MT5 broker."""
     global JWT_TOKEN
     if not JWT_TOKEN and not get_jwt_token():
@@ -435,10 +436,17 @@ def process_replay_requests():
 
     headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
     try:
-        resp = requests.get(f"{API_BASE}/replay-requests", headers=headers, timeout=API_TIMEOUT)
+        request_timeout = max(API_TIMEOUT, wait_seconds + 10)
+        resp = requests.get(
+            f"{API_BASE}/replay-requests", params={"wait": wait_seconds},
+            headers=headers, timeout=request_timeout,
+        )
         if resp.status_code == 401 and get_jwt_token():
             headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-            resp = requests.get(f"{API_BASE}/replay-requests", headers=headers, timeout=API_TIMEOUT)
+            resp = requests.get(
+                f"{API_BASE}/replay-requests", params={"wait": wait_seconds},
+                headers=headers, timeout=request_timeout,
+            )
         resp.raise_for_status()
         response_data = resp.json()
         replay_requests = response_data.get("requests", [])
@@ -493,6 +501,17 @@ def process_replay_requests():
             except requests.RequestException:
                 pass
 
+
+def replay_worker():
+    """Hold a lightweight request open so Replay clicks reach MT5 immediately."""
+    log.info("[REPLAY] On-demand worker started (25-second long poll).")
+    while True:
+        try:
+            process_replay_requests(wait_seconds=25)
+        except Exception as exc:
+            log.error("[REPLAY] Worker error: %s", exc)
+            time.sleep(2)
+
 def main(once=False, full=False):
     log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
 
@@ -504,9 +523,13 @@ def main(once=False, full=False):
         log.critical("[START] Could not connect to MT5 -- exiting.")
         return
 
+    if once:
+        process_replay_requests()
+    else:
+        threading.Thread(target=replay_worker, name="MT5ReplayWorker", daemon=True).start()
+
     while True:
         try:
-            process_replay_requests()
             force_full_sync = full or get_resync_request()
             latest_time = None if force_full_sync else get_latest_trade_time()
             if full:

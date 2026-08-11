@@ -18,6 +18,8 @@ Rule-level instructional images are optional by default. Enable **Require image 
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 
+The Trades drawer includes a full-screen **Replay** workspace. It loads historical candles through the backend, reveals them candle by candle, marks entry and exit, supports temporary rectangle zones, and saves notes, emotion, grade, and tags back to the trade.
+
 ## Routes
 
 | Route | Purpose |

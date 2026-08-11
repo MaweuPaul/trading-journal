@@ -2,10 +2,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
+import TradeReplayModal from '@/components/TradeReplayModal';
 import { 
   SlidersHorizontal, ChevronLeft, ChevronRight, List, 
   X, Smile, Award, Tag, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play
 } from 'lucide-react';
 
 const API = '/api';
@@ -250,6 +251,7 @@ export default function TradesPage() {
   const [draftPlaybookSnapshot, setDraftPlaybookSnapshot] = useState<PlaybookSnapshot | null>(null);
   const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
   const [activePlaybookPhase, setActivePlaybookPhase] = useState<JournalPhase>('plan');
+  const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -907,6 +909,9 @@ export default function TradesPage() {
                   </button>
                 </div>
               </div>
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => setReplayTradeId(selectedTrade._id)} title="Open chart replay for this trade">
+                <Play size={14} /> Replay
+              </button>
               <button className="drawer-close" onClick={() => setSelectedTrade(null)}>
                 <X size={16} />
               </button>
@@ -1594,6 +1599,31 @@ export default function TradesPage() {
           )}
         </>
       )}
+      {replayTradeId && selectedTrade && <TradeReplayModal
+        tradeId={replayTradeId}
+        tradeSummary={{
+          symbol: selectedTrade.symbol,
+          direction: selectedTrade.direction,
+          pnlUSD: selectedTrade.pnlUSD,
+          pnlPct: selectedTrade.pnlPct,
+          entryPrice: selectedTrade.entryPrice,
+          exitPrice: selectedTrade.exitPrice,
+          openTime: selectedTrade.openTime,
+          closeTime: selectedTrade.closeTime,
+          durationMinutes: selectedTrade.durationMinutes,
+          lotSize: selectedTrade.lotSize,
+        }}
+        onClose={() => setReplayTradeId(null)}
+        onSaved={updates => {
+          setTrades(current => current.map(trade => trade._id === replayTradeId ? { ...trade, ...updates } : trade));
+          setSelectedTrade(current => current ? { ...current, ...updates } : current);
+          setDraftNotes(updates.notes);
+          setDraftEmotion(updates.emotion);
+          setDraftGrade(updates.grade);
+          setDraftTags(updates.tags);
+          setReplayTradeId(null);
+        }}
+      />}
     </div>
   );
 }

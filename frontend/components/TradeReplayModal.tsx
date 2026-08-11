@@ -18,6 +18,7 @@ interface ReplayData {
   entryIndex: number; exitIndex: number; pnlUSD: number; pnlPct: number;
   durationMinutes: number; lotSize: number;
   existingNotes: string; existingEmotion: string; existingGrade: string; existingTags: string[];
+  source?: 'mt5' | 'twelve'; sourceLabel?: string;
 }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 export interface TradeReplaySummary {
@@ -50,6 +51,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isSetupError, setIsSetupError] = useState(false);
+  const [waitingForMt5, setWaitingForMt5] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -73,25 +75,55 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const applyReplay = useCallback((data: ReplayData) => {
+    const replay = data;
+    replay.candles = replay.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
+    setReplayData(replay);
+    setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
+    setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
+    setReplayIdx(Math.max(0, data.entryIndex - 8));
+    setWaitingForMt5(false); setError(''); setLoading(false);
+  }, []);
+
+  const loadTwelveFallback = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setLoading(true); setWaitingForMt5(false); setError(''); setIsSetupError(false);
+    try {
+      const response = await fetch(`${API}/trades/${tradeId}/replay?fallback=twelve`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await response.json();
+      if (!response.ok) { setError(data.error || 'Failed to load fallback chart data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
+      applyReplay(data as ReplayData);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); }
+  }, [applyReplay, tradeId]);
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
     const controller = new AbortController();
-    fetch(`${API}/trades/${tradeId}/replay`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
-      .then(async r => {
-        const data = await r.json();
-        if (!r.ok) { setError(data.error || 'Failed to load replay data'); if (data.setup) setIsSetupError(true); return; }
-        const replay = data as ReplayData;
-        replay.candles = replay.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
-        setReplayData(replay);
-        setNotes(data.existingNotes || ''); setEmotion(data.existingEmotion || '');
-        setGrade(data.existingGrade || ''); setTags(data.existingTags || []);
-        setReplayIdx(Math.max(0, data.entryIndex - 8));
-      })
-      .catch(e => { if (e.name !== 'AbortError') setError(e.message || 'Network error'); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    const poll = async () => {
+      for (let attempt = 0; attempt < 25 && !controller.signal.aborted; attempt += 1) {
+        try {
+          const response = await fetch(`${API}/trades/${tradeId}/replay`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+          const data = await response.json();
+          if (response.status === 202) {
+            setWaitingForMt5(true); setLoading(true);
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            continue;
+          }
+          if (!response.ok) { setError(data.error || 'Failed to load replay data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
+          applyReplay(data as ReplayData);
+          return;
+        } catch (e) {
+          if ((e as Error).name !== 'AbortError') { setError((e as Error).message || 'Network error'); setLoading(false); }
+          return;
+        }
+      }
+      if (!controller.signal.aborted) { setLoading(false); setWaitingForMt5(true); setError('MT5 has not supplied these candles yet. Keep the sync agent running or use the Twelve Data fallback.'); }
+    };
+    poll();
     return () => controller.abort();
-  }, [tradeId]);
+  }, [applyReplay, tradeId]);
 
   useEffect(() => {
     if (!replayData || !chartContainerRef.current) return;
@@ -297,8 +329,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
           {loading && (
             <div className="replay-chart-state">
               <div className="replay-spinner" />
-              <h4>Loading chart data…</h4>
-              <p>Fetching {tradeSummary.symbol} candles from Twelve Data</p>
+              <h4>{waitingForMt5 ? 'Waiting for MT5…' : 'Loading chart data…'}</h4>
+              <p>{waitingForMt5 ? `Requesting exact ${tradeSummary.symbol} candles from your broker terminal` : 'Preparing trade replay'}</p>
+              {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
             </div>
           )}
           {!loading && error && (
@@ -306,6 +339,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
               <AlertTriangle size={32} color="#f59e0b" />
               <h4>{isSetupError ? 'Replay Not Configured' : 'Chart Data Unavailable'}</h4>
               <p>{error}</p>
+              {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
               {isSetupError && (
                 <>
                   <a href="https://twelvedata.com/register" target="_blank" rel="noopener noreferrer" className="replay-setup-link">
@@ -381,7 +415,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, onClose, onSav
             </div>
             {replayData && (
               <div style={{ fontSize: 10, color: '#4b5675', textAlign: 'center', marginTop: 4 }}>
-                {replayData.normalizedSymbol} · {replayData.interval} · {replayData.candles.length} bars loaded
+                {replayData.sourceLabel || (replayData.source === 'twelve' ? 'Twelve Data' : 'MT5')} · {replayData.normalizedSymbol} · {replayData.interval} · {replayData.candles.length} bars
               </div>
             )}
           </div>

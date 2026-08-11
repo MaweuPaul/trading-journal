@@ -41,10 +41,11 @@ let inMemoryUserRules = {};
 let inMemoryPlaybooks = {};
 const inMemorySyncRequests = {};
 
-// ── Trade Replay Cache (in-memory, 1-hour TTL) ─────────────────────────────
-// Keyed by trade _id. Avoids hammering Twelve Data on every re-open.
+// ── Trade Replay Cache (in-memory, 30-minute TTL) ──────────────────────────
+// Keyed by trade _id. Exact MT5/Twelve candles are transient, never journal data.
 const replayCache = new Map(); // { tradeId: { ts: number, data: object } }
-const REPLAY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const replayRequests = new Map(); // transient request queue consumed by sync.py
+const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes; candles are never written to a trade
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
     inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
@@ -122,6 +123,41 @@ function selectReplayInterval(durationMinutes) {
   if (dm < 1440)  return { interval: '15min', paddingMs: 4   * 60 * 60  * 1000 };
   if (dm < 10080) return { interval: '1h',    paddingMs: 12  * 60 * 60  * 1000 };
   return              { interval: '4h',    paddingMs: 2   * 24 * 60 * 60 * 1000 };
+}
+
+function replayWindow(trade) {
+  const { interval, paddingMs } = selectReplayInterval(trade.durationMinutes);
+  const openMs = new Date(trade.openTime).getTime();
+  const closeMs = new Date(trade.closeTime).getTime();
+  return {
+    interval,
+    openMs,
+    closeMs,
+    start: new Date(openMs - paddingMs).toISOString(),
+    end: new Date(closeMs + paddingMs).toISOString(),
+  };
+}
+
+function buildReplayResult(trade, candleData) {
+  const candles = candleData.candles || [];
+  const entryTs = Math.floor(new Date(trade.openTime).getTime() / 1000);
+  const exitTs = Math.floor(new Date(trade.closeTime).getTime() / 1000);
+  let entryIndex = candles.findIndex(c => c.time >= entryTs);
+  let exitIndex = candles.findIndex(c => c.time >= exitTs);
+  if (entryIndex < 0) entryIndex = 0;
+  if (exitIndex < 0) exitIndex = Math.max(0, candles.length - 1);
+  return {
+    ...candleData,
+    entryPrice: trade.entryPrice, exitPrice: trade.exitPrice,
+    direction: trade.direction, symbol: trade.symbol,
+    normalizedSymbol: candleData.normalizedSymbol || candleData.brokerSymbol || trade.symbol,
+    openTime: trade.openTime, closeTime: trade.closeTime,
+    entryTimestamp: entryTs, exitTimestamp: exitTs, entryIndex, exitIndex,
+    pnlUSD: trade.pnlUSD, pnlPct: trade.pnlPct,
+    durationMinutes: trade.durationMinutes, lotSize: trade.lotSize,
+    existingNotes: trade.notes || '', existingEmotion: trade.emotion || '',
+    existingGrade: trade.grade || '', existingTags: trade.tags || [],
+  };
 }
 
 function normalizePlaybookCategory(category) {
@@ -1612,17 +1648,73 @@ router.get('/trades', auth, async (req, res) => {
   }
 });
 
-// GET /api/trades/:id/replay  proxy Twelve Data OHLC candles for the trade replay chart
+// GET /api/replay-requests  consumed by the authenticated local MT5 sync agent
+router.get('/replay-requests', auth, async (req, res) => {
+  try {
+    const now = Date.now();
+    const requests = [];
+    for (const [tradeId, queued] of replayRequests.entries()) {
+      if (now - queued.updatedAt > 10 * 60 * 1000) { replayRequests.delete(tradeId); continue; }
+      if (queued.userId !== String(req.user.userId)) continue;
+      const stale = queued.status === 'processing' && now - queued.updatedAt > 2 * 60 * 1000;
+      if (queued.status !== 'pending' && !stale) continue;
+      queued.status = 'processing'; queued.updatedAt = now;
+      requests.push({ tradeId, ...queued.request });
+      if (requests.length === 5) break;
+    }
+    res.json({ requests });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/trades/:id/replay-candles  transient exact-broker candles from MT5
+router.post('/trades/:id/replay-candles', auth, async (req, res) => {
+  try {
+    const rawCandles = Array.isArray(req.body.candles) ? req.body.candles : [];
+    if (!rawCandles.length || rawCandles.length > 2000) {
+      return res.status(400).json({ error: 'Replay upload must contain between 1 and 2000 candles.' });
+    }
+    const candles = rawCandles.map(c => ({
+      time: Number(c.time), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
+    })).filter(c => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close))
+      .sort((a, b) => a.time - b.time);
+    if (candles.length !== rawCandles.length) return res.status(400).json({ error: 'Replay candles contain invalid values.' });
+    const candleData = {
+      source: 'mt5', sourceLabel: req.body.server ? `MT5 - ${String(req.body.server).slice(0, 80)}` : 'MT5 broker history',
+      brokerSymbol: String(req.body.brokerSymbol || '').slice(0, 40),
+      interval: String(req.body.interval || '1min').slice(0, 10), candles, cachedAt: new Date().toISOString(),
+    };
+    let trade;
+    if (mongoose.connection.readyState === 1) {
+      trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
+        .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct notes emotion grade tags').lean();
+    } else {
+      trade = inMemoryTrades.find(t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId));
+    }
+    if (!trade) return res.status(404).json({ error: 'Trade not found' });
+    if (candleData.brokerSymbol !== trade.symbol) return res.status(400).json({ error: 'Replay symbol does not match the trade broker symbol.' });
+    replayCache.set(String(req.params.id), { ts: Date.now(), data: buildReplayResult(trade, candleData) });
+    replayRequests.delete(String(req.params.id));
+    res.json({ ok: true, candles: candles.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/trades/:id/replay-failed', auth, async (req, res) => {
+  try {
+    const error = String(req.body.error || 'MT5 could not return replay candles.').slice(0, 500);
+    const queued = replayRequests.get(String(req.params.id));
+    if (!queued || queued.userId !== String(req.user.userId)) return res.status(404).json({ error: 'Replay request not found' });
+    queued.status = 'failed'; queued.updatedAt = Date.now(); queued.error = error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/trades/:id/replay  requests MT5 first; ?fallback=twelve uses Twelve Data
 router.get('/trades/:id/replay', auth, async (req, res) => {
   try {
-    const apiKey = process.env.TWELVE_DATA_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({
-        error: 'Trade replay is not configured. Add TWELVE_DATA_API_KEY to backend/.env and restart the server.',
-        setup: true,
-      });
-    }
-
     // ── Find the trade ──────────────────────────────────────────────────────
     let trade;
     if (mongoose.connection.readyState === 1) {
@@ -1636,12 +1728,27 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
     }
     if (!trade) return res.status(404).json({ error: 'Trade not found' });
 
-    // ── Check in-memory cache ───────────────────────────────────────────────
     const cacheKey = String(req.params.id);
     const cached = replayCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS) {
-      return res.json(cached.data);
+    if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS) return res.json(cached.data);
+    if (cached) replayCache.delete(cacheKey);
+
+    if (req.query.fallback !== 'twelve') {
+      const existing = replayRequests.get(cacheKey);
+      if (!existing || existing.userId !== String(req.user.userId) || existing.status === 'failed') {
+        const window = replayWindow(trade);
+        replayRequests.set(cacheKey, {
+          userId: String(req.user.userId), status: 'pending', updatedAt: Date.now(), error: '',
+          request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
+        });
+      }
+      return res.status(202).json({ pending: true, source: 'mt5', message: 'Waiting for the local MT5 sync agent to upload exact broker candles.' });
     }
+
+    const apiKey = process.env.TWELVE_DATA_API_KEY;
+    if (!apiKey) return res.status(503).json({
+      error: 'MT5 data is not available yet and Twelve Data fallback is not configured. Add TWELVE_DATA_API_KEY to backend/.env.', setup: true,
+    });
 
     // ── Build Twelve Data request ───────────────────────────────────────────
     const normalizedSymbol = normalizeSymbolForReplay(trade.symbol);
@@ -1710,6 +1817,8 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
 
     const result = {
       candles,
+      source:           'twelve',
+      sourceLabel:      'Twelve Data fallback',
       entryPrice:       trade.entryPrice,
       exitPrice:        trade.exitPrice,
       direction:        trade.direction,

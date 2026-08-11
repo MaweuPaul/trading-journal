@@ -407,24 +407,18 @@ def sync_account_events(events):
     try:
         headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
         resp = requests.post(
-            f"{API_BASE}/sync-account-events",
-            json={"events": events},
-            headers=headers,
-            timeout=API_TIMEOUT,
+            f"{API_BASE}/sync-account-events", json={"events": events},
+            headers=headers, timeout=API_TIMEOUT,
         )
         if resp.status_code == 401:
             log.warning("[CASHFLOW] JWT token expired. Re-authenticating...")
-            if get_jwt_token():
-                headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-                resp = requests.post(
-                    f"{API_BASE}/sync-account-events",
-                    json={"events": events},
-                    headers=headers,
-                    timeout=API_TIMEOUT,
-                )
-            else:
+            if not get_jwt_token():
                 return 0, 0
-
+            headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+            resp = requests.post(
+                f"{API_BASE}/sync-account-events", json={"events": events},
+                headers=headers, timeout=API_TIMEOUT,
+            )
         resp.raise_for_status()
         data = resp.json()
         return data.get("inserted", 0), data.get("skipped", 0)
@@ -432,6 +426,69 @@ def sync_account_events(events):
         log.error("[CASHFLOW] Failed to POST account events to API: %s", e)
         return 0, 0
 
+
+def process_replay_requests():
+    """Fulfil on-demand replay requests with exact candles from this MT5 broker."""
+    global JWT_TOKEN
+    if not JWT_TOKEN and not get_jwt_token():
+        return
+
+    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+    try:
+        resp = requests.get(f"{API_BASE}/replay-requests", headers=headers, timeout=API_TIMEOUT)
+        if resp.status_code == 401 and get_jwt_token():
+            headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+            resp = requests.get(f"{API_BASE}/replay-requests", headers=headers, timeout=API_TIMEOUT)
+        resp.raise_for_status()
+        replay_requests = resp.json().get("requests", [])
+    except requests.RequestException as exc:
+        log.warning("[REPLAY] Could not poll replay requests: %s", exc)
+        return
+
+    timeframe_map = {
+        "1min": mt5.TIMEFRAME_M1,
+        "5min": mt5.TIMEFRAME_M5,
+        "15min": mt5.TIMEFRAME_M15,
+        "1h": mt5.TIMEFRAME_H1,
+        "4h": mt5.TIMEFRAME_H4,
+    }
+    account = mt5.account_info()
+    server = getattr(account, "server", "") if account else ""
+
+    for request in replay_requests:
+        trade_id = request.get("tradeId")
+        symbol = request.get("brokerSymbol", "")
+        interval = request.get("interval", "1min")
+        try:
+            if not symbol or interval not in timeframe_map:
+                raise ValueError("Unsupported replay symbol or interval")
+            if not mt5.symbol_select(symbol, True):
+                raise RuntimeError(f"Broker symbol {symbol} is not available in MT5")
+            start = datetime.fromisoformat(request["start"].replace("Z", "+00:00")).astimezone(timezone.utc)
+            end = datetime.fromisoformat(request["end"].replace("Z", "+00:00")).astimezone(timezone.utc)
+            rates = mt5.copy_rates_range(symbol, timeframe_map[interval], start, end)
+            if rates is None or len(rates) == 0:
+                raise RuntimeError(f"MT5 returned no {interval} candles for {symbol}: {mt5.last_error()}")
+            candles = [{
+                "time": int(rate["time"]), "open": float(rate["open"]),
+                "high": float(rate["high"]), "low": float(rate["low"]), "close": float(rate["close"]),
+            } for rate in rates]
+            upload = requests.post(
+                f"{API_BASE}/trades/{trade_id}/replay-candles",
+                json={"brokerSymbol": symbol, "interval": interval, "server": server, "candles": candles},
+                headers=headers, timeout=API_TIMEOUT,
+            )
+            upload.raise_for_status()
+            log.info("[REPLAY] Uploaded %d %s candles for %s", len(candles), interval, symbol)
+        except Exception as exc:
+            log.error("[REPLAY] Failed trade %s (%s): %s", trade_id, symbol, exc)
+            try:
+                requests.post(
+                    f"{API_BASE}/trades/{trade_id}/replay-failed",
+                    json={"error": str(exc)}, headers=headers, timeout=API_TIMEOUT,
+                )
+            except requests.RequestException:
+                pass
 
 def main(once=False, full=False):
     log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
@@ -446,6 +503,7 @@ def main(once=False, full=False):
 
     while True:
         try:
+            process_replay_requests()
             force_full_sync = full or get_resync_request()
             latest_time = None if force_full_sync else get_latest_trade_time()
             if full:

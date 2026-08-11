@@ -45,6 +45,8 @@ const inMemorySyncRequests = {};
 // Keyed by trade _id. Exact MT5/Twelve candles are transient, never journal data.
 const replayCache = new Map(); // { tradeId: { ts: number, data: object } }
 const replayRequests = new Map(); // transient request queue consumed by sync.py
+const replayAgentHeartbeats = new Map(); // userId -> last poll observed by this API process
+const REPLAY_INSTANCE_ID = `${process.env.VERCEL_REGION || process.env.RENDER_SERVICE_ID || 'local'}-${Math.random().toString(36).slice(2, 8)}`;
 const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes; candles are never written to a trade
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
@@ -1652,6 +1654,7 @@ router.get('/trades', auth, async (req, res) => {
 router.get('/replay-requests', auth, async (req, res) => {
   try {
     const now = Date.now();
+    replayAgentHeartbeats.set(String(req.user.userId), now);
     const requests = [];
     for (const [tradeId, queued] of replayRequests.entries()) {
       if (now - queued.updatedAt > 10 * 60 * 1000) { replayRequests.delete(tradeId); continue; }
@@ -1659,10 +1662,11 @@ router.get('/replay-requests', auth, async (req, res) => {
       const stale = queued.status === 'processing' && now - queued.updatedAt > 2 * 60 * 1000;
       if (queued.status !== 'pending' && !stale) continue;
       queued.status = 'processing'; queued.updatedAt = now;
+      queued.claimCount = (queued.claimCount || 0) + 1;
       requests.push({ tradeId, ...queued.request });
       if (requests.length === 5) break;
     }
-    res.json({ requests });
+    res.json({ requests, debug: { backendInstance: REPLAY_INSTANCE_ID, polledAt: new Date(now).toISOString() } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1735,14 +1739,28 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
 
     if (req.query.fallback !== 'twelve') {
       const existing = replayRequests.get(cacheKey);
-      if (!existing || existing.userId !== String(req.user.userId) || existing.status === 'failed') {
+      if (!existing || existing.userId !== String(req.user.userId) || (existing.status === 'failed' && Date.now() - existing.updatedAt > 5000)) {
         const window = replayWindow(trade);
         replayRequests.set(cacheKey, {
-          userId: String(req.user.userId), status: 'pending', updatedAt: Date.now(), error: '',
+          userId: String(req.user.userId), status: 'pending', createdAt: Date.now(), updatedAt: Date.now(), error: '', claimCount: 0,
           request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
         });
       }
-      return res.status(202).json({ pending: true, source: 'mt5', message: 'Waiting for the local MT5 sync agent to upload exact broker candles.' });
+      const queued = replayRequests.get(cacheKey);
+      const lastAgentSeen = replayAgentHeartbeats.get(String(req.user.userId)) || null;
+      return res.status(202).json({
+        pending: true, source: 'mt5', message: 'Waiting for the local MT5 sync agent to upload exact broker candles.',
+        debug: {
+          state: queued.status,
+          queuedAt: new Date(queued.createdAt).toISOString(),
+          waitSeconds: Math.max(0, Math.floor((Date.now() - queued.createdAt) / 1000)),
+          claimCount: queued.claimCount || 0,
+          lastError: queued.error || '',
+          agentSeenOnThisInstance: Boolean(lastAgentSeen && Date.now() - lastAgentSeen < 90 * 1000),
+          lastAgentSeenAt: lastAgentSeen ? new Date(lastAgentSeen).toISOString() : null,
+          backendInstance: REPLAY_INSTANCE_ID,
+        },
+      });
     }
 
     const apiKey = process.env.TWELVE_DATA_API_KEY;

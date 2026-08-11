@@ -440,7 +440,10 @@ def process_replay_requests():
             headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
             resp = requests.get(f"{API_BASE}/replay-requests", headers=headers, timeout=API_TIMEOUT)
         resp.raise_for_status()
-        replay_requests = resp.json().get("requests", [])
+        response_data = resp.json()
+        replay_requests = response_data.get("requests", [])
+        backend_instance = response_data.get("debug", {}).get("backendInstance", "unknown")
+        log.info("[REPLAY] Agent poll reached API instance %s | queued: %d", backend_instance, len(replay_requests))
     except requests.RequestException as exc:
         log.warning("[REPLAY] Could not poll replay requests: %s", exc)
         return

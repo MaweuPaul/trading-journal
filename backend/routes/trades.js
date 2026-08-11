@@ -100,7 +100,9 @@ function normalizeSymbolForReplay(raw) {
     'BRENT':  'BRENT/USD','NATGAS':  'NATGAS/USD',
     'BTCUSD': 'BTC/USD',  'ETHUSD':  'ETH/USD',
     'XRPUSD': 'XRP/USD',  'BNBUSD':  'BNB/USD',
-    'NAS100': 'NDX',      'US30':    'DJI',
+    'NAS100': 'NDX',      'USTEC':   'NDX',
+    'US100':  'NDX',      'NASDAQ100': 'NDX',
+    'US30':    'DJI',
     'SP500':  'SPX',      'UK100':   'FTSE100',
     'GER40':  'DAX',      'GER30':   'DAX',
     'FRA40':  'CAC40',    'JPN225':  'N225',
@@ -1663,13 +1665,17 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
     ].join('');
 
     const tdRes = await fetch(tdUrl, { signal: AbortSignal.timeout(15000) });
+    const body = await tdRes.json().catch(() => ({}));
     if (tdRes.status === 429) {
-      return res.status(429).json({ error: 'Twelve Data rate limit reached. Wait one minute and try replay again.' });
+      return res.status(429).json({ error: body.message || 'Twelve Data rate limit reached. Wait one minute and try replay again.' });
     }
     if (!tdRes.ok) {
-      return res.status(502).json({ error: `Twelve Data request failed (HTTP ${tdRes.status})` });
+      return res.status(422).json({
+        error: body.message || `Twelve Data could not provide ${normalizedSymbol} candles (HTTP ${tdRes.status}).`,
+        code: body.code || tdRes.status,
+        symbol: normalizedSymbol,
+      });
     }
-    const body = await tdRes.json();
 
     if (body.status === 'error') {
       return res.status(422).json({

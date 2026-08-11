@@ -573,6 +573,7 @@ Configure `TWELVE_DATA_API_KEY` in `backend/.env`, restart the backend, and use 
 7. Reopen the trade and confirm those journal fields persisted.
 8. Repeat with a broker-suffixed symbol such as `EURUSDm`.
 9. Remove the key temporarily and confirm Replay shows setup instructions. Restore the key, then test a rate-limited or unsupported symbol response.
+10. Test an Exness `USTEC` trade. Confirm it requests `NDX` and, when the Twelve Data subscription does not include indices, displays the provider's plan-coverage message rather than a generic HTTP 404.
 
 Expected results:
 

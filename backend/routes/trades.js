@@ -11,7 +11,7 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
-const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview } = require('../lib/replayAnnotations');
+const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft } = require('../lib/replayAnnotations');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -1847,10 +1847,34 @@ router.get('/trades/:id/replay-journal', auth, async (req, res) => {
       annotations: journal?.annotationsByInterval?.[interval] || [],
       events: journal?.events || [],
       quickReview: journal?.quickReview || {},
+      draft: journal?.draft || {},
       updatedAt: journal?.updatedAt || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/trades/:id/replay-journal/draft saves unfinished journal and playback state.
+router.put('/trades/:id/replay-journal/draft', auth, async (req, res) => {
+  try {
+    const draft = normalizeReplayDraft(req.body.draft);
+    if (!await findReplayTrade(req.params.id, req.user.userId)) return res.status(404).json({ error: 'Trade not found' });
+    let journal;
+    if (mongoose.connection.readyState === 1) {
+      journal = await ReplayJournal.findOne({ user: req.user.userId, trade: req.params.id });
+      if (!journal) journal = new ReplayJournal({ user: req.user.userId, trade: req.params.id, annotationsByInterval: {}, events: [] });
+      journal.draft = draft; journal.revision = Number(journal.revision || 0) + 1;
+      journal.markModified('draft'); await journal.save();
+    } else {
+      const key = `${req.user.userId}:${req.params.id}`;
+      const current = inMemoryReplayJournals[key] || { user: String(req.user.userId), trade: String(req.params.id), schemaVersion: 1, revision: 0, annotationsByInterval: {}, events: [] };
+      journal = { ...current, draft, revision: Number(current.revision || 0) + 1, updatedAt: new Date().toISOString() };
+      inMemoryReplayJournals[key] = journal; saveLocalReplayJournals();
+    }
+    res.json({ revision: journal.revision, draft, updatedAt: journal.updatedAt || new Date().toISOString() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

@@ -100,9 +100,9 @@ Add a `WeeklyReview` model and `/journal/weekly` page. Pre-fill the review with 
 
 ### 9. Replay Session Resume — Partial
 
-**Existing:** The URL preserves the Replay trade, timeframe, and journal phase across refresh. MT5 replay sessions and candle data are cached server-side.
+**Existing:** The URL preserves the Replay trade, timeframe, and journal phase across refresh. MT5 replay sessions and candle data are cached server-side. Private notes, tags, playbook answers, grades, outcome fields, speed, and candle position now autosave in an ownership-scoped server draft with visible status.
 
-**Still missing:** Preserve playback candle position, speed, drawings, and unsaved journal drafts. Decide whether these should live in the URL, local storage, or a server-side draft; large drawing data should not go in the URL.
+**Still missing:** Revision browsing and explicit recovery of an older draft. Current autosave preserves the latest draft only; it does not yet expose a draft history UI.
 
 ---
 

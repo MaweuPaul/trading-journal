@@ -2635,6 +2635,10 @@ body.replay-open .main-content {
 .replay-quick-emotions button span { font-size: 9px; }
 .replay-quick-emotions button.selected { border-color: #3b82f6; background: #3b82f620; color: #93c5fd; }
 .replay-quick-hint { padding: 9px; border: 1px dashed #303b55; border-radius: 8px; color: #64708e; font-size: 10px; text-align: center; }
+.replay-draft-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid #1f3b35; border-radius: 8px; background: #10b9810d; color: #34d399; font-size: 9.5px; }
+.replay-draft-status small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64708e; }
+.replay-draft-status.loading, .replay-draft-status.saving { border-color: #1e3a5f; background: #3b82f60d; color: #93c5fd; }
+.replay-draft-status.error { border-color: #5f252d; background: #ef44440d; color: #fb7185; }
 
 /* Main split */
 .replay-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }

@@ -248,9 +248,9 @@ All endpoints require authentication except login and health checks. Export and 
 
 ### MT5-first trade replay
 
-Keep `sync.py` and the logged-in MT5 desktop terminal running. Opening Replay queues only the selected trade's broker symbol, time window, and appropriate timeframe. On its next sync cycle, `sync.py` uses `copy_rates_range` and returns those candles to a 30-minute backend memory cache. Candles are not written to the trade or downloaded for unrelated trades.
+Keep `sync.py` and the logged-in MT5 desktop terminal running. `sync.py` holds a lightweight 25-second long poll against the authenticated replay queue. Opening Replay writes only the selected trade's broker symbol, time window, and appropriate timeframe to a MongoDB TTL session; the waiting agent receives it immediately, uses `copy_rates_range`, and returns the candles to that temporary session. Candles are never written to the trade or downloaded for unrelated trades.
 
-The replay screen waits for approximately one configured sync cycle and shows its source. Reopening within the cache window is immediate; after expiry, Replay requests the small window again. Select **Use Twelve Data fallback** only when the terminal cannot supply the history. `TWELVE_DATA_API_KEY` is therefore optional for normal MT5 replay.
+The shared TTL session works across cloud instances and expires after 30 minutes. Replay shows the provider and connection diagnostics. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version. Select **Use Twelve Data fallback** only when the terminal cannot supply the history.
 
 ### `backend/.env`
 

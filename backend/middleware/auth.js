@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 
 module.exports = function (req, res, next) {
   // Get token from header
@@ -16,6 +17,12 @@ module.exports = function (req, res, next) {
       return res.status(500).json({ error: 'JWT_SECRET is not configured' });
     }
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Offline login tokens intentionally use a non-ObjectId placeholder. Once
+    // MongoDB reconnects they must be replaced by a normal owner login token;
+    // otherwise every owner-scoped query fails with a Mongoose CastError.
+    if (mongoose.connection.readyState === 1 && !mongoose.Types.ObjectId.isValid(String(decoded.userId || ''))) {
+      return res.status(401).json({ error: 'Your offline session expired after MongoDB reconnected. Please sign in again.' });
+    }
     req.user = decoded;
     next();
   } catch (err) {

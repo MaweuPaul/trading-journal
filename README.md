@@ -213,6 +213,8 @@ requirements.txt
 | `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
 | `/api/trades/:id/replay` | GET | Return temporarily cached candles or queue an on-demand MT5 replay request; `?fallback=twelve` uses the optional fallback |
+| `/api/trades/:id/replay-journal` | GET | Load saved chart annotations for one trade and timeframe |
+| `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave text, line, and zone annotations for one timeframe |
 | `/api/replay-requests` | GET | Let the authenticated local sync agent claim pending replay requests |
 | `/api/trades/:id/replay-candles` | POST | Validate and temporarily cache broker OHLC candles returned by `sync.py` |
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
@@ -254,7 +256,7 @@ The shared TTL session works across cloud instances and expires after 30 minutes
 
 Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views. Switching timeframe requests only that broker interval, preserves the trade entry/exit timestamps, and leaves other timeframe sessions available until their TTL expires. The session identity is `user + trade + timeframe`, so multiple views never overwrite one another.
 
-The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Chart annotations include rectangle zones, line drawings, colored text labels, and a clear-all action; annotations are temporary and reset when the timeframe changes.
+The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Chart annotations include rectangle zones, line drawings, and colored text labels. They are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups. Replay shows their save state and provides undo, individual deletion, and protected clear-all controls.
 
 ### `backend/.env`
 

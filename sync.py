@@ -240,17 +240,42 @@ def get_account_type():
     return "live" if info.trade_mode == real_mode else "demo"
 
 
-def get_latest_trade_time():
-    """Fetch the closeTime of the latest trade from the database API."""
+def get_account_identity():
+    """Return the stable identity of the MT5 account connected to this agent."""
+    info = mt5.account_info()
+    if not info:
+        return {"accountKey": "", "accountLogin": "", "accountServer": "", "accountName": "", "accountType": ""}
+    login = str(getattr(info, "login", "") or "").strip()
+    server = str(getattr(info, "server", "") or "").strip()
+    name = str(getattr(info, "name", "") or "").strip()
+    real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
+    account_type = "live" if info.trade_mode == real_mode else "demo"
+    account_key = f"{server.lower()}::{login}" if login else ""
+    return {
+        "accountKey": account_key,
+        "accountLogin": login,
+        "accountServer": server,
+        "accountName": name,
+        "accountType": account_type,
+    }
+
+
+def get_latest_trade_time(account_key=""):
+    """Fetch the latest closeTime for this specific MT5 account."""
     global JWT_TOKEN
     if not JWT_TOKEN:
         return None
     try:
         headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-        resp = requests.get(f"{API_BASE}/balance", headers=headers, timeout=API_TIMEOUT)
+        resp = requests.get(
+            f"{API_BASE}/trades/latest-close",
+            params={"accountKey": account_key} if account_key else {},
+            headers=headers,
+            timeout=API_TIMEOUT,
+        )
         if resp.ok:
             data = resp.json()
-            as_of = data.get("tradeAsOf") or data.get("asOf")
+            as_of = data.get("closeTime")
             if as_of:
                 clean_ts = as_of.split(".")[0].replace("Z", "+00:00")
                 return datetime.fromisoformat(clean_ts)
@@ -312,7 +337,7 @@ def fetch_deals(from_date=None):
     log.info("[MT5] Fetched %d closed deal(s) from history", len(closed))
 
     current_balance = get_account_balance()
-    account_type = get_account_type()
+    account_identity = get_account_identity()
 
     # Sort chronologically so we can compute a rolling balance per trade.
     # The running balance after trade N = starting_balance + sum(pnl[0..N])
@@ -380,7 +405,7 @@ def fetch_deals(from_date=None):
             "closeTime":       close_dt.isoformat(),
             "durationMinutes": duration,
             "runningBalance":  round(trade_running_balance, 2),
-            "accountType":     account_type,
+            **account_identity,
         })
 
     return result
@@ -410,6 +435,7 @@ def fetch_account_events(from_date=None):
     balance_types.discard(None)
 
     events = []
+    account_identity = get_account_identity()
     for deal in deals:
         amount = float(getattr(deal, "profit", 0.0) or 0.0)
         if amount == 0:
@@ -450,6 +476,7 @@ def fetch_account_events(from_date=None):
             "occurredAt": occurred_at.isoformat(),
             "note": note,
             "balanceAfter": None,
+            **account_identity,
         })
 
     log.info("[MT5] Fetched %d account cash-flow event(s) from history", len(events))
@@ -640,7 +667,9 @@ def main(once=False, full=False):
     while True:
         try:
             force_full_sync = full or get_resync_request()
-            latest_time = None if force_full_sync else get_latest_trade_time()
+            with MT5_LOCK:
+                account_identity = get_account_identity()
+            latest_time = None if force_full_sync else get_latest_trade_time(account_identity.get("accountKey", ""))
             if full:
                 log.info("[SYNC] Full history sync requested from command line...")
                 from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)

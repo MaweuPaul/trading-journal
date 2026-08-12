@@ -101,6 +101,24 @@ if (!process.env.MONGODB_URI) {
         if (tradeResult.modifiedCount || eventResult.modifiedCount) {
           console.log(` Assigned ${tradeResult.modifiedCount} legacy trades and ${eventResult.modifiedCount} account events to the owner.`);
         }
+
+        // MT5 deal tickets are unique inside an account, not across every broker
+        // account. Create the account-aware index before retiring the legacy one.
+        await Trade.collection.createIndex(
+          { user: 1, accountKey: 1, dealId: 1 },
+          { unique: true, name: 'user_1_accountKey_1_dealId_1' },
+        );
+        const tradeIndexes = await Trade.collection.indexes();
+        const legacyDealIndex = tradeIndexes.find(index => (
+          index.unique
+          && index.key?.user === 1
+          && index.key?.dealId === 1
+          && Object.keys(index.key).length === 2
+        ));
+        if (legacyDealIndex) {
+          await Trade.collection.dropIndex(legacyDealIndex.name);
+          console.log(' Upgraded trade uniqueness to include the MT5 account identity.');
+        }
       } catch (e) {
         console.error(' Owner setup or migration failed:', e.message);
       }

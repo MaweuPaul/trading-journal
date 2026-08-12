@@ -9,7 +9,7 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Feature | Description |
 |---|---|
 | Automatic MT5 Sync | Python script polls MT5 and sends closed deals and account events to the backend |
-| Live/Demo Classification | Detects the connected MT5 account mode, labels trades automatically, and supports account-type filtering |
+| Broker Account Filtering | Detects Live/Demo mode plus the exact MT5 login and broker server, then filters trades by either dimension |
 | Dashboard | Account balance, equity curve, cash-flow-adjusted growth, and headline metrics |
 | Light/Dark Appearance | Choose Auto, Light, or Dark from the sign-in screen or sidebar; Auto follows the device setting and the choice persists across refreshes |
 | Performance | Equity curve, drawdown, profit factor, expectancy, and R:R metrics |
@@ -79,8 +79,10 @@ Boolean, single-choice, multiple-choice, and rating answers feed answer-group co
 
 - Real accounts are stored as `accountType: "live"`.
 - Demo and contest accounts are stored as `accountType: "demo"`.
-- A full resync backfills the detected type onto matching existing trades.
-- The Trades page can show both account types or filter to Live or Demo only.
+- Every trade also stores the MT5 login, broker server, account name, and a stable account key.
+- A full resync backfills both the type and exact account identity onto matching older trades.
+- The Trades page can filter independently by Live/Demo and by the exact broker account. Both filters are preserved in the URL.
+- Deal tickets are deduplicated within each account, so two connected accounts may safely contain the same MT5 ticket number.
 
 Set `MT5_REQUIRE_REAL_ACCOUNT=true` if the sync process must reject every non-real account. Leave it `false` to sync and compare both account types.
 
@@ -214,7 +216,9 @@ requirements.txt
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `from`, and `to` filters |
+| `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `accountKey`, `from`, and `to` filters |
+| `/api/trade-accounts` | GET | List exact MT5 accounts represented in the owner's trades, including counts |
+| `/api/trades/latest-close` | GET | Return the latest trade time for one account so incremental sync never skips another account's history |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
 | `/api/trades/:id/replay` | GET | Return temporarily cached candles or queue an on-demand MT5 replay request; `?fallback=twelve` uses the optional fallback |
 | `/api/trades/:id/replay-journal` | GET | Load saved chart annotations for one trade and timeframe |

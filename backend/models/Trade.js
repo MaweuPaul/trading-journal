@@ -33,6 +33,10 @@ const tradeSchema = new mongoose.Schema({
   // -- Edge Coach: Pre-Trade Self-Assessment --------------------------------
   confidenceRating: { type: Number, min: 1, max: 10, default: null }, // 1-10 pre-trade confidence
   accountType:      { type: String, enum: ['live', 'demo', ''], default: '' }, // demo vs live tracking
+  accountKey:       { type: String, default: '', index: true }, // stable server + login identity
+  accountLogin:     { type: String, default: '' },
+  accountServer:    { type: String, default: '' },
+  accountName:      { type: String, default: '' },
 
   // -- Edge Coach: Setup Builder --------------------------------------------
   isReEntry:          { type: Boolean, default: false }, // was this a re-entry on the same setup/idea?
@@ -73,6 +77,6 @@ tradeSchema.index({ symbol: 1 });
 tradeSchema.index({ closeTime: -1 });
 tradeSchema.index({ pnlUSD: 1 });
 tradeSchema.index({ user: 1, closeTime: -1 });
-tradeSchema.index({ user: 1, dealId: 1 }, { unique: true });
+tradeSchema.index({ user: 1, accountKey: 1, dealId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Trade', tradeSchema);

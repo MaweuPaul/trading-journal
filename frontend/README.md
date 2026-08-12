@@ -24,6 +24,8 @@ Rule purpose can be Observation, Confirmation, Entry trigger, Decision gate, Inv
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 
+The Trades page provides separate **Account type** and **Trading account** filters. Account type selects Live or Demo; Trading account selects the exact MT5 login and broker server captured by sync. Account filters, other table filters, pagination, the open trade, and Replay state remain URL-backed across refreshes. Older records without account identity remain available under **Older trades — account unknown** until a full MT5 resync backfills them.
+
 The Trades drawer includes a full-screen **Replay** workspace. It requests only the needed broker window from the local MT5 sync agent and polls until the backend's short-lived cache receives it; candle history is not stored on the trade. The screen reveals candles one by one, marks entry and exit, and saves notes, emotion, grade, and tags. An explicitly labelled Twelve Data fallback is available when MT5 history is unavailable.
 
 Replay timeline events default to **This timeframe** so chart-specific observations do not clutter every chart. Choose **All timeframes** for a trade-level decision or lesson that should follow the same timestamp and price across each Replay chart. Legacy events remain scoped to their original timeframe.

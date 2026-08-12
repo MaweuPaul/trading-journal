@@ -158,26 +158,31 @@ Login returns a seven-day JWT. Protected routes verify the token with the config
 - First run reports inserted trades.
 - Second run reports the same deals as skipped rather than duplicated.
 - Entry, exit, direction, size, P&L, commission, swap, timestamps, and balance appear.
-- The database has one record per owner and `dealId`.
+- The database has one record per owner, MT5 account, and `dealId`.
 
 ## 6. Live and Demo classification
 
 ### How it works
 
-The sync script maps MT5 real mode to `live`; demo and contest modes map to `demo`. Matching existing trades are backfilled during resync.
+The sync script maps MT5 real mode to `live`; demo and contest modes map to `demo`. It also stores the exact account login, broker server, account name, and a stable account key. Matching existing trades are backfilled during resync.
 
 ### Test
 
 1. Sync from a demo account with `MT5_REQUIRE_REAL_ACCOUNT=false`.
 2. Verify the Demo badge beside each symbol.
-3. Use the Account filter: Demo only, Live only, and Live & Demo.
-4. If available, repeat with a real account.
-5. Set `MT5_REQUIRE_REAL_ACCOUNT=true` and attempt a demo sync.
+3. Use the Account type filter: Demo only, Live only, and Live & Demo.
+4. If available, sync a second account, then select each entry in the Trading account filter.
+5. Refresh and confirm the selected account remains in the URL and table.
+6. If older trades show as account unknown, run `python sync.py --full` once and refresh.
+7. Set `MT5_REQUIRE_REAL_ACCOUNT=true` and attempt a demo sync.
 
 ### Expected result
 
 - Demo sync produces `demo` records and badges.
 - Filters return only the selected account type.
+- Exact-account filtering separates two accounts even if both are Live or both are Demo.
+- Each synced row shows its MT5 account login beside the Live/Demo badge.
+- A full sync replaces the account-unknown group with the connected account identity.
 - Real sync produces `live` records.
 - Real-only mode refuses the demo account before sending trades.
 
@@ -185,17 +190,19 @@ The sync script maps MT5 real mode to `live`; demo and contest modes map to `dem
 
 ### How it works
 
-The frontend sends symbol, direction, account type, date range, page, and limit query parameters to `/api/trades`. The backend applies the same filtering in MongoDB and offline modes.
+The frontend sends symbol, direction, account type, exact account key, date range, page, and limit query parameters to `/api/trades`. The backend applies the same filtering in MongoDB and offline modes.
 
 ### Test
 
 1. Filter by symbol.
 2. Filter by BUY and SELL.
 3. Filter by Live or Demo.
-4. Apply From and To dates.
-5. Combine filters.
-6. Use Reset.
-7. Test pagination with more than 50 trades.
+4. Filter by an exact MT5 trading account.
+5. Apply From and To dates.
+6. Combine account, type, symbol, direction, and date filters.
+7. Refresh and use browser Back/Forward to verify URL restoration.
+8. Use Reset.
+9. Test pagination with more than 50 trades.
 
 ### Expected result
 

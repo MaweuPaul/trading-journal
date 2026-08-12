@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
 const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft } = require('../lib/replayAnnotations');
+const { cleanAccountField, normalizeAccountIdentity, summarizeTradeAccounts, tradeMatchesAccountFilter } = require('../lib/tradeAccounts');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -596,8 +597,10 @@ function isOfflineAccountEventVisibleToUser(event, userId) {
   return String(event.user) === String(userId);
 }
 
-function sameTradeOwnerAndDealId(trade, userId, dealId) {
-  return isOfflineTradeVisibleToUser(trade, userId) && String(trade.dealId) === String(dealId);
+function sameTradeOwnerAndDealId(trade, userId, dealId, accountKey = '') {
+  if (!isOfflineTradeVisibleToUser(trade, userId) || String(trade.dealId) !== String(dealId)) return false;
+  const existingKey = cleanAccountField(trade.accountKey, 180).toLowerCase();
+  return !accountKey || !existingKey || existingKey === accountKey;
 }
 
 function sameEventOwnerAndExternalId(event, userId, externalId) {
@@ -849,6 +852,10 @@ function buildCloudinaryContext(trade, caption, evidenceLink = {}) {
     `durationMinutes=${t.durationMinutes || 0}`,
     `runningBalance=${t.runningBalance || 0}`,
     `accountType=${t.accountType || ''}`,
+    `accountKey=${t.accountKey || ''}`,
+    `accountLogin=${t.accountLogin || ''}`,
+    `accountServer=${t.accountServer || ''}`,
+    `accountName=${String(t.accountName || '').replace(/[|=]/g, ' ')}`,
     `emotion=${t.emotion || ''}`,
     `grade=${t.grade || ''}`,
     `tags=${(t.tags || []).join(',')}`,
@@ -892,6 +899,10 @@ function buildSidecarMetadata(trade, caption, imageUrl, evidenceLink = {}) {
       grade: t.grade || '',
       checklist: t.checklist || [],
       accountType: t.accountType || '',
+      accountKey: t.accountKey || '',
+      accountLogin: t.accountLogin || '',
+      accountServer: t.accountServer || '',
+      accountName: t.accountName || '',
       analysisGrade: t.analysisGrade || '',
       executionGrade: t.executionGrade || '',
       plannedRR: t.plannedRR ?? null,
@@ -935,6 +946,10 @@ function reconstructTradeFromContext(ctx, userId) {
     durationMinutes: number('durationMinutes'),
     runningBalance: number('runningBalance'),
     accountType: ['live', 'demo'].includes(String(ctx.accountType).toLowerCase()) ? String(ctx.accountType).toLowerCase() : '',
+    accountKey: cleanAccountField(ctx.accountKey, 180).toLowerCase(),
+    accountLogin: cleanAccountField(ctx.accountLogin, 40),
+    accountServer: cleanAccountField(ctx.accountServer, 120),
+    accountName: cleanAccountField(ctx.accountName, 120),
     emotion: ctx.emotion || '',
     grade: ctx.grade || '',
     tags: String(ctx.tags || '').split(',').map(tag => tag.trim()).filter(Boolean),
@@ -1665,10 +1680,42 @@ router.get('/performance', auth, async (req, res) => {
 
 
 
+// GET /api/trade-accounts  account identities represented in this owner's trades
+router.get('/trade-accounts', auth, async (req, res) => {
+  try {
+    const trades = mongoose.connection.readyState === 1
+      ? await Trade.find({ user: req.user.userId }).select('accountKey accountLogin accountServer accountName accountType').lean()
+      : inMemoryTrades.filter(trade => isOfflineTradeVisibleToUser(trade, req.user.userId));
+    res.json(summarizeTradeAccounts(trades));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/trades/latest-close  latest trade for one broker account
+router.get('/trades/latest-close', auth, async (req, res) => {
+  try {
+    const accountKey = cleanAccountField(req.query.accountKey, 180).toLowerCase();
+    if (mongoose.connection.readyState !== 1) {
+      const latest = inMemoryTrades
+        .filter(trade => isOfflineTradeVisibleToUser(trade, req.user.userId))
+        .filter(trade => !accountKey || cleanAccountField(trade.accountKey, 180).toLowerCase() === accountKey)
+        .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime))[0];
+      return res.json({ closeTime: latest?.closeTime || null, accountKey });
+    }
+    const query = { user: req.user.userId };
+    if (accountKey) query.accountKey = accountKey;
+    const latest = await Trade.findOne(query).sort({ closeTime: -1 }).select('closeTime').lean();
+    res.json({ closeTime: latest?.closeTime || null, accountKey });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/trades  all trades, newest frst, wth optonal flters
 router.get('/trades', auth, async (req, res) => {
   try {
-    const { symbol, direction, accountType, from, to, page = 1, limit = 50 } = req.query;
+    const { symbol, direction, accountType, accountKey, from, to, page = 1, limit = 50 } = req.query;
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
@@ -1676,6 +1723,7 @@ router.get('/trades', auth, async (req, res) => {
       if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
       if (direction) filtered = filtered.filter(t => t.direction === direction.toUpperCase());
       if (accountType) filtered = filtered.filter(t => t.accountType === String(accountType).toLowerCase());
+      if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
       if (from) filtered = filtered.filter(t => new Date(t.closeTime) >= new Date(from));
       if (to) filtered = filtered.filter(t => new Date(t.closeTime) <= new Date(to));
 
@@ -1697,6 +1745,8 @@ router.get('/trades', auth, async (req, res) => {
     if (symbol) query.symbol = symbol.toUpperCase();
     if (direction) query.direction = query.direction = direction.toUpperCase();
     if (accountType) query.accountType = String(accountType).toLowerCase();
+    if (accountKey === '__unassigned__') query.$or = [{ accountKey: '' }, { accountKey: null }, { accountKey: { $exists: false } }];
+    else if (accountKey) query.accountKey = String(accountKey).toLowerCase();
     if (from || to) {
       query.closeTime = {};
       if (from) query.closeTime.$gte = new Date(from);
@@ -2564,6 +2614,7 @@ router.post('/sync', auth, async (req, res) => {
     let inserted = 0;
     let skipped = 0;
     let accountTypesUpdated = 0;
+    let accountMetadataUpdated = 0;
     const userRules = await getUserRules(req.user.userId);
     const checklistSnapshot = userRules
       .filter(rule => rule.category === 'pre_trade' && rule.enabled !== false)
@@ -2577,19 +2628,22 @@ router.post('/sync', auth, async (req, res) => {
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       for (const t of trades) {
-        const existingIndex = inMemoryTrades.findIndex(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId));
+        const accountIdentity = normalizeAccountIdentity(t);
+        const existingIndex = inMemoryTrades.findIndex(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId, accountIdentity.accountKey));
         if (existingIndex !== -1) {
-          const syncedType = ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '';
-          if (syncedType && inMemoryTrades[existingIndex].accountType !== syncedType) {
-            inMemoryTrades[existingIndex].accountType = syncedType;
-            accountTypesUpdated++;
+          const existingTrade = inMemoryTrades[existingIndex];
+          const metadataChanged = Object.entries(accountIdentity).some(([key, value]) => value && existingTrade[key] !== value);
+          if (metadataChanged) {
+            Object.entries(accountIdentity).forEach(([key, value]) => { if (value) existingTrade[key] = value; });
+            accountMetadataUpdated++;
+            if (accountIdentity.accountType) accountTypesUpdated++;
           }
           skipped++;
           continue;
         }
 
         const newTrade = {
-          _id: String(t.dealId),
+          _id: accountIdentity.accountKey ? `${accountIdentity.accountKey}:${t.dealId}` : String(t.dealId),
           dealId: String(t.dealId),
           positionId: String(t.positionId || ''),
           symbol: t.symbol,
@@ -2605,7 +2659,7 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: t.closeTime,
           durationMinutes: Number(t.durationMinutes || 0),
           runningBalance: Number(t.runningBalance || 0),
-          accountType: ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '',
+          ...accountIdentity,
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
@@ -2614,27 +2668,38 @@ router.post('/sync', auth, async (req, res) => {
 
         inMemoryTrades.push(newTrade);
         inserted++;
-      } if (inserted > 0 || accountTypesUpdated > 0) {
+      } if (inserted > 0 || accountMetadataUpdated > 0) {
         saveLocalDatabase();
       }
 
-      return res.json({ inserted, skipped, accountTypesUpdated, total: trades.length });
+      return res.json({ inserted, skipped, accountTypesUpdated, accountMetadataUpdated, total: trades.length });
     }
 
     for (const t of trades) {
       try {
-        const existing = await Trade.findOne({
+        const accountIdentity = normalizeAccountIdentity(t);
+        let existing = await Trade.findOne({
           user: req.user.userId,
           dealId: String(t.dealId),
-        }).select('_id accountType');
+          ...(accountIdentity.accountKey ? { accountKey: accountIdentity.accountKey } : {}),
+        }).select('_id accountKey accountLogin accountServer accountName accountType');
+        if (!existing && accountIdentity.accountKey) {
+          existing = await Trade.findOne({
+            user: req.user.userId,
+            dealId: String(t.dealId),
+            $or: [{ accountKey: '' }, { accountKey: null }, { accountKey: { $exists: false } }],
+          }).select('_id accountKey accountLogin accountServer accountName accountType');
+        }
 
         if (existing) {
-          const syncedType = ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '';
-          if (syncedType && existing.accountType !== syncedType) {
-            await Trade.updateOne({ _id: existing._id, user: req.user.userId }, { $set: { accountType: syncedType } });
-            const memoryIndex = inMemoryTrades.findIndex(item => sameTradeOwnerAndDealId(item, req.user.userId, t.dealId));
-            if (memoryIndex !== -1) inMemoryTrades[memoryIndex].accountType = syncedType;
-            accountTypesUpdated++;
+          const metadata = Object.fromEntries(Object.entries(accountIdentity).filter(([, value]) => value));
+          const metadataChanged = Object.entries(metadata).some(([key, value]) => existing[key] !== value);
+          if (metadataChanged) {
+            await Trade.updateOne({ _id: existing._id, user: req.user.userId }, { $set: metadata });
+            const memoryIndex = inMemoryTrades.findIndex(item => String(item._id) === String(existing._id));
+            if (memoryIndex !== -1) Object.assign(inMemoryTrades[memoryIndex], metadata);
+            accountMetadataUpdated++;
+            if (accountIdentity.accountType) accountTypesUpdated++;
           }
           skipped++;
           continue;
@@ -2656,7 +2721,7 @@ router.post('/sync', auth, async (req, res) => {
           closeTime: new Date(t.closeTime),
           durationMinutes: t.durationMinutes || 0,
           runningBalance: t.runningBalance || 0,
-          accountType: ['live', 'demo'].includes(String(t.accountType).toLowerCase()) ? String(t.accountType).toLowerCase() : '',
+          ...accountIdentity,
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
           user: req.user.userId,
@@ -2682,11 +2747,11 @@ router.post('/sync', auth, async (req, res) => {
           throw e;
         }
       }
-    } if (inserted > 0 || accountTypesUpdated > 0) {
+    } if (inserted > 0 || accountMetadataUpdated > 0) {
       saveLocalDatabase();
     }
 
-    res.json({ inserted, skipped, accountTypesUpdated, total: trades.length });
+    res.json({ inserted, skipped, accountTypesUpdated, accountMetadataUpdated, total: trades.length });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3193,6 +3258,7 @@ router.get('/export/csv', auth, async (req, res) => {
       'entryPrice', 'exitPrice', 'lotSize',
       'pnlUSD', 'pnlPct', 'commission', 'swap',
       'openTime', 'closeTime', 'durationMinutes', 'runningBalance',
+      'accountType', 'accountLogin', 'accountServer', 'accountName',
       'emotion', 'grade', 'tags', 'notes',
       'screenshotCount', 'screenshotUrls',
     ];
@@ -3222,6 +3288,10 @@ router.get('/export/csv', auth, async (req, res) => {
       escapeCsv(t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime),
       escapeCsv(t.durationMinutes || 0),
       escapeCsv(t.runningBalance || 0),
+      escapeCsv(t.accountType || ''),
+      escapeCsv(t.accountLogin || ''),
+      escapeCsv(t.accountServer || ''),
+      escapeCsv(t.accountName || ''),
       escapeCsv(t.emotion || ''),
       escapeCsv(t.grade || ''),
       escapeCsv((t.tags || []).join('; ')),

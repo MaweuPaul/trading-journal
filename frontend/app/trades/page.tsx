@@ -57,6 +57,10 @@ interface Trade {
   manuallyIntervened?: boolean | null;
   confidenceRating?: number | null;
   accountType?: string;
+  accountKey?: string;
+  accountLogin?: string;
+  accountServer?: string;
+  accountName?: string;
   primarySetup?: string;
   setupConfirmations?: string[];
   executionChecklist?: ChecklistItem[];
@@ -105,6 +109,16 @@ interface TradingRule {
   category: 'pre_trade' | 'execution';
   enabled: boolean;
   order: number;
+}
+
+interface TradeAccountOption {
+  accountKey: string;
+  accountLogin: string;
+  accountServer: string;
+  accountName: string;
+  accountType: string;
+  label: string;
+  count: number;
 }
 
 interface PlaybookRule {
@@ -238,9 +252,24 @@ function TradesPageContent() {
   const [symbol, setSymbol]       = useState(() => searchParams.get('symbol') || '');
   const [direction, setDirection] = useState(() => searchParams.get('direction') || '');
   const [accountTypeFilter, setAccountTypeFilter] = useState(() => searchParams.get('account') || '');
+  const [accountKeyFilter, setAccountKeyFilter] = useState(() => searchParams.get('accountKey') || '');
   const [from, setFrom]           = useState(() => searchParams.get('from') || '');
   const [to, setTo]               = useState(() => searchParams.get('to') || '');
   const [symbols, setSymbols]     = useState<string[]>([]);
+  const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
+  const [unassignedAccountCount, setUnassignedAccountCount] = useState(0);
+
+  useEffect(() => {
+    if (!hasToken) return;
+    const token = localStorage.getItem('token');
+    fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load trading accounts')))
+      .then(body => {
+        setTradeAccounts(body.accounts || []);
+        setUnassignedAccountCount(Number(body.unassignedCount || 0));
+      })
+      .catch(error => console.error(error));
+  }, [hasToken]);
 
   // Journal Drawer State
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
@@ -286,6 +315,7 @@ function TradesPageContent() {
       ...(symbol    && { symbol }),
       ...(direction && { direction }),
       ...(accountTypeFilter && { accountType: accountTypeFilter }),
+      ...(accountKeyFilter && { accountKey: accountKeyFilter }),
       ...(from      && { from }),
       ...(to        && { to }),
     });
@@ -312,13 +342,13 @@ function TradesPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [page, symbol, direction, accountTypeFilter, from, to, router]);
+  }, [page, symbol, direction, accountTypeFilter, accountKeyFilter, from, to, router]);
 
   useEffect(() => { load(); }, [load]);
 
   const resetFilters = () => {
-    setSymbol(''); setDirection(''); setAccountTypeFilter(''); setFrom(''); setTo(''); setPage(1);
-    updateQuery({ symbol: null, direction: null, account: null, from: null, to: null, page: null });
+    setSymbol(''); setDirection(''); setAccountTypeFilter(''); setAccountKeyFilter(''); setFrom(''); setTo(''); setPage(1);
+    updateQuery({ symbol: null, direction: null, account: null, accountKey: null, from: null, to: null, page: null });
   };
 
   const handleRowClick = (trade: Trade) => {
@@ -762,11 +792,26 @@ function TradesPageContent() {
           </select>
         </div>
         <div className="filter-group">
-          <label>Account</label>
+          <label>Account type</label>
           <select value={accountTypeFilter} onChange={e => { setAccountTypeFilter(e.target.value); setPage(1); updateQuery({ account: e.target.value, page: null }); }}>
             <option value="">Live &amp; Demo</option>
             <option value="live">Live only</option>
             <option value="demo">Demo only</option>
+          </select>
+        </div>
+        <div className="filter-group filter-group-account">
+          <label className="filter-label-with-help">
+            Trading account
+            <InfoHint text="Filters by the exact MT5 login and broker server recorded during sync. Run a full sync once to label older trades." label="How trading account filtering works" />
+          </label>
+          <select value={accountKeyFilter} onChange={e => { setAccountKeyFilter(e.target.value); setPage(1); updateQuery({ accountKey: e.target.value, page: null }); }}>
+            <option value="">All trading accounts</option>
+            {tradeAccounts.map(account => (
+              <option key={account.accountKey} value={account.accountKey}>
+                {account.label} ({account.accountType || 'unknown'}, {account.count})
+              </option>
+            ))}
+            {unassignedAccountCount > 0 && <option value="__unassigned__">Older trades — account unknown ({unassignedAccountCount})</option>}
           </select>
         </div>
         <div className="filter-group">
@@ -851,7 +896,8 @@ function TradesPageContent() {
                         </td>
                         <td className="text" style={{ fontWeight: 600 }}>
                           <span>{t.symbol}</span>
-                          {t.accountType && <span style={{ display: 'inline-block', marginLeft: 6, padding: '1px 5px', borderRadius: 5, fontSize: 8.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.04em', background: t.accountType === 'live' ? '#10b98118' : '#8b5cf618', color: t.accountType === 'live' ? '#059669' : '#8b5cf6', border: `1px solid ${t.accountType === 'live' ? '#10b98135' : '#8b5cf635'}` }}>{t.accountType}</span>}
+                          {t.accountType && <span className={`trade-account-type ${t.accountType}`}>{t.accountType}</span>}
+                          {t.accountLogin && <span className="trade-account-id" title={[t.accountName, t.accountLogin, t.accountServer].filter(Boolean).join(' · ')}>#{t.accountLogin}</span>}
                         </td>
                         <td>
                           <span className={`badge ${t.direction.toLowerCase()}`}>{t.direction}</span>

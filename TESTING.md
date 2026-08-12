@@ -575,8 +575,8 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 3. Confirm the source label identifies MT5 and the broker server, and that it uses the exact broker symbol.
 4. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
 5. Switch through `1m`, `5m`, `15m`, `1H`, `4H`, and `1D`; confirm each control loads its labelled MT5 interval and keeps entry/exit markers on the candle containing the trade timestamp.
-   - Confirm the toolbar is split into labelled Timeframe and Draw groups on desktop. Select Zone, Line, Text, and Event in turn; verify the selected tool has a clearly visible active state and every control remains keyboard focusable.
-   - Select Zone, Line, or Text and verify the larger color controls appear. Change color, draw an annotation, and confirm Undo becomes enabled immediately. Use Undo and confirm it disables again when history is empty.
+   - Confirm the toolbar is split into labelled Timeframe and Annotate groups on desktop. Select Select, Zone, Line, Level, Arrow, Text, Image, and Event in turn; verify the selected tool has a clearly visible active state and every control remains keyboard focusable.
+   - Select Zone, Line, Level, Arrow, Text, or Image and verify the larger color controls appear. Change color, draw an annotation, and confirm Undo becomes enabled immediately. Use Undo and confirm it disables again when history is empty.
    - At phone width, confirm the toolbar remains one touch-friendly horizontal strip that can be scrolled without shrinking its buttons.
 6. On an uncached timeframe, confirm the chart appears as soon as MT5 uploads it without waiting for a separate 2.5-second browser poll. Confirm the loaded bar count provides substantial context around the trade.
 7. Return to a previously loaded timeframe and confirm its TTL session loads immediately without overwriting the other intervals.
@@ -584,28 +584,31 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 9. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
 10. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
 11. Confirm entry and exit markers appear only after their corresponding candles are revealed.
-12. Use **Zone** and **Line**, then enter a Text label and click the chart. Confirm the status changes from **Saving notes…** to **Notes saved**. Resize the browser and confirm all annotations remain aligned with candle time and price.
-13. Refresh and reopen Replay. Confirm annotations reload on the same timeframe. Change timeframe, add different annotations, then return and confirm each timeframe restores only its own saved set.
-14. Open **Notes**, delete one annotation, and confirm it disappears and autosaves. Use **Undo**, then use **Clear all** and confirm the destructive action asks for confirmation.
-15. Download a JSON backup and confirm `replayJournals` contains saved annotations without Replay candle caches.
-16. Select **Event**, click a candle, and create an Entry decision with a title, details, severity, emotion, and linked playbook rule. Confirm its marker appears only after Replay reveals that candle.
-17. Leave the event on **This timeframe**, switch charts, and confirm it is hidden. Edit it to **All timeframes**, switch charts again, and confirm it follows the same timestamp and price. Confirm the timeline labels it **All charts**.
-18. Add Confirmation, Management, Mistake, Lesson, and Custom events at different candles. Confirm the timeline orders them by candle time and displays its save state.
-19. Click a timeline event and confirm Replay reveals and centers its candle. Add an event on another timeframe, return to the first timeframe, click that event after switching back through its timeline, and confirm navigation loads the correct timeframe.
-20. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
-21. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
-22. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
-23. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
-24. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
-25. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
-26. Change notes, tags, playbook answers, grades, outcome fields, Replay speed, phase, and revealed candle without choosing Mark Complete. Wait for **Draft saved**, refresh, and confirm every unfinished value is restored.
-27. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
-28. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
-29. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
-30. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-31. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-32. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-33. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+12. Use **Zone**, **Line**, **Level**, and **Arrow**, then enter a Text label and click the chart. Confirm the status changes from **Saving notes…** to **Notes saved**. Resize the browser and confirm all annotations remain aligned with candle time and price.
+13. Choose **Image**, select an image smaller than 8MB, edit its evidence caption, and click a candle/price after the upload completes. Confirm the captioned preview is pinned to that location and the trade screenshot collection also contains the uploaded evidence.
+14. Reset Replay to before each annotation's anchor candle. Play forward and confirm text, levels, shapes, and image evidence appear only when their first anchor candle is revealed.
+15. Choose **Select**, click each object type, and confirm it receives a visible selection outline. Delete it with the toolbar button, restore it with Undo, then delete it with Delete/Backspace while focus is outside a form field. Confirm Backspace does not delete an object while typing in an input or textarea.
+16. Refresh and reopen Replay. Confirm annotations reload on the same timeframe. Change timeframe, add different annotations, then return and confirm each timeframe restores only its own saved set.
+17. Open **Objects**, delete one annotation, and confirm it disappears and autosaves. Use **Undo**, then use **Clear all** and confirm the destructive action asks for confirmation.
+18. Download a JSON backup and confirm `replayJournals` contains saved annotations without Replay candle caches.
+19. Select **Event**, click a candle, and create an Entry decision with a title, details, severity, emotion, and linked playbook rule. Confirm its marker appears only after Replay reveals that candle.
+20. Leave the event on **This timeframe**, switch charts, and confirm it is hidden. Edit it to **All timeframes**, switch charts again, and confirm it follows the same timestamp and price. Confirm the timeline labels it **All charts**.
+21. Add Confirmation, Management, Mistake, Lesson, and Custom events at different candles. Confirm the timeline orders them by candle time and displays its save state.
+22. Click a timeline event and confirm Replay reveals and centers its candle. Add an event on another timeframe, return to the first timeframe, click that event after switching back through its timeline, and confirm navigation loads the correct timeframe.
+23. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
+24. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
+25. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
+26. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
+27. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
+28. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
+29. Change notes, tags, playbook answers, grades, outcome fields, Replay speed, phase, and revealed candle without choosing Mark Complete. Wait for **Draft saved**, refresh, and confirm every unfinished value is restored.
+30. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
+31. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
+32. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
+33. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+34. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+35. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+36. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 

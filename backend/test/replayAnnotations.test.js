@@ -2,15 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft } = require('../lib/replayAnnotations');
 
-test('normalizes valid text, line, and zone annotations', () => {
+test('normalizes valid chart documentation annotations', () => {
   const annotations = normalizeReplayAnnotations('15min', [
     { id: 'text-1', type: 'text', time: 100, price: 200, text: '  Wait for confirmation  ', color: '#10b981' },
     { id: 'line-1', type: 'line', time1: 100, time2: 200, price1: 10, price2: 20, color: '#ef4444' },
     { id: 'rect-1', type: 'rect', time1: 100, time2: 200, price1: 10, price2: 20, color: 'invalid' },
+    { id: 'horizontal-1', type: 'horizontal', time: 120, price: 12, color: '#f59e0b' },
+    { id: 'arrow-1', type: 'arrow', time1: 100, time2: 200, price1: 10, price2: 20, color: '#ef4444' },
+    { id: 'image-1', type: 'image', time: 130, price: 13, url: 'https://res.cloudinary.com/example/chart.png', caption: 'Daily context', screenshotId: 'shot-1' },
   ]);
   assert.equal(annotations[0].text, 'Wait for confirmation');
   assert.equal(annotations[2].color, '#3b82f6');
-  assert.equal(annotations.length, 3);
+  assert.equal(annotations[3].type, 'horizontal');
+  assert.equal(annotations[5].caption, 'Daily context');
+  assert.equal(annotations.length, 6);
 });
 
 test('rejects unsupported timeframes and duplicate IDs', () => {
@@ -24,6 +29,7 @@ test('rejects unsupported timeframes and duplicate IDs', () => {
 test('rejects empty text and non-numeric chart coordinates', () => {
   assert.throws(() => normalizeReplayAnnotations('1h', [{ id: 'empty', type: 'text', time: 1, price: 1, text: ' ' }]), /cannot be empty/);
   assert.throws(() => normalizeReplayAnnotations('1h', [{ id: 'bad', type: 'line', time1: 'x', time2: 2, price1: 1, price2: 2 }]), /finite number/);
+  assert.throws(() => normalizeReplayAnnotations('1h', [{ id: 'bad-image', type: 'image', time: 1, price: 1, url: 'javascript:alert(1)' }]), /invalid URL/);
 });
 
 test('normalizes Replay timeline events and their visibility scope', () => {

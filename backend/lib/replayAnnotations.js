@@ -12,7 +12,7 @@ function normalizeReplayAnnotations(interval, input) {
   };
   return input.map((annotation, index) => {
     const type = String(annotation?.type || '');
-    if (!['rect', 'line', 'text'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
+    if (!['rect', 'line', 'horizontal', 'arrow', 'text', 'image'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
     const annotationId = String(annotation.id || '').trim();
     if (!/^[A-Za-z0-9:_-]{1,100}$/.test(annotationId)) throw new Error(`Annotation ${index + 1} has an invalid ID`);
     if (ids.has(annotationId)) throw new Error(`Annotation ID ${annotationId} is duplicated`);
@@ -22,6 +22,17 @@ function normalizeReplayAnnotations(interval, input) {
       const text = String(annotation.text || '').trim().slice(0, 80);
       if (!text) throw new Error(`Text annotation ${index + 1} cannot be empty`);
       return { id: annotationId, type, time: number(annotation.time, 'time'), price: number(annotation.price, 'price'), text, color };
+    }
+    if (type === 'image') {
+      const url = String(annotation.url || '').trim().slice(0, 2000);
+      if (!url || !(/^(https?:\/\/|\/public\/screenshots\/)/i.test(url))) throw new Error(`Image annotation ${index + 1} has an invalid URL`);
+      return {
+        id: annotationId, type, time: number(annotation.time, 'time'), price: number(annotation.price, 'price'), url,
+        caption: String(annotation.caption || '').trim().slice(0, 180), screenshotId: String(annotation.screenshotId || '').trim().slice(0, 100), color,
+      };
+    }
+    if (type === 'horizontal') {
+      return { id: annotationId, type, time: number(annotation.time, 'time'), price: number(annotation.price, 'price'), color };
     }
     return {
       id: annotationId, type, color,

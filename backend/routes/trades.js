@@ -91,7 +91,10 @@ const DEFAULT_TRADING_RULES = [
 const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
-const PLAYBOOK_SCHEMA_VERSION = 3;
+const PLAYBOOK_SCHEMA_VERSION = 4;
+const PLAYBOOK_RULE_TOOLS = new Set(['observation', 'confirmation', 'decision_gate', 'invalidation', 'risk_limit']);
+const PLAYBOOK_RULE_TIMEFRAMES = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d']);
+const PLAYBOOK_FAILURE_ACTIONS = new Set(['none', 'warn', 'skip_trade', 'stop_session']);
 
 // ── Trade Replay Helpers ───────────────────────────────────────────────────
 
@@ -214,6 +217,7 @@ function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
       category: 'setup',
       rules: rules.filter(rule => rule.category === 'pre_trade' && rule.enabled !== false).map(rule => ({
         ruleId: rule.ruleId, label: rule.label, inputType: 'boolean', options: [], required: false,
+        toolRole: 'confirmation', timeframes: [], failureAction: 'warn', failureMessage: '',
       })),
     },
     {
@@ -222,6 +226,7 @@ function rulesToStarterPlaybook(rules = DEFAULT_TRADING_RULES) {
       category: 'execution',
       rules: rules.filter(rule => rule.category === 'execution' && rule.enabled !== false).map(rule => ({
         ruleId: rule.ruleId, label: rule.label, inputType: 'boolean', options: [], required: false,
+        toolRole: 'confirmation', timeframes: [], failureAction: 'warn', failureMessage: '',
       })),
     },
   ];
@@ -304,6 +309,11 @@ function normalizeBlocks(input) {
         if (exampleRequirement.required && exampleRequirement.minimumImages < 1) exampleRequirement.minimumImages = 1;
         if (exampleRequirement.minimumImages > exampleRequirement.maximumImages) throw new Error(`Minimum trade screenshots cannot exceed maximum for: ${label}`);
         const examples = normalizePlaybookEvidence(rule.examples, label, exampleRequirement.maximumImages);
+        const toolRole = PLAYBOOK_RULE_TOOLS.has(rule.toolRole) ? rule.toolRole : 'observation';
+        const timeframes = [...new Set((Array.isArray(rule.timeframes) ? rule.timeframes : [])
+          .map(timeframe => String(timeframe).trim().toLowerCase())
+          .filter(timeframe => PLAYBOOK_RULE_TIMEFRAMES.has(timeframe)))].slice(0, PLAYBOOK_RULE_TIMEFRAMES.size);
+        const failureAction = PLAYBOOK_FAILURE_ACTIONS.has(rule.failureAction) ? rule.failureAction : 'none';
         return {
           ruleId: String(rule.ruleId || id('rule')),
           label,
@@ -317,6 +327,10 @@ function normalizeBlocks(input) {
           validation,
           examples,
           exampleRequirement,
+          toolRole,
+          timeframes,
+          failureAction,
+          failureMessage: failureAction === 'none' ? '' : String(rule.failureMessage || '').trim().slice(0, 240),
           order: ruleIndex,
         };
       }),

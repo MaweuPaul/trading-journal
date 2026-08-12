@@ -11,7 +11,7 @@ import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time
 const API = '/api';
 
 interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; }
-interface ReplayPlaybookRule { ruleId: string; label: string; inputType: string; options?: string[]; required?: boolean; helpText?: string; }
+interface ReplayPlaybookRule { ruleId: string; label: string; inputType: string; options?: string[]; required?: boolean; helpText?: string; toolRole?: string; timeframes?: string[]; failureAction?: string; failureMessage?: string; }
 interface ReplayPlaybookBlock { blockId: string; name: string; category: string; rules: ReplayPlaybookRule[]; }
 interface ReplayPlaybookSnapshot { name: string; versionNumber: number; versionId: string; blocks: ReplayPlaybookBlock[]; }
 interface ReplayData {
@@ -78,6 +78,12 @@ const JOURNAL_PHASES = [
   { id: 'manage', label: 'Execution', categories: ['execution', 'management', 'trade_management'] },
   { id: 'review', label: 'Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
 ] as const;
+const RULE_TOOL_LABELS: Record<string, string> = {
+  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit',
+};
+const FAILURE_ACTION_LABELS: Record<string, string> = {
+  warn: 'Warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',
+};
 const REPLAY_EVENT_TYPES = [
   ['observation', 'Observation'], ['confirmation', 'Confirmation'], ['entry', 'Entry decision'],
   ['management', 'Management'], ['exit', 'Exit decision'], ['emotion', 'Emotion'],
@@ -942,7 +948,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                     {block.rules.map(rule => (
                       <div key={rule.ruleId} className="replay-rule-field">
                         <label>{rule.label}{rule.required && <span> *</span>}</label>
+                        <div className="replay-rule-context"><span>{RULE_TOOL_LABELS[rule.toolRole || 'observation'] || 'Observation'}</span><span>{rule.timeframes?.length ? rule.timeframes.join(' · ') : 'All timeframes'}</span></div>
                         {rule.helpText && <p>{rule.helpText}</p>}
+                        {rule.failureAction && rule.failureAction !== 'none' && <div className={`replay-rule-decision${rule.inputType === 'boolean' && playbookResponses[rule.ruleId] === false ? ' active' : ''}`}><strong>If not satisfied: {FAILURE_ACTION_LABELS[rule.failureAction] || rule.failureAction}</strong>{rule.failureMessage && <span>{rule.failureMessage}</span>}</div>}
                         {renderRuleInput(rule)}
                       </div>
                     ))}

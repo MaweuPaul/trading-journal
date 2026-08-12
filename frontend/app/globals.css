@@ -2597,15 +2597,19 @@ body.replay-open .main-content {
 
 /* Top bar */
 .replay-topbar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 16px; min-height: 52px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 14px; min-height: 50px;
   background: #0d1117; border-bottom: 1px solid #1a2035;
-  flex-shrink: 0; flex-wrap: wrap;
+  flex-shrink: 0;
 }
+.replay-trade-summary { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
 .replay-topbar-symbol {
-  font-size: 15px; font-weight: 700; color: #e2e8f8;
+  display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #e2e8f8;
   font-family: var(--font-mono); letter-spacing: 0.02em;
 }
+.replay-direction { padding: 3px 7px; border: 1px solid; border-radius: 5px; font: 700 10px var(--font-sans); }
+.replay-direction.buy { border-color: #10b98140; background: #10b98120; color: #34d399; }
+.replay-direction.sell { border-color: #ef444440; background: #ef444420; color: #fb7185; }
 .replay-topbar-pnl {
   font-size: 12px; font-weight: 700; font-family: var(--font-mono);
   padding: 3px 10px; border-radius: 20px;
@@ -2613,9 +2617,13 @@ body.replay-open .main-content {
 .replay-topbar-pnl.positive { background: #10b98118; color: #10b981; border: 1px solid #10b98130; }
 .replay-topbar-pnl.negative { background: #ef444418; color: #ef4444; border: 1px solid #ef444430; }
 .replay-topbar-meta { font-size: 11px; color: #8b95b0; }
-.replay-topbar-spacer { flex: 1; }
+.replay-workspace-toolbar { min-height: 56px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid #1a2035; background: #0a0e14; flex: none; overflow-x: auto; scrollbar-width: thin; }
+.replay-tool-group { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.replay-tool-group-label { color: #64708e; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.replay-toolbar-divider { width: 1px; height: 30px; flex: none; background: #25304a; }
+.replay-toolbar-spacer { min-width: 8px; flex: 1; }
 .replay-timeframes { display: inline-flex; align-items: center; padding: 3px; border: 1px solid #25304a; border-radius: 9px; background: #090d13; }
-.replay-timeframes button { min-width: 36px; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: #7f8aa7; font: 700 10px var(--font-mono); cursor: pointer; transition: background .15s, color .15s; }
+.replay-timeframes button { min-width: 42px; min-height: 38px; padding: 6px 9px; border: 0; border-radius: 6px; background: transparent; color: #9aa6c2; font: 700 11px var(--font-mono); cursor: pointer; transition: background .15s, color .15s; }
 .replay-timeframes button:hover { color: #c9d2e8; background: #182033; }
 .replay-timeframes button.active { color: white; background: #2563eb; box-shadow: 0 2px 8px #2563eb45; }
 .replay-chart-text-editor { position: absolute; z-index: 4; top: 14px; left: 14px; display: grid; grid-template-columns: auto minmax(180px, 320px); align-items: center; gap: 7px 9px; padding: 9px 11px; border: 1px solid #3b82f6; border-radius: 10px; background: #0a0e14ee; color: #60a5fa; box-shadow: 0 8px 24px #0008; pointer-events: auto; }
@@ -2896,14 +2904,19 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
 .replay-speed-select:focus { border-color: #3b82f6; }
 .replay-tool-btn {
   background: #131820; border: 1px solid #1a2035; color: #8b95b0;
-  border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 11px;
-  display: flex; align-items: center; gap: 5px; transition: all 0.15s;
+  min-height: 44px; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 11px; font-weight: 700; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.replay-tool-btn:hover { background: #1a2035; }
-.replay-tool-btn.active { background: #6366f120; border-color: #6366f140; color: #818cf8; }
+.replay-tool-btn:hover:not(:disabled) { background: #1a2035; color: #dbe4f7; }
+.replay-tool-btn.active { background: #2563eb25; border-color: #3b82f6; color: #93c5fd; box-shadow: inset 0 0 0 1px #3b82f625; }
+.replay-tool-btn:disabled { opacity: .38; cursor: not-allowed; }
+.replay-color-group { padding-left: 4px; }
+.replay-color-group button { width: 36px; height: 36px; flex: none; border: 3px solid #0a0e14; border-radius: 9px; background: var(--replay-swatch); cursor: pointer; box-shadow: 0 0 0 1px #303b55; }
+.replay-color-group button:hover { box-shadow: 0 0 0 2px #7f8aa7; }
+.replay-color-group button.active { box-shadow: 0 0 0 2px #f8fafc; }
 .replay-close-btn {
   background: none; border: 1px solid #1a2035; color: #8b95b0;
-  border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+  min-height: 40px; border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 12px;
   display: flex; align-items: center; gap: 5px; transition: all 0.15s;
 }
 .replay-close-btn:hover { background: #ef444415; color: #ef4444; border-color: #ef444440; }
@@ -2913,10 +2926,15 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
 
 @media (max-width: 800px) {
   .replay-overlay { min-height: 100dvh; }
-  .replay-topbar { padding: 8px 10px; }
-  .replay-topbar-meta { width: 100%; order: 3; }
-  .replay-timeframes { order: 4; width: 100%; overflow-x: auto; }
-  .replay-timeframes button { flex: 1; min-width: 44px; min-height: 40px; }
+  .replay-topbar { align-items: flex-start; padding: 8px 10px; }
+  .replay-trade-summary { gap: 5px 8px; }
+  .replay-topbar-meta { width: 100%; }
+  .replay-close-btn { min-width: 44px; min-height: 44px; padding-inline: 10px; }
+  .replay-workspace-toolbar { min-height: 62px; padding: 8px 10px; gap: 9px; }
+  .replay-tool-group-label { display: none; }
+  .replay-timeframes button { min-width: 44px; min-height: 44px; }
+  .replay-tool-btn { min-height: 44px; }
+  .replay-color-group button { width: 40px; height: 40px; }
   .replay-chart-text-editor { top: 10px; left: 10px; right: 10px; grid-template-columns: auto minmax(0, 1fr); }
   .replay-annotation-manager { top: 10px; right: 10px; left: 10px; width: auto; }
   .replay-event-editor { top: 10px; left: 10px; right: 10px; width: auto; }

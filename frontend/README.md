@@ -24,6 +24,8 @@ The Trades drawer includes a full-screen **Replay** workspace. It requests only 
 
 Replay timeline events default to **This timeframe** so chart-specific observations do not clutter every chart. Choose **All timeframes** for a trade-level decision or lesson that should follow the same timestamp and price across each Replay chart. Legacy events remain scoped to their original timeframe.
 
+Replay separates trade identity from chart interaction controls. The second toolbar groups timeframe selection, drawing tools, contextual colors, autosave status, Undo, and saved-note management. Controls have visible active states and remain horizontally reachable on narrow screens. Undo availability updates immediately when a chart annotation is created or restored.
+
 ## Routes
 
 | Route | Purpose |

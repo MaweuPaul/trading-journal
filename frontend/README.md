@@ -26,6 +26,8 @@ Replay timeline events default to **This timeframe** so chart-specific observati
 
 Replay separates trade identity from chart interaction controls. The second toolbar groups timeframe selection, Select, Zone, Line, Level, Arrow, Text, Image, and Event tools with contextual colors, autosave status, Undo, Delete, and saved-object management. Controls have visible active states and remain horizontally reachable on narrow screens. Select makes an object clickable; Delete/Backspace or the Delete button removes only that selected object. Image uploads become trade screenshots and are then pinned to an exact chart time and price. Annotation visibility follows candle playback so later documentation is not exposed early.
 
+The bottom review transport shows entry, exit, and journal-event positions on the scrubber. It includes direct Entry/Exit and previous/next-note jumps plus an enabled-by-default option to pause automatically at entry and exit. A visible Shortcuts guide documents keyboard playback and Quick Review commands; editable fields suppress all global shortcuts. Process grading stays disabled until the preceding qualitative review questions are complete, and surprising plan/grade combinations receive an honesty prompt rather than an automatic score.
+
 ## Routes
 
 | Route | Purpose |

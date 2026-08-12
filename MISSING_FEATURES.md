@@ -29,7 +29,7 @@ The journal already includes:
 
 ### 1. Pre-Trade Planning Workflow — Partial
 
-**Existing:** Playbooks can model context, setup, entry, risk, and pre-trade conditions using structured primitive fields and image evidence. Trades retain the attached playbook snapshot and answers.
+**Existing:** Playbooks can model context, setup, entry, risk, and pre-trade conditions using structured primitive fields and optional image evidence. Each rule can declare its tool role, applicable timeframes, and the intended decision when it is not satisfied. Trades retain the attached playbook snapshot and answers.
 
 **Still missing:** A plan must be creatable and timestamped **before** an MT5 trade closes or syncs. Add a planned-trade record that can later be matched to the broker trade.
 

@@ -120,6 +120,10 @@ interface PlaybookRule {
   validation?: { min?: number | null; max?: number | null; minLength?: number | null; maxLength?: number | null };
   examples?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid' }>;
   exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
+  toolRole?: 'observation' | 'confirmation' | 'decision_gate' | 'invalidation' | 'risk_limit';
+  timeframes?: string[];
+  failureAction?: 'none' | 'warn' | 'skip_trade' | 'stop_session';
+  failureMessage?: string;
 }
 
 interface PlaybookBlock {
@@ -136,6 +140,13 @@ const JOURNAL_PHASES: Array<{ id: JournalPhase; label: string; categories: strin
   { id: 'manage', label: '2. Manage', categories: ['execution', 'management', 'trade_management'] },
   { id: 'review', label: '3. Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
 ];
+
+const RULE_TOOL_LABELS: Record<string, string> = {
+  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit',
+};
+const FAILURE_ACTION_LABELS: Record<string, string> = {
+  warn: 'Warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',
+};
 
 function hasPlaybookAnswer(value: unknown) {
   return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
@@ -1054,7 +1065,9 @@ function TradesPageContent() {
                         {block.rules.map(rule => (
                           <div key={rule.ruleId} style={{ display: 'grid', gap: 5 }}>
                             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rule.label}{rule.required || rule.exampleRequirement?.required ? ' *' : ''}</span>
+                            <div className="journal-rule-context"><span>{RULE_TOOL_LABELS[rule.toolRole || 'observation'] || 'Observation'}</span><span>{rule.timeframes?.length ? rule.timeframes.join(' · ') : 'All timeframes'}</span></div>
                             {rule.helpText && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>{rule.helpText}</span>}
+                            {rule.failureAction && rule.failureAction !== 'none' && <div className={`journal-rule-decision${rule.inputType === 'boolean' && draftPlaybookResponses[rule.ruleId] === false ? ' active' : ''}`}><strong>If not satisfied: {FAILURE_ACTION_LABELS[rule.failureAction] || rule.failureAction}</strong>{rule.failureMessage && <span>{rule.failureMessage}</span>}</div>}
                             {(rule.examples || []).length > 0 && <div className="journal-rule-examples">{(rule.examples || []).map(example => <figure key={example.evidenceId} className={example.kind}>
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={example.url} alt={example.caption} />

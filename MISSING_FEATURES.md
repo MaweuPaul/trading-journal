@@ -90,11 +90,11 @@ Add a `WeeklyReview` model and `/journal/weekly` page. Pre-fill the review with 
 
 ### 8. Save Replay Annotations — Partial
 
-**Existing:** Replay stores rectangle/zone, line, and text annotations by trade and timeframe. Annotations autosave, survive refresh, appear in JSON backups, and support undo plus individual or clear-all deletion.
+**Existing:** Replay stores zones, trend lines, horizontal levels, arrows, text, and chart-anchored image evidence by trade and timeframe. Annotations autosave, survive refresh, appear in JSON backups, reveal at their anchor candle during playback, and support selection, Undo, keyboard/toolbar deletion, individual list deletion, and protected clear-all deletion.
 
 **Still missing:** Complete the advanced editing and image-export portion:
 
-- Selecting, dragging, resizing, and editing existing annotations directly on the chart
+- Dragging, resizing, and editing existing annotations directly on the chart
 - Optional chart-image capture uploaded to the existing screenshot system
 - Association with the trade's immutable playbook version when appropriate
 

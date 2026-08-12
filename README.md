@@ -217,7 +217,7 @@ requirements.txt
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
 | `/api/trades/:id/replay` | GET | Return temporarily cached candles or queue an on-demand MT5 replay request; `?fallback=twelve` uses the optional fallback |
 | `/api/trades/:id/replay-journal` | GET | Load saved chart annotations for one trade and timeframe |
-| `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave text, line, and zone annotations for one timeframe |
+| `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave zones, lines, levels, arrows, text, and image pins for one timeframe |
 | `/api/trades/:id/replay-journal/events` | PUT | Validate and autosave the candle-linked trade-event timeline |
 | `/api/trades/:id/replay-journal/quick-review` | PUT | Autosave or complete the short process-focused review |
 | `/api/trades/:id/replay-journal/draft` | PUT | Autosave unfinished journal answers and Replay position |
@@ -262,7 +262,9 @@ The shared TTL session works across cloud instances and expires after 30 minutes
 
 Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views. Switching timeframe requests only that broker interval, preserves the trade entry/exit timestamps, and leaves other timeframe sessions available until their TTL expires. The session identity is `user + trade + timeframe`, so multiple views never overwrite one another.
 
-The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Chart annotations include rectangle zones, line drawings, and colored text labels. They are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups. Replay shows their save state and provides undo, individual deletion, and protected clear-all controls.
+The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Replay provides TradingView-style documentation tools for zones, trend lines, horizontal levels, arrows, colored text, candle events, and image evidence pinned to an exact time and price. Annotations are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups.
+
+Choose **Select** to click an existing chart object. The selected object receives a visible outline and can be removed with the toolbar **Delete** button or the keyboard Delete/Backspace key; **Undo**, individual list deletion, and protected **Clear all** remain available. Image pins reuse the journal screenshot upload pipeline, keep the uploaded evidence attached to the trade, and display a captioned preview on the chart. Static annotations remain hidden until their point anchor or all shape anchors have been revealed, so playback never exposes a future chart note early.
 
 Replay's **Event** tool attaches observations, confirmations, entry/management/exit decisions, emotions, mistakes, rule violations, lessons, or custom events to exact candle time and price. Events can carry importance, notes, emotion, and a rule from the trade's immutable playbook snapshot. The journal timeline autosaves, orders events chronologically, renders chart markers as playback reveals them, and navigates back to an event even when it belongs to another timeframe.
 

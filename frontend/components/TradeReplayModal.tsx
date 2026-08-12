@@ -4,7 +4,7 @@ import {
   X, Play, Pause, SkipBack, SkipForward,
   Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
   BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
-  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal,
+  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -146,6 +146,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [replayIdx, setReplayIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [autoPauseMarkers, setAutoPauseMarkers] = useState(true);
+  const [pausedMarker, setPausedMarker] = useState('');
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [drawingTool, setDrawingTool] = useState<DrawingTool>('none');
   const [rectColor, setRectColor] = useState(RECT_COLORS[0]);
@@ -547,11 +550,25 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (playing) {
       const ms = Math.max(50, 300 / speed);
       intervalRef.current = setInterval(() => {
-        setReplayIdx(prev => { if (prev >= replayData.candles.length - 1) { setPlaying(false); return prev; } return prev + 1; });
+        setReplayIdx(prev => {
+          if (prev >= replayData.candles.length - 1) { setPlaying(false); return prev; }
+          const next = prev + 1;
+          if (autoPauseMarkers && (next === replayData.entryIndex || next === replayData.exitIndex)) {
+            const label = next === replayData.entryIndex && next === replayData.exitIndex ? 'Entry and exit' : next === replayData.entryIndex ? 'Entry' : 'Exit';
+            setPlaying(false); setPausedMarker(label);
+          }
+          return next;
+        });
       }, ms);
     } else { if (intervalRef.current) clearInterval(intervalRef.current); }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [playing, speed, replayData]);
+  }, [autoPauseMarkers, playing, speed, replayData]);
+
+  useEffect(() => {
+    if (!pausedMarker) return;
+    const timer = window.setTimeout(() => setPausedMarker(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [pausedMarker]);
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
@@ -812,7 +829,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
+      if (showShortcutHelp) { e.preventDefault(); setShowShortcutHelp(false); }
+      else if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
         e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setDrawingTool('none');
       } else onClose();
     };
@@ -826,22 +844,42 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       document.body.classList.remove('replay-open');
       window.removeEventListener('keydown', onKey);
     };
-  }, [drawingTool, eventLocation, onClose, pendingImage, selectedAnnotationId]);
+  }, [drawingTool, eventLocation, onClose, pendingImage, selectedAnnotationId, showShortcutHelp]);
 
   const totalCandles = replayData?.candles.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
+  const entryProgressPct = replayData ? ((replayData.entryIndex + 1) / totalCandles) * 100 : 0;
+  const exitProgressPct = replayData ? ((replayData.exitIndex + 1) / totalCandles) * 100 : 0;
   const isProfit = tradeSummary.pnlUSD >= 0;
   const playbook = replayData?.playbookSnapshot;
   const activePhase = JOURNAL_PHASES.find(phase => phase.id === journalPhase) || JOURNAL_PHASES[0];
   const phaseBlocks = playbook?.blocks.filter(block => activePhase.categories.includes(block.category as never)) || [];
   const allPlaybookRules = playbook?.blocks.flatMap(block => block.rules) || [];
   const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval || event.visibilityScope === 'all').sort((a, b) => a.candleTime - b.candleTime);
+  const timelineProgressMarkers = replayData ? visibleTimelineEvents.map(event => {
+    const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
+    return { event, index, progress: index >= 0 ? ((index + 1) / totalCandles) * 100 : 0 };
+  }).filter(marker => marker.index >= 0) : [];
+  const previousTimelineMarker = [...timelineProgressMarkers].reverse().find(marker => marker.index < replayIdx);
+  const nextTimelineMarker = timelineProgressMarkers.find(marker => marker.index > replayIdx);
   const globalTimelineEventCount = timelineEvents.filter(event => event.visibilityScope === 'all').length;
   const answeredRules = allPlaybookRules.filter(rule => {
     const value = playbookResponses[rule.ruleId];
     return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
   }).length;
+  const quickReviewReadyForGrade = quickReview.followedPlan !== null && Boolean(quickReview.primaryEmotion) && Boolean(quickReview.lesson.trim())
+    && (quickReview.followedPlan ? Boolean(quickReview.primaryStrength.trim()) : Boolean(quickReview.primaryMistake.trim()));
+  const quickReviewContradiction = quickReview.processGrade && (
+    (quickReview.followedPlan === true && ['C', 'D', 'F'].includes(quickReview.processGrade))
+    || (quickReview.followedPlan === false && ['A', 'B'].includes(quickReview.processGrade))
+  ) ? (quickReview.followedPlan ? 'You followed the plan but gave the process a low grade. Recheck what still needs improvement.' : 'You did not follow the plan but gave the process a high grade. Make sure the grade reflects execution, not P&L.') : '';
   const setRuleAnswer = (ruleId: string, value: unknown) => setPlaybookResponses(current => ({ ...current, [ruleId]: value }));
+  const jumpToReplayIndex = useCallback((index: number) => {
+    if (!replayData) return;
+    const target = Math.max(0, Math.min(replayData.candles.length - 1, index));
+    setPlaying(false); setPausedMarker(''); setReplayIdx(target);
+    queueMicrotask(() => chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, target - 30), to: Math.min(replayData.candles.length - 1, target + 10) }));
+  }, [replayData]);
   const switchTimeframe = (interval: string) => {
     if (interval === selectedInterval) return;
     setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
@@ -915,9 +953,40 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     }
     const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
     if (index < 0) return;
-    setPlaying(false); setReplayIdx(Math.max(replayIdx, index));
-    queueMicrotask(() => chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, index - 30), to: Math.min(replayData.candles.length - 1, index + 10) }));
+    jumpToReplayIndex(index);
   };
+  useEffect(() => {
+    const onReplayShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (event.key === '?') { event.preventDefault(); setShowShortcutHelp(current => !current); return; }
+      if (!replayData) return;
+      if (event.code === 'Space') { event.preventDefault(); setPausedMarker(''); setPlaying(current => !current); return; }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); jumpToReplayIndex(replayIdx - 1); return; }
+      if (event.key === 'ArrowRight') { event.preventDefault(); jumpToReplayIndex(replayIdx + 1); return; }
+      if (key === 'e') { event.preventDefault(); jumpToReplayIndex(replayData.entryIndex); return; }
+      if (key === 'x') { event.preventDefault(); jumpToReplayIndex(replayData.exitIndex); return; }
+      if (event.key === '[' && previousTimelineMarker) { event.preventDefault(); jumpToReplayIndex(previousTimelineMarker.index); return; }
+      if (event.key === ']' && nextTimelineMarker) { event.preventDefault(); jumpToReplayIndex(nextTimelineMarker.index); return; }
+      if (reviewMode !== 'quick') return;
+      if (key === 'y' || key === 'n') {
+        event.preventDefault(); const followedPlan = key === 'y';
+        setQuickReview(current => ({ ...current, followedPlan, primaryMistake: followedPlan ? '' : current.primaryMistake, primaryStrength: followedPlan ? current.primaryStrength : '', completedAt: null }));
+        return;
+      }
+      const emotionIndex = Number(event.key) - 1;
+      if (emotionIndex >= 0 && emotionIndex < EMOTIONS.length) {
+        event.preventDefault(); const value = EMOTIONS[emotionIndex].name;
+        setQuickReview(current => ({ ...current, primaryEmotion: value, completedAt: null })); setEmotion(value); return;
+      }
+      const gradeKey = event.key.toUpperCase();
+      if (quickReviewReadyForGrade && GRADES.includes(gradeKey as typeof GRADES[number])) {
+        event.preventDefault(); setQuickReview(current => ({ ...current, processGrade: gradeKey, completedAt: null })); setGrade(gradeKey);
+      }
+    };
+    window.addEventListener('keydown', onReplayShortcut); return () => window.removeEventListener('keydown', onReplayShortcut);
+  }, [jumpToReplayIndex, nextTimelineMarker, previousTimelineMarker, quickReviewReadyForGrade, replayData, replayIdx, reviewMode]);
   const renderRuleInput = (rule: ReplayPlaybookRule) => {
     const value = playbookResponses[rule.ruleId];
     if (rule.inputType === 'boolean') return (
@@ -1050,6 +1119,19 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
             onMouseLeave={() => { if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
+          {pausedMarker && <div className="replay-marker-pause" role="status"><PauseCircle size={18} /><div><strong>Paused at {pausedMarker}</strong><span>Review what you knew and what you decided here.</span></div></div>}
+          {showShortcutHelp && (
+            <div className="replay-shortcut-help" role="dialog" aria-label="Replay keyboard shortcuts">
+              <div className="replay-shortcut-head"><div><Keyboard size={17} /><strong>Keyboard review</strong></div><button type="button" onClick={() => setShowShortcutHelp(false)} aria-label="Close keyboard shortcuts"><X size={15} /></button></div>
+              <p>Shortcuts pause while you type in any journal field.</p>
+              <div className="replay-shortcut-grid">
+                <kbd>Space</kbd><span>Play or pause</span><kbd>← / →</kbd><span>Step one candle</span>
+                <kbd>E / X</kbd><span>Jump to entry / exit</span><kbd>[ / ]</kbd><span>Previous / next review moment</span>
+                <kbd>Y / N</kbd><span>Followed the plan</span><kbd>1–6</kbd><span>Choose emotion</span>
+                <kbd>A–F</kbd><span>Process grade</span><kbd>?</kbd><span>Show or hide this guide</span>
+              </div>
+            </div>
+          )}
           {loading && (
             <div className="replay-chart-state">
               <div className="replay-spinner" />
@@ -1108,13 +1190,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           {reviewMode === 'quick' && (
             <section className="replay-quick-review">
               <div className="replay-quick-head"><div><span>20–30 second review</span><strong>Grade the process, not the P&amp;L</strong></div><small className={quickReviewSaveState} title={quickReviewError}>{quickReviewSaveState === 'saving' ? 'Saving…' : quickReviewSaveState === 'error' ? 'Not saved' : quickReview.completedAt ? 'Complete' : 'Draft saved'}</small></div>
-              <div className="replay-quick-question"><label>1. Did you follow the plan?</label><div className="replay-quick-options"><button type="button" className={quickReview.followedPlan === true ? 'selected good' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: true, primaryMistake: '', completedAt: null }))}>Yes</button><button type="button" className={quickReview.followedPlan === false ? 'selected bad' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: false, primaryStrength: '', completedAt: null }))}>No</button></div></div>
-              <div className="replay-quick-question"><label>2. What was the main emotion?</label><div className="replay-quick-emotions">{EMOTIONS.map(item => <button type="button" key={item.name} title={item.name} className={quickReview.primaryEmotion === item.name ? 'selected' : ''} onClick={() => { const value = quickReview.primaryEmotion === item.name ? '' : item.name; setQuickReview(current => ({ ...current, primaryEmotion: value, completedAt: null })); setEmotion(value); }}>{item.emoji}<span>{item.name}</span></button>)}</div></div>
+              <div className="replay-quick-question"><label>1. Did you follow the plan?</label><div className="replay-quick-options"><button type="button" aria-keyshortcuts="Y" className={quickReview.followedPlan === true ? 'selected good' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: true, primaryMistake: '', completedAt: null }))}>Yes <kbd>Y</kbd></button><button type="button" aria-keyshortcuts="N" className={quickReview.followedPlan === false ? 'selected bad' : ''} onClick={() => setQuickReview(current => ({ ...current, followedPlan: false, primaryStrength: '', completedAt: null }))}>No <kbd>N</kbd></button></div></div>
+              <div className="replay-quick-question"><label>2. What was the main emotion?</label><div className="replay-quick-emotions">{EMOTIONS.map((item, index) => <button type="button" key={item.name} title={`${item.name} (${index + 1})`} aria-keyshortcuts={String(index + 1)} className={quickReview.primaryEmotion === item.name ? 'selected' : ''} onClick={() => { const value = quickReview.primaryEmotion === item.name ? '' : item.name; setQuickReview(current => ({ ...current, primaryEmotion: value, completedAt: null })); setEmotion(value); }}>{item.emoji}<span>{item.name}</span><kbd>{index + 1}</kbd></button>)}</div></div>
               {quickReview.followedPlan === false && <div className="replay-quick-question"><label>3. What was the main mistake?</label><input value={quickReview.primaryMistake} maxLength={100} onChange={event => setQuickReview(current => ({ ...current, primaryMistake: event.target.value, completedAt: null }))} placeholder="e.g. Entered before confirmation" /></div>}
               {quickReview.followedPlan === true && <div className="replay-quick-question"><label>3. What should you repeat?</label><input value={quickReview.primaryStrength} maxLength={100} onChange={event => setQuickReview(current => ({ ...current, primaryStrength: event.target.value, completedAt: null }))} placeholder="e.g. Waited for the sweep and confirmation" /></div>}
               {quickReview.followedPlan === null && <div className="replay-quick-hint">Choose Yes or No to reveal the next question.</div>}
               <div className="replay-quick-question"><label>4. What is the main lesson?</label><textarea value={quickReview.lesson} maxLength={500} onChange={event => setQuickReview(current => ({ ...current, lesson: event.target.value, completedAt: null }))} placeholder="One clear action for the next trade" /></div>
-              <div className="replay-quick-question"><label>5. Process grade</label><div className="replay-quick-grades">{GRADES.map(item => <button type="button" key={item} className={quickReview.processGrade === item ? 'selected' : ''} onClick={() => { const value = quickReview.processGrade === item ? '' : item; setQuickReview(current => ({ ...current, processGrade: value, completedAt: null })); setGrade(value); }}>{item}</button>)}</div></div>
+              <div className="replay-quick-question"><label>5. Process grade</label>{!quickReviewReadyForGrade && <p className="replay-grade-lock">Complete questions 1–4 before grading the process.</p>}<div className="replay-quick-grades">{GRADES.map(item => <button type="button" key={item} disabled={!quickReviewReadyForGrade} aria-keyshortcuts={item} className={quickReview.processGrade === item ? 'selected' : ''} onClick={() => { const value = quickReview.processGrade === item ? '' : item; setQuickReview(current => ({ ...current, processGrade: value, completedAt: null })); setGrade(value); }}>{item}</button>)}</div>{quickReviewContradiction && <p className="replay-review-check" role="status">{quickReviewContradiction}</p>}</div>
             </section>
           )}
           {reviewMode === 'playbook' && <>
@@ -1240,32 +1322,43 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
       <div className="replay-bottombar">
         <button className="replay-ctrl-btn" disabled={!replayData || replayIdx === 0}
-          onClick={() => { setPlaying(false); setReplayIdx(0); }} title="Reset to start"><SkipBack size={14} /></button>
+          onClick={() => jumpToReplayIndex(0)} title="Reset to start"><SkipBack size={14} /></button>
         <button className="replay-ctrl-btn" disabled={!replayData || replayIdx === 0}
-          onClick={() => setReplayIdx(p => Math.max(0, p - 1))} title="Step back">‹</button>
+          onClick={() => jumpToReplayIndex(replayIdx - 1)} title="Step back (Left arrow)" aria-keyshortcuts="ArrowLeft">‹</button>
         <button className={`replay-ctrl-btn play${playing ? ' is-playing' : ''}`} disabled={!replayData}
-          onClick={() => setPlaying(p => !p)} title={playing ? 'Pause' : 'Play'}>
+          onClick={() => { setPausedMarker(''); setPlaying(p => !p); }} title={`${playing ? 'Pause' : 'Play'} (Space)`} aria-keyshortcuts="Space">
           {playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}
         </button>
         <button className="replay-ctrl-btn"
           disabled={!replayData || replayIdx >= totalCandles - 1}
-          onClick={() => setReplayIdx(p => Math.min(totalCandles - 1, p + 1))} title="Step forward">›</button>
+          onClick={() => jumpToReplayIndex(replayIdx + 1)} title="Step forward (Right arrow)" aria-keyshortcuts="ArrowRight">›</button>
         <button className="replay-ctrl-btn"
           disabled={!replayData || replayIdx >= totalCandles - 1}
-          onClick={() => { setPlaying(false); setReplayIdx(totalCandles - 1); }} title="Jump to end"><SkipForward size={14} /></button>
-        <select className="replay-speed-select" value={speed} onChange={e => setSpeed(Number(e.target.value))}>
+          onClick={() => jumpToReplayIndex(totalCandles - 1)} title="Jump to end"><SkipForward size={14} /></button>
+        <div className="replay-marker-controls" role="group" aria-label="Trade and review moments">
+          <button className="replay-ctrl-btn marker-entry" disabled={!replayData} onClick={() => replayData && jumpToReplayIndex(replayData.entryIndex)} title="Jump to trade entry (E)" aria-keyshortcuts="E"><LogIn size={14} /> Entry</button>
+          <button className="replay-ctrl-btn marker-exit" disabled={!replayData} onClick={() => replayData && jumpToReplayIndex(replayData.exitIndex)} title="Jump to trade exit (X)" aria-keyshortcuts="X"><LogOut size={14} /> Exit</button>
+          <button className="replay-ctrl-btn" disabled={!previousTimelineMarker} onClick={() => previousTimelineMarker && jumpToReplayIndex(previousTimelineMarker.index)} title={previousTimelineMarker ? `Previous review moment: ${previousTimelineMarker.event.title} ([)` : 'No earlier review moment'} aria-keyshortcuts="["><Flag size={14} /> Previous note</button>
+          <button className="replay-ctrl-btn" disabled={!nextTimelineMarker} onClick={() => nextTimelineMarker && jumpToReplayIndex(nextTimelineMarker.index)} title={nextTimelineMarker ? `Next review moment: ${nextTimelineMarker.event.title} (])` : 'No later review moment'} aria-keyshortcuts="]"><Flag size={14} /> Next note</button>
+        </div>
+        <button type="button" className={`replay-ctrl-btn${autoPauseMarkers ? ' active' : ''}`} aria-pressed={autoPauseMarkers} onClick={() => setAutoPauseMarkers(current => !current)} title="Automatically pause when playback reaches entry or exit"><PauseCircle size={14} /> Auto-pause</button>
+        <button type="button" className={`replay-ctrl-btn${showShortcutHelp ? ' active' : ''}`} aria-pressed={showShortcutHelp} onClick={() => setShowShortcutHelp(current => !current)} title="Keyboard shortcuts (?)" aria-keyshortcuts="?"><Keyboard size={14} /> Shortcuts</button>
+        <select className="replay-speed-select" aria-label="Replay speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}>
           <option value={0.5}>0.5×</option><option value={1}>1×</option>
           <option value={2}>2×</option><option value={5}>5×</option><option value={10}>10×</option>
         </select>
         <div className="replay-progress-wrap">
-          <div className="replay-progress-track" title="Click to scrub"
-            onClick={e => { if (!replayData) return; const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect(); setReplayIdx(Math.floor(((e.clientX - r.left) / r.width) * (totalCandles - 1))); }}>
+          <div className="replay-progress-track" title="Click to scrub" role="slider" tabIndex={replayData ? 0 : -1} aria-label="Replay position" aria-valuemin={1} aria-valuemax={totalCandles} aria-valuenow={replayIdx + 1}
+            onClick={e => { if (!replayData) return; const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect(); jumpToReplayIndex(Math.floor(((e.clientX - r.left) / r.width) * (totalCandles - 1))); }}>
             <div className="replay-progress-fill" style={{ width: `${progressPct}%` }} />
+            {replayData && <><span className="replay-progress-marker entry" style={{ left: `${entryProgressPct}%` }}><i>Entry</i></span><span className="replay-progress-marker exit" style={{ left: `${exitProgressPct}%` }}><i>Exit</i></span></>}
+            {timelineProgressMarkers.map(marker => <span key={marker.event.eventId} className={`replay-progress-marker event ${marker.event.severity}`} style={{ left: `${marker.progress}%` }} title={marker.event.title} />)}
           </div>
           <div className="replay-progress-label">
             {replayData ? `Candle ${replayIdx + 1} of ${totalCandles} · ${replayData.interval}` : '—'}
-            {replayData && replayIdx >= replayData.entryIndex && replayIdx < replayData.exitIndex && <span style={{ color: '#10b981', marginLeft: 8 }}>● In trade</span>}
-            {replayData && replayIdx >= replayData.exitIndex && <span style={{ color: replayData.pnlUSD >= 0 ? '#10b981' : '#ef4444', marginLeft: 8 }}>● Trade closed</span>}
+            {replayData && replayIdx < replayData.entryIndex && <span className="before-entry"> · {replayData.entryIndex - replayIdx} candles to entry</span>}
+            {replayData && replayIdx >= replayData.entryIndex && replayIdx < replayData.exitIndex && <span className="in-trade"> · In trade</span>}
+            {replayData && replayIdx >= replayData.exitIndex && <span className="trade-closed"> · Trade closed</span>}
           </div>
         </div>
       </div>

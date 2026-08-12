@@ -48,4 +48,21 @@ function tradeMatchesAccountFilter(trade, accountKey) {
   return tradeKey === filter;
 }
 
-module.exports = { cleanAccountField, normalizeAccountIdentity, summarizeTradeAccounts, tradeMatchesAccountFilter };
+function findTradesMissingAccountIdentity(trades = []) {
+  return trades
+    .filter(trade => {
+      const suppliedKey = cleanAccountField(trade?.accountKey, 180);
+      const login = cleanAccountField(trade?.accountLogin, 40);
+      const server = cleanAccountField(trade?.accountServer, 120);
+      return !suppliedKey && (!login || !server);
+    })
+    .map(trade => cleanAccountField(trade?.dealId, 80) || '(unknown deal)');
+}
+
+module.exports = {
+  cleanAccountField,
+  normalizeAccountIdentity,
+  summarizeTradeAccounts,
+  tradeMatchesAccountFilter,
+  findTradesMissingAccountIdentity,
+};

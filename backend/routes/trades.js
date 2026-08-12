@@ -12,7 +12,13 @@ const fs = require('fs');
 const path = require('path');
 const { v2: cloudinary } = require('cloudinary');
 const { REPLAY_ANNOTATION_INTERVALS, normalizeReplayAnnotations, normalizeReplayEvents, normalizeQuickReview, normalizeReplayDraft } = require('../lib/replayAnnotations');
-const { cleanAccountField, normalizeAccountIdentity, summarizeTradeAccounts, tradeMatchesAccountFilter } = require('../lib/tradeAccounts');
+const {
+  cleanAccountField,
+  normalizeAccountIdentity,
+  summarizeTradeAccounts,
+  tradeMatchesAccountFilter,
+  findTradesMissingAccountIdentity,
+} = require('../lib/tradeAccounts');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -2609,6 +2615,15 @@ router.post('/sync', auth, async (req, res) => {
     const { trades } = req.body;
     if (!Array.isArray(trades) || trades.length === 0) {
       return res.status(400).json({ error: 'trades array is required' });
+    }
+
+    const tradesMissingAccount = findTradesMissingAccountIdentity(trades);
+    if (tradesMissingAccount.length > 0) {
+      return res.status(400).json({
+        error: 'Every synced trade must include an MT5 account login and server (or accountKey). Update and restart sync.py.',
+        missingAccountDealIds: tradesMissingAccount.slice(0, 20),
+        missingAccountCount: tradesMissingAccount.length,
+      });
     }
 
     let inserted = 0;

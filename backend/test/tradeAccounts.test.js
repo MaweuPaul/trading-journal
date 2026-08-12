@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeAccountIdentity, summarizeTradeAccounts, tradeMatchesAccountFilter } = require('../lib/tradeAccounts');
+const {
+  normalizeAccountIdentity,
+  summarizeTradeAccounts,
+  tradeMatchesAccountFilter,
+  findTradesMissingAccountIdentity,
+} = require('../lib/tradeAccounts');
 
 test('normalizes a stable account key from broker server and login', () => {
   assert.deepEqual(normalizeAccountIdentity({
@@ -35,4 +40,13 @@ test('matches exact and legacy account filters', () => {
   assert.equal(tradeMatchesAccountFilter({ accountKey: 'broker::200' }, 'broker::100'), false);
   assert.equal(tradeMatchesAccountFilter({ accountType: 'demo' }, '__unassigned__'), true);
   assert.equal(tradeMatchesAccountFilter({ accountKey: 'broker::100' }, '__unassigned__'), false);
+});
+
+test('identifies sync rows that would create account-less trades', () => {
+  assert.deepEqual(findTradesMissingAccountIdentity([
+    { dealId: '1', accountKey: 'broker::100' },
+    { dealId: '2', accountLogin: '100', accountServer: 'Broker' },
+    { dealId: '3' },
+    { dealId: '4', accountLogin: '100' },
+  ]), ['3', '4']);
 });

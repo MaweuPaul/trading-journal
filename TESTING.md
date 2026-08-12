@@ -575,6 +575,9 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 3. Confirm the source label identifies MT5 and the broker server, and that it uses the exact broker symbol.
 4. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
 5. Switch through `1m`, `5m`, `15m`, `1H`, `4H`, and `1D`; confirm each control loads its labelled MT5 interval and keeps entry/exit markers on the candle containing the trade timestamp.
+   - Confirm the toolbar is split into labelled Timeframe and Draw groups on desktop. Select Zone, Line, Text, and Event in turn; verify the selected tool has a clearly visible active state and every control remains keyboard focusable.
+   - Select Zone, Line, or Text and verify the larger color controls appear. Change color, draw an annotation, and confirm Undo becomes enabled immediately. Use Undo and confirm it disables again when history is empty.
+   - At phone width, confirm the toolbar remains one touch-friendly horizontal strip that can be scrolled without shrinking its buttons.
 6. On an uncached timeframe, confirm the chart appears as soon as MT5 uploads it without waiting for a separate 2.5-second browser poll. Confirm the loaded bar count provides substantial context around the trade.
 7. Return to a previously loaded timeframe and confirm its TTL session loads immediately without overwriting the other intervals.
 8. Close and reopen Replay within 30 minutes. Confirm it loads immediately from the MongoDB TTL session and that exported trade data contains no replay candles.

@@ -14,7 +14,7 @@ The journal form is not hard-coded. A published playbook defines:
 
 When a playbook is attached to a trade, the frontend renders its fields in Plan, Manage, and Review tabs. The first save stores the complete published snapshot on that trade. Later playbook versions do not rewrite the journal, and an attached trade cannot switch to another version.
 
-Rule-level instructional images are optional by default. Enable **Require image confirmation** beside a rule's example section when visual proof is mandatory. The playbook image remains the teaching reference; the generated trade journal separately requires the trader to upload a screenshot from that trade, linked to the exact rule and playbook version.
+The Playbook editor uses progressive disclosure: rules initially show only their name, primitive answer type, format or choices, required state, and actions. Open **More options** for guidance, validation, optional visual references, and trade-evidence settings. Reference images never block publishing. Enable **Require a trade screenshot** only when the generated journal must collect visual evidence from the actual trade, linked to the exact rule and immutable playbook version.
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 

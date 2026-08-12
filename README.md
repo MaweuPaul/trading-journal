@@ -50,12 +50,13 @@ The trade journal is derived from the selected published playbook rather than fr
 
 1. Each playbook stage contains rules with answer configuration, help text, validation, and instructional examples.
 2. The rule editor exposes five primitive answer types: Yes/No, Number, Text, Single choice, and Multiple choice. Percentage, Currency, Price, Duration, R:R, and Rating are Number formats; Long explanation, Date, and Time are Text formats.
-3. Instructional reference images are optional by default. Enable **Require image confirmation** when traders must upload their own screenshot of that condition on every trade; enabled rules expose minimum and maximum image controls.
-4. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
-5. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version, including a trade-screenshot uploader beneath every rule that requires image confirmation.
-6. The first save permanently attaches the complete snapshot to the trade.
-7. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
-8. Publishing a newer playbook version affects only trades that attach that newer version.
+3. The editor keeps each rule compact and places guidance, validation, formats, and visual references under **More options**. Instructional reference images are always optional.
+4. Enable **Require a trade screenshot** only when the journal must collect visual evidence from the actual trade. This requirement is independent of optional teaching references and exposes minimum and maximum trade-screenshot controls.
+5. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
+6. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version, including a trade-screenshot uploader beneath every rule that requires trade evidence.
+7. The first save permanently attaches the complete snapshot to the trade.
+8. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
+9. Publishing a newer playbook version affects only trades that attach that newer version.
 
 This creates a reliable audit chain: the rule teaches what to look for, its images demonstrate the condition, the trade records whether it happened, and Edge Coach compares that answer with the outcome.
 

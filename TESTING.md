@@ -535,7 +535,7 @@ Run this workflow after completing setup with valid MongoDB and Cloudinary crede
 5. Configure these field types: Yes/No, choices, percentage, currency, price, duration, risk-to-reward, rating, date, time, short text, and long explanation.
 6. Set units and numeric minimum/maximum values, then mark several fields required.
 7. Upload at least three stage-level chart images: Reference, Valid example, and Invalid example.
-8. Add multiple examples directly to a rule, classify them as valid/invalid, require a minimum number, write captions of at least ten characters, and reorder them.
+8. Open **More options** on one rule, add optional references, classify them as valid/invalid, write captions, reorder them, and enable **Require a trade screenshot** with a minimum count.
 9. Enter a change note describing what changed, why, and the expected result. Publish version 1.
 10. Open Read Playbook and verify the cover, contents, chapters, large images, captions, options, and next/previous navigation.
 11. Attach the playbook to a trade and complete its Plan, Manage, and Review tabs.
@@ -551,10 +551,11 @@ Expected results:
 - Version 1 remains available in reading mode after version 2 is published.
 - The earlier trade still contains schema version 1's exact stages, screenshots, fields, and responses.
 - Edge Coach separates versions and reports stage compliance, answer effectiveness, and numeric winning/losing averages.
-- A newly added rule starts with **Require image confirmation** switched off and can be published without an image.
+- Blocks after the first start collapsed, while block settings, cover images, rule guidance, validation, and visual evidence remain hidden until opened.
+- A newly added rule starts with **Require a trade screenshot** switched off and can be published without an image.
 - The Answer type dropdown shows only five primitives; specialized Number and Text behaviors appear only in the separate Format dropdown.
-- Turning on the image-confirmation toggle sets a minimum of one image and reveals its minimum/maximum controls.
-- Leaving the toggle off treats uploaded images as optional supporting examples; turning it on blocks publishing until the configured minimum number of captioned examples is present.
+- Turning on the trade-screenshot toggle sets a minimum of one and reveals its minimum/maximum controls under **More options**.
+- Reference images remain optional whether the trade-screenshot toggle is on or off; they never block publishing.
 - On a trade using that version, each image-confirmation rule shows a separate **Add trade screenshot** control beneath the rule answer and reference examples.
 - Saving is blocked until each required rule has its configured number of trade screenshots; a generic screenshot or a screenshot linked to another rule/version does not satisfy it.
 - The backend repeats this validation and stores the rule ID and immutable playbook-version ID on the screenshot, including offline staging and Cloudinary metadata.

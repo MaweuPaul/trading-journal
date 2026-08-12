@@ -248,6 +248,7 @@ All endpoints require authentication except login and health checks. Export and 
 | `MT5_PASSWORD` | MT5 password |
 | `MT5_SERVER` | Broker server name |
 | `MT5_REQUIRE_REAL_ACCOUNT` | Set `true` to reject demo accounts; default `false` syncs and labels both account types |
+| `MT5_SYMBOL_ALIASES` | Optional comma-separated mappings such as `XAUUSD:XAUUSDm`; the recorded trade symbol is always attempted first |
 | `API_BASE` | Backend API URL, normally `http://localhost:4000/api` |
 | `API_TIMEOUT` | HTTP timeout in seconds |
 | `SYNC_INTERVAL` | Polling interval in seconds |
@@ -256,7 +257,7 @@ All endpoints require authentication except login and health checks. Export and 
 
 ### MT5-first trade replay
 
-Keep `sync.py` and the logged-in MT5 desktop terminal running. `sync.py` holds a lightweight 25-second long poll against the authenticated replay queue. Opening Replay writes only the selected trade's broker symbol, time window, and appropriate timeframe to a MongoDB TTL session; the waiting agent receives it immediately, uses `copy_rates_range`, and returns the candles to that temporary session. Candles are never written to the trade or downloaded for unrelated trades.
+Keep `sync.py` and the logged-in MT5 desktop terminal running. `sync.py` holds a lightweight 25-second long poll against the authenticated replay queue. Opening Replay writes only the selected trade's recorded broker symbol, time window, and appropriate timeframe to a MongoDB TTL session; the waiting agent receives it immediately, uses `copy_rates_range`, and returns the candles to that temporary session. Candles are never written to the trade or downloaded for unrelated trades. All Python MT5 calls are serialized because the terminal IPC connection is process-global; an IPC failure triggers one reconnect and retry. Replay first uses the trade's exact recorded symbol. Only when that name is genuinely absent does it try an explicit alias or a suffix-compatible symbol exposed by the same terminal.
 
 The shared TTL session works across cloud instances and expires after 30 minutes. Replay shows the provider and connection diagnostics. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version. Select **Use Twelve Data fallback** only when the terminal cannot supply the history.
 

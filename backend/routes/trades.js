@@ -1782,6 +1782,8 @@ router.post('/trades/:id/replay-candles', auth, async (req, res) => {
     const candleData = {
       source: 'mt5', sourceLabel: req.body.server ? `MT5 - ${String(req.body.server).slice(0, 80)}` : 'MT5 broker history',
       brokerSymbol: String(req.body.brokerSymbol || '').slice(0, 40),
+      resolvedBrokerSymbol: String(req.body.resolvedBrokerSymbol || req.body.brokerSymbol || '').slice(0, 40),
+      normalizedSymbol: String(req.body.resolvedBrokerSymbol || req.body.brokerSymbol || '').slice(0, 40),
       interval: String(req.body.interval || '1min').slice(0, 10), candles, cachedAt: new Date().toISOString(),
     };
     const interval = requestedReplayInterval(candleData.interval, 0);

@@ -207,6 +207,8 @@ MT5_LOGIN=YOUR_MT5_ACCOUNT_NUMBER
 MT5_PASSWORD=YOUR_MT5_PASSWORD
 MT5_SERVER=YOUR_BROKER_SERVER_NAME
 MT5_REQUIRE_REAL_ACCOUNT=false
+# Optional; leave blank when trades already contain the exact broker symbols.
+# MT5_SYMBOL_ALIASES=XAUUSD:XAUUSDm,USTEC:USTECm
 
 API_BASE=http://localhost:4000/api
 API_TIMEOUT=60
@@ -354,6 +356,18 @@ Add a long random `JWT_SECRET` to `backend/.env` and restart the backend.
 ### MT5 authentication succeeds but no trades appear
 
 Confirm the account has closed deals and that `MT5_SERVER` exactly matches the broker server shown in MT5. Run `python sync.py --once` and inspect the logs.
+
+### Replay says a recorded broker symbol is unavailable
+
+First check for an accompanying `IPC send failed` message. The sync agent now serializes terminal calls and reconnects once, so restart `sync.py` after updating and confirm the exact recorded symbol succeeds. Also verify that the same MT5 account/server that created the trade is currently logged in and that the instrument is available in Market Watch.
+
+The trade's recorded symbol is always tried first. Only if this terminal uses a different broker suffix, add an explicit root `.env` mapping such as:
+
+```env
+MT5_SYMBOL_ALIASES=XAUUSD:XAUUSDm,USTEC:USTECm
+```
+
+This changes only the instrument used to request Replay candles; it does not rename the historical trade.
 
 ### Demo account is rejected
 

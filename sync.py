@@ -41,8 +41,10 @@ API_TIMEOUT   = int(os.getenv("API_TIMEOUT", "60"))
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
 USER_EMAIL    = os.getenv("USER_EMAIL", "")
 USER_PASSWORD = os.getenv("USER_PASSWORD", "")
+MT5_SYMBOL_ALIASES = os.getenv("MT5_SYMBOL_ALIASES", "")
 
 JWT_TOKEN = None
+MT5_LOCK = threading.RLock()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,19 +81,20 @@ def get_jwt_token():
 
 def connect_mt5():
     """Initialize and login to MT5. Returns True on success."""
-    if not mt5.initialize():
-        log.error("[MT5] mt5.initialize() failed -- is MetaTrader 5 running?")
-        return False
+    with MT5_LOCK:
+        if not mt5.initialize():
+            log.error("[MT5] mt5.initialize() failed -- is MetaTrader 5 running? Error: %s", mt5.last_error())
+            return False
 
-    authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
-    if not authorized:
-        log.error("[MT5] Login failed: %s", mt5.last_error())
-        return False
+        authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+        if not authorized:
+            log.error("[MT5] Login failed: %s", mt5.last_error())
+            return False
 
-    info = mt5.account_info()
-    if not info:
-        log.error("[MT5] Connected, but account_info() returned no account details.")
-        return False
+        info = mt5.account_info()
+        if not info:
+            log.error("[MT5] Connected, but account_info() returned no account details: %s", mt5.last_error())
+            return False
 
     if int(info.login) != MT5_LOGIN:
         log.critical(
@@ -121,6 +124,105 @@ def connect_mt5():
     log.info("[MT5] Connected | Login: %s | Server: %s | Type: %s | Balance: %.2f",
              info.login, info.server, trade_mode, info.balance)
     return True
+
+
+def mt5_ipc_failed():
+    """Return True when the terminal's Python IPC channel is unavailable."""
+    code, message = mt5.last_error()
+    return code <= -10000 or "IPC" in str(message).upper()
+
+
+def reconnect_mt5(reason):
+    """Rebuild the terminal IPC session while keeping every MT5 call serialized."""
+    with MT5_LOCK:
+        log.warning("[MT5] Reconnecting terminal after %s...", reason)
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        time.sleep(0.5)
+        return connect_mt5()
+
+
+def history_deals_get_with_retry(*args, **kwargs):
+    """Read deal history and retry once after an MT5 IPC reconnect."""
+    with MT5_LOCK:
+        deals = mt5.history_deals_get(*args, **kwargs)
+        if deals is None and mt5_ipc_failed():
+            error = mt5.last_error()
+            if reconnect_mt5(f"history_deals_get failure {error}"):
+                deals = mt5.history_deals_get(*args, **kwargs)
+        return deals
+
+
+def configured_symbol_aliases():
+    """Parse XAUUSD:XAUUSDm,USTEC:USTECm style explicit broker mappings."""
+    aliases = {}
+    for item in MT5_SYMBOL_ALIASES.split(","):
+        source, separator, target = item.partition(":")
+        if separator and source.strip() and target.strip():
+            aliases[source.strip().upper()] = target.strip()
+    return aliases
+
+
+def symbol_key(symbol):
+    return "".join(character for character in str(symbol).upper() if character.isalnum())
+
+
+def resolve_broker_symbol(requested_symbol):
+    """Resolve a journal symbol to the exact name exposed by the connected broker."""
+    requested = str(requested_symbol or "").strip()
+    if not requested:
+        raise RuntimeError("Replay request did not include a broker symbol")
+
+    alias = configured_symbol_aliases().get(requested.upper())
+    ordered_exact = [candidate for candidate in [requested, alias] if candidate]
+    for candidate in ordered_exact:
+        if mt5.symbol_select(candidate, True):
+            if candidate != requested:
+                log.info("[REPLAY] Symbol alias resolved %s -> %s", requested, candidate)
+            return candidate
+
+    if mt5_ipc_failed() and reconnect_mt5(f"symbol_select({requested}) failure {mt5.last_error()}"):
+        for candidate in ordered_exact:
+            if mt5.symbol_select(candidate, True):
+                return candidate
+
+    symbols = mt5.symbols_get()
+    if symbols is None:
+        raise RuntimeError(f"Could not read MT5 symbols while resolving {requested}: {mt5.last_error()}")
+
+    requested_upper = requested.upper()
+    requested_key = symbol_key(requested)
+    candidates = []
+    for symbol in symbols:
+        name = str(getattr(symbol, "name", ""))
+        name_upper = name.upper()
+        name_key = symbol_key(name)
+        if not name:
+            continue
+        if name_upper == requested_upper:
+            score = 0
+        elif name_key == requested_key:
+            score = 1
+        elif name_upper.startswith(requested_upper):
+            score = 2 + min(len(name_upper) - len(requested_upper), 20)
+        elif name_key.startswith(requested_key):
+            score = 25 + min(len(name_key) - len(requested_key), 20)
+        else:
+            continue
+        candidates.append((score, 0 if getattr(symbol, "visible", False) else 1, name))
+
+    for _, _, candidate in sorted(candidates):
+        if mt5.symbol_select(candidate, True):
+            log.warning("[REPLAY] Broker symbol resolved automatically: %s -> %s", requested, candidate)
+            return candidate
+
+    hint = ", ".join(candidate[2] for candidate in sorted(candidates)[:5]) or "no suffix-compatible symbols found"
+    raise RuntimeError(
+        f"Broker symbol {requested} is not available in MT5 ({hint}). "
+        "Open Market Watch and enable the instrument, or configure MT5_SYMBOL_ALIASES."
+    )
 
 
 def get_account_balance():
@@ -200,7 +302,7 @@ def fetch_deals(from_date=None):
 
     to_date = datetime.now(tz=timezone.utc)
 
-    deals = mt5.history_deals_get(from_date, to_date)
+    deals = history_deals_get_with_retry(from_date, to_date)
     if deals is None:
         log.warning("[MT5] history_deals_get returned None: %s", mt5.last_error())
         return []
@@ -235,7 +337,7 @@ def fetch_deals(from_date=None):
 
     for deal in closed:
         # Find the matching open deal to get entry price and open time
-        open_deals = mt5.history_deals_get(position=deal.position_id)
+        open_deals = history_deals_get_with_retry(position=deal.position_id)
         entry_price = deal.price   # fallback
         open_time   = deal.time    # fallback (unix ts)
 
@@ -293,7 +395,7 @@ def fetch_account_events(from_date=None):
         from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     to_date = datetime.now(tz=timezone.utc)
-    deals = mt5.history_deals_get(from_date, to_date)
+    deals = history_deals_get_with_retry(from_date, to_date)
     if deals is None:
         log.warning("[MT5] history_deals_get returned None for account events: %s", mt5.last_error())
         return []
@@ -464,8 +566,11 @@ def process_replay_requests(wait_seconds=0):
         "4h": mt5.TIMEFRAME_H4,
         "1day": mt5.TIMEFRAME_D1,
     }
-    account = mt5.account_info()
-    server = getattr(account, "server", "") if account else ""
+    with MT5_LOCK:
+        account = mt5.account_info()
+        if account is None and mt5_ipc_failed() and reconnect_mt5(f"account_info failure {mt5.last_error()}"):
+            account = mt5.account_info()
+        server = getattr(account, "server", "") if account else ""
 
     for request in replay_requests:
         trade_id = request.get("tradeId")
@@ -474,24 +579,27 @@ def process_replay_requests(wait_seconds=0):
         try:
             if not symbol or interval not in timeframe_map:
                 raise ValueError("Unsupported replay symbol or interval")
-            if not mt5.symbol_select(symbol, True):
-                raise RuntimeError(f"Broker symbol {symbol} is not available in MT5")
             start = datetime.fromisoformat(request["start"].replace("Z", "+00:00")).astimezone(timezone.utc)
             end = datetime.fromisoformat(request["end"].replace("Z", "+00:00")).astimezone(timezone.utc)
-            rates = mt5.copy_rates_range(symbol, timeframe_map[interval], start, end)
+            with MT5_LOCK:
+                resolved_symbol = resolve_broker_symbol(symbol)
+                rates = mt5.copy_rates_range(resolved_symbol, timeframe_map[interval], start, end)
+                if rates is None and mt5_ipc_failed() and reconnect_mt5(f"copy_rates_range failure {mt5.last_error()}"):
+                    resolved_symbol = resolve_broker_symbol(symbol)
+                    rates = mt5.copy_rates_range(resolved_symbol, timeframe_map[interval], start, end)
             if rates is None or len(rates) == 0:
-                raise RuntimeError(f"MT5 returned no {interval} candles for {symbol}: {mt5.last_error()}")
+                raise RuntimeError(f"MT5 returned no {interval} candles for {resolved_symbol}: {mt5.last_error()}")
             candles = [{
                 "time": int(rate["time"]), "open": float(rate["open"]),
                 "high": float(rate["high"]), "low": float(rate["low"]), "close": float(rate["close"]),
             } for rate in rates]
             upload = requests.post(
                 f"{API_BASE}/trades/{trade_id}/replay-candles",
-                json={"brokerSymbol": symbol, "interval": interval, "server": server, "candles": candles},
+                json={"brokerSymbol": symbol, "resolvedBrokerSymbol": resolved_symbol, "interval": interval, "server": server, "candles": candles},
                 headers=headers, timeout=API_TIMEOUT,
             )
             upload.raise_for_status()
-            log.info("[REPLAY] Uploaded %d %s candles for %s", len(candles), interval, symbol)
+            log.info("[REPLAY] Uploaded %d %s candles for %s (journal symbol: %s)", len(candles), interval, resolved_symbol, symbol)
         except Exception as exc:
             log.error("[REPLAY] Failed trade %s (%s): %s", trade_id, symbol, exc)
             try:
@@ -546,11 +654,14 @@ def main(once=False, full=False):
                 log.info("[SYNC] No trades in DB. Syncing full history...")
                 from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
-            trades = fetch_deals(from_date)
-            # Cash-flow operations are sparse and deduped by MT5 ticket, so scan
-            # the full history every cycle to avoid missing withdrawals that do
-            # not line up neatly with the latest trade close time.
-            account_events = fetch_account_events(datetime(2000, 1, 1, tzinfo=timezone.utc))
+            # MetaTrader5's Python IPC connection is process-global and is not
+            # safe to use concurrently with the Replay worker.
+            with MT5_LOCK:
+                trades = fetch_deals(from_date)
+                # Cash-flow operations are sparse and deduped by MT5 ticket, so scan
+                # the full history every cycle to avoid missing withdrawals that do
+                # not line up neatly with the latest trade close time.
+                account_events = fetch_account_events(datetime(2000, 1, 1, tzinfo=timezone.utc))
             inserted, skipped = sync_trades(trades)
             events_inserted, events_skipped = sync_account_events(account_events)
             if inserted > 0 or skipped > 0:

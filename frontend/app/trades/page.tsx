@@ -120,7 +120,7 @@ interface PlaybookRule {
   validation?: { min?: number | null; max?: number | null; minLength?: number | null; maxLength?: number | null };
   examples?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid' }>;
   exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
-  toolRole?: 'observation' | 'confirmation' | 'decision_gate' | 'invalidation' | 'risk_limit';
+  toolRole?: 'observation' | 'confirmation' | 'trigger' | 'decision_gate' | 'invalidation' | 'risk_limit' | 'management_action' | 'exit_signal' | 'review_prompt';
   timeframes?: string[];
   failureAction?: 'none' | 'warn' | 'skip_trade' | 'stop_session';
   failureMessage?: string;
@@ -142,7 +142,7 @@ const JOURNAL_PHASES: Array<{ id: JournalPhase; label: string; categories: strin
 ];
 
 const RULE_TOOL_LABELS: Record<string, string> = {
-  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit',
+  observation: 'Observation', confirmation: 'Confirmation', trigger: 'Entry trigger', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit', management_action: 'Management action', exit_signal: 'Exit signal', review_prompt: 'Review prompt',
 };
 const FAILURE_ACTION_LABELS: Record<string, string> = {
   warn: 'Warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',

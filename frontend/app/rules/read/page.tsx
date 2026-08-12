@@ -16,8 +16,8 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const RULE_TOOL_LABELS: Record<string, string> = {
-  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate',
-  invalidation: 'Invalidation', risk_limit: 'Risk limit',
+  observation: 'Observation', confirmation: 'Confirmation', trigger: 'Entry trigger', decision_gate: 'Decision gate',
+  invalidation: 'Invalidation', risk_limit: 'Risk limit', management_action: 'Management action', exit_signal: 'Exit signal', review_prompt: 'Review prompt',
 };
 const FAILURE_ACTION_LABELS: Record<string, string> = {
   warn: 'Show a warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',

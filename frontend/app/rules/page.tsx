@@ -8,7 +8,7 @@ import InfoHint from '@/components/InfoHint';
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
 type PrimitiveInputType = 'boolean' | 'number' | 'text' | 'single_choice' | 'multi_choice';
 type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
-type RuleToolRole = 'observation' | 'confirmation' | 'decision_gate' | 'invalidation' | 'risk_limit';
+type RuleToolRole = 'observation' | 'confirmation' | 'trigger' | 'decision_gate' | 'invalidation' | 'risk_limit' | 'management_action' | 'exit_signal' | 'review_prompt';
 type RuleFailureAction = 'none' | 'warn' | 'skip_trade' | 'stop_session';
 
 interface PlaybookRule {
@@ -102,9 +102,13 @@ const TEXT_FORMATS: InputType[] = ['text', 'long_text', 'date', 'time'];
 const RULE_TOOL_ROLES: Array<{ value: RuleToolRole; label: string; description: string }> = [
   { value: 'observation', label: 'Observation', description: 'Record context without deciding whether the trade is valid.' },
   { value: 'confirmation', label: 'Confirmation', description: 'Evidence that supports the setup or execution.' },
+  { value: 'trigger', label: 'Entry trigger', description: 'The precise event that authorizes an entry.' },
   { value: 'decision_gate', label: 'Decision gate', description: 'A condition that must pass before the strategy continues.' },
   { value: 'invalidation', label: 'Invalidation', description: 'A condition that makes the setup or trade invalid.' },
   { value: 'risk_limit', label: 'Risk limit', description: 'A threshold that protects trade or session risk.' },
+  { value: 'management_action', label: 'Management action', description: 'An action to take while the position is open.' },
+  { value: 'exit_signal', label: 'Exit signal', description: 'A condition that calls for reducing or closing the position.' },
+  { value: 'review_prompt', label: 'Review prompt', description: 'A question that captures a lesson after the trade.' },
 ];
 const RULE_TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'] as const;
 const FAILURE_ACTIONS: Array<{ value: RuleFailureAction; label: string }> = [

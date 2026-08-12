@@ -150,6 +150,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const annotationBaselineRef = useRef('');
   const activeAnnotationKeyRef = useRef('');
   const annotationHistoryRef = useRef<Array<{ rects: DrawnRect[]; lines: DrawnLine[]; texts: DrawnText[] }>>([]);
+  const [annotationHistoryDepth, setAnnotationHistoryDepth] = useState(0);
   const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [timelineEvents, setTimelineEvents] = useState<ReplayTimelineEvent[]>([]);
   const [eventSaveState, setEventSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
@@ -215,6 +216,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
       rects: drawnRects.map(item => ({ ...item })), lines: drawnLines.map(item => ({ ...item })), texts: drawnTexts.map(item => ({ ...item })),
     }];
+    setAnnotationHistoryDepth(annotationHistoryRef.current.length);
   };
 
   useEffect(() => {
@@ -231,6 +233,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         setDrawnLines(annotations.filter(item => item.type === 'line').map(({ type: _type, ...item }) => item as DrawnLine));
         setDrawnTexts(annotations.filter(item => item.type === 'text').map(({ type: _type, ...item }) => item as DrawnText));
         annotationHistoryRef.current = [];
+        setAnnotationHistoryDepth(0);
         annotationBaselineRef.current = JSON.stringify(annotations);
         if (eventsLoadedTradeRef.current !== tradeId) {
           const events = Array.isArray(body.events) ? body.events as ReplayTimelineEvent[] : [];
@@ -680,12 +683,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (interval === selectedInterval) return;
     setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
     setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null;
+    annotationHistoryRef.current = []; setAnnotationHistoryDepth(0);
     setSelectedInterval(interval);
     onIntervalChange?.(interval);
   };
   const undoAnnotation = () => {
     const previous = annotationHistoryRef.current.pop();
     if (!previous) return;
+    setAnnotationHistoryDepth(annotationHistoryRef.current.length);
     setDrawnRects(previous.rects); setDrawnLines(previous.lines); setDrawnTexts(previous.texts);
   };
   const deleteAnnotation = (annotation: ReplayAnnotation) => {
@@ -755,61 +760,39 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   return (
     <div className="replay-overlay" role="dialog" aria-modal="true" aria-label="Trade Replay">
       <div className="replay-topbar">
-        <span className="replay-topbar-symbol">
-          {tradeSummary.symbol}
-          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-            background: tradeSummary.direction === 'BUY' ? '#10b98120' : '#ef444420',
-            color: tradeSummary.direction === 'BUY' ? '#10b981' : '#ef4444',
-            border: `1px solid ${tradeSummary.direction === 'BUY' ? '#10b98140' : '#ef444440'}`,
-          }}>{tradeSummary.direction}</span>
-        </span>
-        <span className={`replay-topbar-pnl ${isProfit ? 'positive' : 'negative'}`}>
-          {isProfit ? '+' : ''}{tradeSummary.pnlUSD.toFixed(2)} USD ({isProfit ? '+' : ''}{tradeSummary.pnlPct.toFixed(2)}%)
-        </span>
-        <span className="replay-topbar-meta">
-          {tradeSummary.entryPrice.toFixed(5)} → {tradeSummary.exitPrice.toFixed(5)} · {fmtDur(tradeSummary.durationMinutes)} · {tradeSummary.lotSize.toFixed(2)} lots
-        </span>
-        <span className="replay-topbar-spacer" />
-        <div className="replay-timeframes" role="group" aria-label="Chart timeframe">
-          {REPLAY_TIMEFRAMES.map(timeframe => (
-            <button type="button" key={timeframe.value} aria-pressed={selectedInterval === timeframe.value} className={selectedInterval === timeframe.value ? 'active' : ''} onClick={() => switchTimeframe(timeframe.value)}>{timeframe.label}</button>
-          ))}
+        <div className="replay-trade-summary">
+          <span className="replay-topbar-symbol">{tradeSummary.symbol}<span className={`replay-direction ${tradeSummary.direction.toLowerCase()}`}>{tradeSummary.direction}</span></span>
+          <span className={`replay-topbar-pnl ${isProfit ? 'positive' : 'negative'}`}>{isProfit ? '+' : ''}{tradeSummary.pnlUSD.toFixed(2)} USD ({isProfit ? '+' : ''}{tradeSummary.pnlPct.toFixed(2)}%)</span>
+          <span className="replay-topbar-meta">{tradeSummary.entryPrice.toFixed(5)} → {tradeSummary.exitPrice.toFixed(5)} · {fmtDur(tradeSummary.durationMinutes)} · {tradeSummary.lotSize.toFixed(2)} lots</span>
         </div>
-        <button className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`}
-          onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones">
-          <Square size={13} /> Zone
-        </button>
-        <button className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`}
-          onClick={() => setDrawingTool(t => t === 'line' ? 'none' : 'line')} title="Draw a trend line">
-          <Minus size={13} /> Line
-        </button>
-        <button className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`}
-          onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart">
-          <TypeIcon size={13} /> Text
-        </button>
-        <button className={`replay-tool-btn${drawingTool === 'event' ? ' active' : ''}`}
-          onClick={() => { setDrawingTool(tool => tool === 'event' ? 'none' : 'event'); setEventLocation(null); setEditingEventId(''); }} title="Attach a journal event to a candle">
-          <MapPin size={13} /> Event
-        </button>
-        {['rect', 'line', 'text'].includes(drawingTool) && (
-          <div style={{ display: 'flex', gap: 4 }}>
-            {RECT_COLORS.map(c => (
-              <button key={c} onClick={() => setRectColor(c)}
-                style={{ width: 18, height: 18, borderRadius: 4, background: c, cursor: 'pointer', flexShrink: 0,
-                  border: `2px solid ${c === rectColor ? '#fff' : 'transparent'}` }} />
-            ))}
+        <button ref={closeButtonRef} className="replay-close-btn" onClick={onClose} title="Close Replay (Esc)" aria-label="Close Replay"><X size={16} /> Close</button>
+      </div>
+
+      <div className="replay-workspace-toolbar" aria-label="Replay chart tools">
+        <div className="replay-tool-group timeframe-group">
+          <span className="replay-tool-group-label">Timeframe</span>
+          <div className="replay-timeframes" role="group" aria-label="Chart timeframe">
+            {REPLAY_TIMEFRAMES.map(timeframe => <button type="button" key={timeframe.value} aria-pressed={selectedInterval === timeframe.value} className={selectedInterval === timeframe.value ? 'active' : ''} onClick={() => switchTimeframe(timeframe.value)}>{timeframe.label}</button>)}
           </div>
-        )}
-        <span className={`replay-annotation-status ${annotationSaveState}`} title={annotationSaveError || 'Chart annotations save automatically'}>
-          {annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}
-        </span>
-        <button className="replay-tool-btn" disabled={annotationHistoryRef.current.length === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={13} /> Undo</button>
-        {(drawnRects.length + drawnLines.length + drawnTexts.length) > 0 && (
-          <button className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>
-            Notes ({allAnnotations.length})
-          </button>
-        )}
-        <button ref={closeButtonRef} className="replay-close-btn" onClick={onClose} title="Close (ESC)"><X size={14} /> Close</button>
+        </div>
+        <div className="replay-toolbar-divider" />
+        <div className="replay-tool-group">
+          <span className="replay-tool-group-label">Draw</span>
+          <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones"><Square size={16} /> Zone</button>
+          <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'line' ? 'none' : 'line')} title="Draw a trend line"><Minus size={16} /> Line</button>
+          <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart"><TypeIcon size={16} /> Text</button>
+          <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn${drawingTool === 'event' ? ' active' : ''}`} onClick={() => { setDrawingTool(tool => tool === 'event' ? 'none' : 'event'); setEventLocation(null); setEditingEventId(''); }} title="Attach a journal event to a candle"><MapPin size={16} /> Event</button>
+        </div>
+        {['rect', 'line', 'text'].includes(drawingTool) && <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
+          <span className="replay-tool-group-label">Color</span>
+          {RECT_COLORS.map(color => <button type="button" key={color} aria-label={`Use drawing color ${color}`} aria-pressed={color === rectColor} className={color === rectColor ? 'active' : ''} onClick={() => setRectColor(color)} style={{ '--replay-swatch': color } as React.CSSProperties} />)}
+        </div>}
+        <span className="replay-toolbar-spacer" />
+        <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
+        <div className="replay-tool-group replay-tool-actions">
+          <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
+          {(drawnRects.length + drawnLines.length + drawnTexts.length) > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Notes ({allAnnotations.length})</button>}
+        </div>
       </div>
 
       <div className="replay-body">

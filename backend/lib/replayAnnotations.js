@@ -52,8 +52,9 @@ function normalizeReplayEvents(input) {
     const title = String(event.title || '').trim().slice(0, 100);
     if (!title) throw new Error(`Timeline event ${index + 1} needs a title`);
     const severity = REPLAY_EVENT_SEVERITIES.has(String(event.severity || '')) ? String(event.severity) : 'important';
+    const visibilityScope = event.visibilityScope === 'all' ? 'all' : 'timeframe';
     return {
-      eventId, timeframe, candleTime, price, eventType,
+      eventId, timeframe, visibilityScope, candleTime, price, eventType,
       customType: eventType === 'custom' ? String(event.customType || '').trim().slice(0, 60) : '',
       title, note: String(event.note || '').trim().slice(0, 1000),
       emotion: String(event.emotion || '').trim().slice(0, 40), severity,

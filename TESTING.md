@@ -536,7 +536,7 @@ Run this workflow after completing setup with valid MongoDB and Cloudinary crede
 6. Set units and numeric minimum/maximum values, then mark several fields required.
 7. Upload at least three stage-level chart images: Reference, Valid example, and Invalid example.
 8. Open **More options** on one rule, add optional references, classify them as valid/invalid, write captions, reorder them, and enable **Require a trade screenshot** with a minimum count.
-9. In **Strategy logic**, set the rule to **Decision gate**, select `15m` and `1h`, choose **Skip this setup** when not satisfied, and add a short explanation.
+9. In **Strategy logic**, verify all nine tool roles are available. Set the rule to **Decision gate**, select `15m` and `1h`, choose **Skip this setup** when not satisfied, and add a short explanation.
 10. Enter a change note describing what changed, why, and the expected result. Publish version 1.
 11. Open Read Playbook and verify the cover, contents, chapters, large images, captions, rule purpose, timeframe scope, decision behavior, options, and next/previous navigation.
 12. Attach the playbook to a trade and complete its Plan, Manage, and Review tabs. Answer **No** to the configured Yes/No decision gate and confirm the intended action is highlighted without locking the journal.
@@ -560,6 +560,7 @@ Expected results:
 - Reference images remain optional whether the trade-screenshot toggle is on or off; they never block publishing.
 - Empty timeframe scope renders as **All timeframes**. Selected timeframes and the rule's tool role remain part of the immutable snapshot.
 - Failure behavior is guidance for the trader and audit trail. It does not prevent a completed historical trade from being edited.
+- Tool roles include the full journey from observation and entry trigger through management action, exit signal, and review prompt.
 - On a trade using that version, each image-confirmation rule shows a separate **Add trade screenshot** control beneath the rule answer and reference examples.
 - Saving is blocked until each required rule has its configured number of trade screenshots; a generic screenshot or a screenshot linked to another rule/version does not satisfy it.
 - The backend repeats this validation and stores the rule ID and immutable playbook-version ID on the screenshot, including offline staging and Cloudinary metadata.
@@ -585,22 +586,23 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 14. Open **Notes**, delete one annotation, and confirm it disappears and autosaves. Use **Undo**, then use **Clear all** and confirm the destructive action asks for confirmation.
 15. Download a JSON backup and confirm `replayJournals` contains saved annotations without Replay candle caches.
 16. Select **Event**, click a candle, and create an Entry decision with a title, details, severity, emotion, and linked playbook rule. Confirm its marker appears only after Replay reveals that candle.
-17. Add Confirmation, Management, Mistake, Lesson, and Custom events at different candles. Confirm the timeline orders them by candle time and displays its save state.
-18. Click a timeline event and confirm Replay reveals and centers its candle. Add an event on another timeframe, return to the first timeframe, click that event after switching back through its timeline, and confirm navigation loads the correct timeframe.
-19. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
-20. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
-21. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
-22. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
-23. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
-24. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
-25. Change notes, tags, playbook answers, grades, outcome fields, Replay speed, phase, and revealed candle without choosing Mark Complete. Wait for **Draft saved**, refresh, and confirm every unfinished value is restored.
-26. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
-27. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
-28. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
-29. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-30. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-31. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-32. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+17. Leave the event on **This timeframe**, switch charts, and confirm it is hidden. Edit it to **All timeframes**, switch charts again, and confirm it follows the same timestamp and price. Confirm the timeline labels it **All charts**.
+18. Add Confirmation, Management, Mistake, Lesson, and Custom events at different candles. Confirm the timeline orders them by candle time and displays its save state.
+19. Click a timeline event and confirm Replay reveals and centers its candle. Add an event on another timeframe, return to the first timeframe, click that event after switching back through its timeline, and confirm navigation loads the correct timeframe.
+20. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
+21. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
+22. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
+23. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
+24. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
+25. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.
+26. Change notes, tags, playbook answers, grades, outcome fields, Replay speed, phase, and revealed candle without choosing Mark Complete. Wait for **Draft saved**, refresh, and confirm every unfinished value is restored.
+27. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
+28. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
+29. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
+30. Repeat with a broker-suffixed symbol such as `EURUSDm`.
+31. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
+32. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
+33. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
 
 Expected results:
 
@@ -626,6 +628,6 @@ Use a backup containing playbooks created before the structured timeline update.
 Expected results:
 
 - Versions without `schemaVersion` are treated as schema version 1.
-- Schema 2 and 3 versions remain readable, while newly published strategy-logic versions contain `schemaVersion: 4`.
+- Schema 2, 3, and 4 versions remain readable, while newly published extended strategy-tool versions contain `schemaVersion: 5`.
 - Publishing appends a version and never mutates the old version or trades already attached to it.
 - Unknown legacy categories remain readable as Custom stages.

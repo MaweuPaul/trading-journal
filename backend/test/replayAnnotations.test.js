@@ -26,11 +26,16 @@ test('rejects empty text and non-numeric chart coordinates', () => {
   assert.throws(() => normalizeReplayAnnotations('1h', [{ id: 'bad', type: 'line', time1: 'x', time2: 2, price1: 1, price2: 2 }]), /finite number/);
 });
 
-test('normalizes Replay timeline events', () => {
-  const [event] = normalizeReplayEvents([{ eventId: 'event-1', timeframe: '5min', candleTime: 100, price: 200, eventType: 'mistake', title: 'Entered too early', note: 'Wait for confirmation', severity: 'critical' }]);
+test('normalizes Replay timeline events and their visibility scope', () => {
+  const [event, globalEvent] = normalizeReplayEvents([
+    { eventId: 'event-1', timeframe: '5min', candleTime: 100, price: 200, eventType: 'mistake', title: 'Entered too early', note: 'Wait for confirmation', severity: 'critical' },
+    { eventId: 'event-2', timeframe: '1h', visibilityScope: 'all', candleTime: 200, price: 210, eventType: 'confirmation', title: 'Visible across charts' },
+  ]);
   assert.equal(event.title, 'Entered too early');
   assert.equal(event.severity, 'critical');
   assert.equal(event.timeframe, '5min');
+  assert.equal(event.visibilityScope, 'timeframe');
+  assert.equal(globalEvent.visibilityScope, 'all');
 });
 
 test('rejects invalid Replay timeline events', () => {

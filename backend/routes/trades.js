@@ -91,8 +91,8 @@ const DEFAULT_TRADING_RULES = [
 const PLAYBOOK_LIFECYCLE_CATEGORIES = [
   'concept', 'context', 'setup', 'entry', 'risk', 'execution', 'management', 'exit', 'review', 'custom',
 ];
-const PLAYBOOK_SCHEMA_VERSION = 4;
-const PLAYBOOK_RULE_TOOLS = new Set(['observation', 'confirmation', 'decision_gate', 'invalidation', 'risk_limit']);
+const PLAYBOOK_SCHEMA_VERSION = 5;
+const PLAYBOOK_RULE_TOOLS = new Set(['observation', 'confirmation', 'trigger', 'decision_gate', 'invalidation', 'risk_limit', 'management_action', 'exit_signal', 'review_prompt']);
 const PLAYBOOK_RULE_TIMEFRAMES = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d']);
 const PLAYBOOK_FAILURE_ACTIONS = new Set(['none', 'warn', 'skip_trade', 'stop_session']);
 

@@ -29,7 +29,7 @@ The journal already includes:
 
 ### 1. Pre-Trade Planning Workflow — Partial
 
-**Existing:** Playbooks can model context, setup, entry, risk, and pre-trade conditions using structured primitive fields and optional image evidence. Each rule can declare its tool role, applicable timeframes, and the intended decision when it is not satisfied. Trades retain the attached playbook snapshot and answers.
+**Existing:** Playbooks can model the full lifecycle using structured primitive fields, optional evidence, nine semantic rule tools, applicable timeframes, and the intended decision when a condition is not satisfied. Trades retain the attached playbook snapshot and answers. Replay timeline events can remain chart-specific or appear across all timeframes.
 
 **Still missing:** A plan must be creatable and timestamped **before** an MT5 trade closes or syncs. Add a planned-trade record that can later be matched to the broker trade.
 

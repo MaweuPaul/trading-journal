@@ -16,11 +16,13 @@ When a playbook is attached to a trade, the frontend renders its fields in Plan,
 
 The Playbook editor uses progressive disclosure: rules initially show only their name, primitive answer type, format or choices, required state, and actions. Open **More options** for rule purpose, timeframe scope, failure behavior, guidance, validation, optional visual references, and trade-evidence settings. Reference images never block publishing. Enable **Require a trade screenshot** only when the generated journal must collect visual evidence from the actual trade, linked to the exact rule and immutable playbook version.
 
-Rule purpose can be Observation, Confirmation, Decision gate, Invalidation, or Risk limit. Timeframe scope is optional; no selection means all timeframes. Failure behavior records whether an unmet condition should only be recorded, warn the trader, skip the setup, or stop the session. Published values are displayed consistently in Read Playbook, Trade Journal Details, and Deep Playbook Replay without preventing an old journal from remaining editable.
+Rule purpose can be Observation, Confirmation, Entry trigger, Decision gate, Invalidation, Risk limit, Management action, Exit signal, or Review prompt. Timeframe scope is optional; no selection means all timeframes. Failure behavior records whether an unmet condition should only be recorded, warn the trader, skip the setup, or stop the session. Published values are displayed consistently in Read Playbook, Trade Journal Details, and Deep Playbook Replay without preventing an old journal from remaining editable.
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 
 The Trades drawer includes a full-screen **Replay** workspace. It requests only the needed broker window from the local MT5 sync agent and polls until the backend's short-lived cache receives it; candle history is not stored on the trade. The screen reveals candles one by one, marks entry and exit, supports temporary rectangle zones, and saves notes, emotion, grade, and tags. An explicitly labelled Twelve Data fallback is available when MT5 history is unavailable.
+
+Replay timeline events default to **This timeframe** so chart-specific observations do not clutter every chart. Choose **All timeframes** for a trade-level decision or lesson that should follow the same timestamp and price across each Replay chart. Legacy events remain scoped to their original timeframe.
 
 ## Routes
 

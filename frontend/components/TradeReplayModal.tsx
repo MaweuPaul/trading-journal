@@ -39,11 +39,12 @@ interface DrawnText { id: string; time: number; price: number; text: string; col
 type ReplayAnnotation = (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' }) | (DrawnText & { type: 'text' });
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
+  visibilityScope?: 'timeframe' | 'all';
   eventType: string; customType: string; title: string; note: string; emotion: string;
   severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; playbookVersionId: string;
   screenshotIds: string[]; createdAt: string; updatedAt?: string;
 }
-interface ReplayEventDraft { eventType: string; customType: string; title: string; note: string; emotion: string; severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; }
+interface ReplayEventDraft { eventType: string; customType: string; title: string; note: string; emotion: string; severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; visibilityScope: 'timeframe' | 'all'; }
 interface ReplayQuickReview { followedPlan: boolean | null; primaryEmotion: string; primaryMistake: string; primaryStrength: string; lesson: string; processGrade: string; completedAt: string | null; updatedAt?: string; }
 interface ReplayDraft { notes: string; emotion: string; grade: string; tags: string[]; playbookResponses: Record<string, unknown>; analysisGrade: string; executionGrade: string; plannedRR: string; confidenceRating: number | null; exitReason: string; manuallyIntervened: boolean | null; selectedInterval: string; replayIdx: number; speed: number; journalPhase: 'plan' | 'manage' | 'review'; updatedAt?: string; }
 export interface TradeReplaySummary {
@@ -79,7 +80,7 @@ const JOURNAL_PHASES = [
   { id: 'review', label: 'Review', categories: ['exit', 'review', 'post_trade', 'custom'] },
 ] as const;
 const RULE_TOOL_LABELS: Record<string, string> = {
-  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit',
+  observation: 'Observation', confirmation: 'Confirmation', trigger: 'Entry trigger', decision_gate: 'Decision gate', invalidation: 'Invalidation', risk_limit: 'Risk limit', management_action: 'Management action', exit_signal: 'Exit signal', review_prompt: 'Review prompt',
 };
 const FAILURE_ACTION_LABELS: Record<string, string> = {
   warn: 'Warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',
@@ -89,7 +90,7 @@ const REPLAY_EVENT_TYPES = [
   ['management', 'Management'], ['exit', 'Exit decision'], ['emotion', 'Emotion'],
   ['mistake', 'Mistake'], ['violation', 'Rule violation'], ['lesson', 'Lesson'], ['custom', 'Custom'],
 ] as const;
-const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '' };
+const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '', visibilityScope: 'timeframe' };
 const EMPTY_QUICK_REVIEW: ReplayQuickReview = { followedPlan: null, primaryEmotion: '', primaryMistake: '', primaryStrength: '', lesson: '', processGrade: '', completedAt: null };
 const fmt = (n: number, dp = 2) => n.toFixed(dp);
 const fmtDur = (mins: number) => {
@@ -485,7 +486,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         color: replayData.pnlUSD >= 0 ? '#10b981' : '#ef4444', shape: 'square',
         text: `${replayData.pnlUSD >= 0 ? '+' : ''}$${fmt(replayData.pnlUSD)}`, size: 1 });
     }
-    timelineEvents.filter(event => event.timeframe === selectedInterval).forEach(event => {
+    timelineEvents.filter(event => event.timeframe === selectedInterval || event.visibilityScope === 'all').forEach(event => {
       const candleIndex = replayData.candles.findIndex(candle => Number(candle.time) >= Number(event.candleTime));
       if (candleIndex < 0 || candleIndex > replayIdx) return;
       const label = REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType || 'Event';
@@ -501,7 +502,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
   useEffect(() => {
     if (!replayData || !pendingTimelineNavigationRef.current) return;
-    const event = timelineEvents.find(item => item.eventId === pendingTimelineNavigationRef.current && item.timeframe === selectedInterval);
+    const event = timelineEvents.find(item => item.eventId === pendingTimelineNavigationRef.current && (item.timeframe === selectedInterval || item.visibilityScope === 'all'));
     if (!event) return;
     const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
     if (index < 0) return;
@@ -668,7 +669,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const activePhase = JOURNAL_PHASES.find(phase => phase.id === journalPhase) || JOURNAL_PHASES[0];
   const phaseBlocks = playbook?.blocks.filter(block => activePhase.categories.includes(block.category as never)) || [];
   const allPlaybookRules = playbook?.blocks.flatMap(block => block.rules) || [];
-  const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval).sort((a, b) => a.candleTime - b.candleTime);
+  const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval || event.visibilityScope === 'all').sort((a, b) => a.candleTime - b.candleTime);
+  const globalTimelineEventCount = timelineEvents.filter(event => event.visibilityScope === 'all').length;
   const answeredRules = allPlaybookRules.filter(rule => {
     const value = playbookResponses[rule.ruleId];
     return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
@@ -702,6 +704,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const event: ReplayTimelineEvent = {
       eventId: existing?.eventId || `event-${Date.now()}`,
       timeframe: existing?.timeframe || selectedInterval,
+      visibilityScope: eventDraft.visibilityScope,
       candleTime: eventLocation.time, price: eventLocation.price,
       eventType: eventDraft.eventType, customType: eventDraft.eventType === 'custom' ? eventDraft.customType.trim() : '',
       title: eventDraft.title.trim().slice(0, 100), note: eventDraft.note.trim().slice(0, 1000), emotion: eventDraft.emotion,
@@ -714,12 +717,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   };
   const editTimelineEvent = (event: ReplayTimelineEvent) => {
     setEditingEventId(event.eventId); setEventLocation({ time: event.candleTime, price: event.price });
-    setEventDraft({ eventType: event.eventType, customType: event.customType || '', title: event.title, note: event.note || '', emotion: event.emotion || '', severity: event.severity, playbookRuleId: event.playbookRuleId || '' });
+    setEventDraft({ eventType: event.eventType, customType: event.customType || '', title: event.title, note: event.note || '', emotion: event.emotion || '', severity: event.severity, playbookRuleId: event.playbookRuleId || '', visibilityScope: event.visibilityScope === 'all' ? 'all' : 'timeframe' });
   };
   const deleteTimelineEvent = (eventId: string) => setTimelineEvents(current => current.filter(event => event.eventId !== eventId));
   const navigateToTimelineEvent = (event: ReplayTimelineEvent) => {
-    if (!replayData || event.timeframe !== selectedInterval) {
-      if (event.timeframe !== selectedInterval) { pendingTimelineNavigationRef.current = event.eventId; switchTimeframe(event.timeframe); }
+    if (!replayData) { pendingTimelineNavigationRef.current = event.eventId; return; }
+    if (event.visibilityScope !== 'all' && event.timeframe !== selectedInterval) {
+      pendingTimelineNavigationRef.current = event.eventId; switchTimeframe(event.timeframe);
       return;
     }
     const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
@@ -833,6 +837,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                 <label>Importance<select value={eventDraft.severity} onChange={event => setEventDraft(current => ({ ...current, severity: event.target.value as ReplayEventDraft['severity'] }))}><option value="minor">Minor</option><option value="important">Important</option><option value="critical">Critical</option></select></label>
               </div>
               {eventDraft.eventType === 'custom' && <label>Custom type<input maxLength={60} value={eventDraft.customType} onChange={event => setEventDraft(current => ({ ...current, customType: event.target.value }))} placeholder="e.g. News reaction" /></label>}
+              <fieldset className="replay-event-visibility">
+                <legend>Show this event on</legend>
+                <div>
+                  <label><input type="radio" name="event-visibility" checked={eventDraft.visibilityScope === 'timeframe'} onChange={() => setEventDraft(current => ({ ...current, visibilityScope: 'timeframe' }))} /><span>This timeframe <small>{editingEventId ? timelineEvents.find(item => item.eventId === editingEventId)?.timeframe || selectedInterval : selectedInterval}</small></span></label>
+                  <label><input type="radio" name="event-visibility" checked={eventDraft.visibilityScope === 'all'} onChange={() => setEventDraft(current => ({ ...current, visibilityScope: 'all' }))} /><span>All timeframes <small>Shared trade decision</small></span></label>
+                </div>
+                <p>Use one timeframe for chart-specific observations. Use all timeframes for decisions or lessons that belong to the whole trade.</p>
+              </fieldset>
               <label>Short title<input autoFocus maxLength={100} value={eventDraft.title} onChange={event => setEventDraft(current => ({ ...current, title: event.target.value }))} placeholder="e.g. Entered before confirmation" /></label>
               <label>Details<textarea maxLength={1000} value={eventDraft.note} onChange={event => setEventDraft(current => ({ ...current, note: event.target.value }))} placeholder="What did you see, decide, or feel?" /></label>
               <div className="replay-event-editor-grid">
@@ -896,7 +908,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           </div>
           <section className="replay-timeline">
             <div className="replay-timeline-head">
-              <div><span>Trade timeline</span><strong>{visibleTimelineEvents.length} on {selectedInterval} · {timelineEvents.length} total</strong></div>
+              <div><span>Trade timeline</span><strong>{visibleTimelineEvents.length} visible on {selectedInterval}{globalTimelineEventCount ? ` · ${globalTimelineEventCount} shared` : ''} · {timelineEvents.length} total</strong></div>
               <small className={eventSaveState} title={eventSaveError}>{eventSaveState === 'saving' ? 'Saving…' : eventSaveState === 'error' ? 'Not saved' : 'Saved'}</small>
             </div>
             {visibleTimelineEvents.length === 0 ? (
@@ -904,7 +916,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             ) : visibleTimelineEvents.map(event => (
               <article className="replay-timeline-event" key={event.eventId} onClick={() => navigateToTimelineEvent(event)}>
                 <i className={event.severity} />
-                <div><span>{new Date(event.candleTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType}</span><strong>{event.title}</strong>{event.note && <p>{event.note}</p>}</div>
+                <div><span>{new Date(event.candleTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType} <em>{event.visibilityScope === 'all' ? 'All charts' : event.timeframe}</em></span><strong>{event.title}</strong>{event.note && <p>{event.note}</p>}</div>
                 <div className="replay-timeline-actions"><button type="button" onClick={click => { click.stopPropagation(); editTimelineEvent(event); }}>Edit</button><button type="button" onClick={click => { click.stopPropagation(); if (window.confirm('Delete this timeline event?')) deleteTimelineEvent(event.eventId); }}><Trash2 size={12} /></button></div>
               </article>
             ))}

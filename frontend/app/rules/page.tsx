@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, Settings2, ShieldCheck, Trash2, X } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
@@ -211,7 +211,6 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
 function blockIsReady(block: PlaybookBlock) {
   return block.rules.length > 0
     && block.rules.every(rule => rule.label.trim())
-    && block.rules.every(rule => !rule.exampleRequirement?.required || (rule.examples || []).length >= (rule.exampleRequirement.minimumImages || 1))
     && (block.evidence || []).every(item => item.caption.trim().length >= 10);
 }
 
@@ -255,8 +254,11 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
   const labelStyle = { display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' };
 
   return (
-    <details className="playbook-field-details">
-      <summary>Field guidance and validation</summary>
+    <div className="playbook-field-details">
+      <div className="playbook-advanced-section-heading">
+        <strong>Guidance and validation</strong>
+        <span>Optional instructions and limits shown when this rule is completed.</span>
+      </div>
       <div className="playbook-field-details-grid">
         <label style={{ ...labelStyle, gridColumn: 'span 2' }}>Help text
           <input value={rule.helpText || ''} onChange={event => onChange({ helpText: event.target.value })} placeholder="Explain what evidence the trader should record" style={inputStyle} />
@@ -284,15 +286,15 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
           </label>
         </>}
         {(rule.exampleRequirement?.required || false) && <>
-          <label style={labelStyle}>Minimum example images
+          <label style={labelStyle}>Minimum trade screenshots
             <input type="number" min="1" max="12" value={rule.exampleRequirement?.minimumImages || 1} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: Number(event.target.value) || 1, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} style={inputStyle} />
           </label>
-          <label style={labelStyle}>Maximum example images
+          <label style={labelStyle}>Maximum trade screenshots
             <input type="number" min="1" max="12" value={rule.exampleRequirement?.maximumImages || 6} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: rule.exampleRequirement?.minimumImages || 1, maximumImages: Number(event.target.value) || 6 } })} style={inputStyle} />
           </label>
         </>}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -413,11 +415,21 @@ function RuleExamplesEditor({ rule, onChange, onRequirementChange, onError }: { 
   return (
     <div className="playbook-rule-examples">
       <div className="playbook-rule-examples-heading">
-        <div><strong>Rule examples</strong><span>Teach exactly how this condition should and should not look.</span></div>
-        <label className="playbook-rule-example-toggle"><input type="checkbox" checked={rule.exampleRequirement?.required || false} onChange={event => onRequirementChange({ required: event.target.checked, minimumImages: event.target.checked ? Math.max(1, rule.exampleRequirement?.minimumImages || 0) : 0, maximumImages: rule.exampleRequirement?.maximumImages || 6 })} /><span aria-hidden="true" /><strong>Require image confirmation</strong></label>
-        <label className={`btn-ghost playbook-evidence-upload${uploading || examples.length >= maximum ? ' disabled' : ''}`}><ImagePlus size={13} />{uploading ? 'Uploading…' : 'Add example'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || examples.length >= maximum} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} /></label>
+        <div><strong>Visual reference</strong><span>Optional chart examples that teach how this rule should or should not look.</span></div>
+        <label className={`btn-ghost playbook-evidence-upload${uploading || examples.length >= maximum ? ' disabled' : ''}`}><ImagePlus size={13} />{uploading ? 'Uploading…' : 'Add reference'}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || examples.length >= maximum} onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} /></label>
       </div>
-      {rule.exampleRequirement?.required && <div className={`playbook-rule-example-requirement ${examples.length >= (rule.exampleRequirement.minimumImages || 1) ? 'met' : 'missing'}`}>{examples.length}/{rule.exampleRequirement.minimumImages || 1} required examples added</div>}
+      <div className="playbook-trade-evidence-setting">
+        <div>
+          <strong>Require a trade screenshot</strong>
+          <span>When enabled, the journal requires evidence from the actual trade for this rule.</span>
+        </div>
+        <label className="playbook-rule-example-toggle">
+          <input aria-label="Require a trade screenshot when journaling this rule" type="checkbox" checked={rule.exampleRequirement?.required || false} onChange={event => onRequirementChange({ required: event.target.checked, minimumImages: event.target.checked ? Math.max(1, rule.exampleRequirement?.minimumImages || 0) : 0, maximumImages: rule.exampleRequirement?.maximumImages || 6 })} />
+          <span aria-hidden="true" />
+          <strong>{rule.exampleRequirement?.required ? 'On' : 'Off'}</strong>
+        </label>
+      </div>
+      {rule.exampleRequirement?.required && <div className="playbook-rule-example-requirement met">The journal will require {rule.exampleRequirement.minimumImages || 1} trade screenshot{(rule.exampleRequirement.minimumImages || 1) === 1 ? '' : 's'}. Reference examples remain optional.</div>}
       {examples.length > 0 && <div className="playbook-rule-example-grid">{examples.map((item, index) => <article key={item.evidenceId}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={item.url} alt={item.caption || `${rule.label} example`} />
@@ -426,6 +438,33 @@ function RuleExamplesEditor({ rule, onChange, onRequirementChange, onError }: { 
         <div><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Move example earlier"><ArrowUp size={12} /></button><button type="button" disabled={index === examples.length - 1} onClick={() => move(index, 1)} aria-label="Move example later"><ArrowDown size={12} /></button><button type="button" onClick={() => onChange(examples.filter(example => example.evidenceId !== item.evidenceId))} aria-label="Remove example"><X size={12} /></button></div>
       </article>)}</div>}
     </div>
+  );
+}
+
+function RuleAdvancedOptions({ rule, onChange, onError }: { rule: PlaybookRule; onChange: (patch: Partial<PlaybookRule>) => void; onError: (message: string) => void }) {
+  const exampleCount = (rule.examples || []).length;
+  const hasGuidance = Boolean(rule.helpText?.trim() || rule.placeholder?.trim() || rule.unit?.trim() || Object.values(rule.validation || {}).some(value => value !== null && value !== undefined));
+
+  return (
+    <details className="playbook-rule-advanced">
+      <summary>
+        <span><Settings2 size={14} />More options</span>
+        <span className="playbook-rule-advanced-summary">
+          {hasGuidance && <em>Guidance</em>}
+          {exampleCount > 0 && <em>{exampleCount} reference{exampleCount === 1 ? '' : 's'}</em>}
+          {rule.exampleRequirement?.required && <em>Trade screenshot required</em>}
+        </span>
+      </summary>
+      <div className="playbook-rule-advanced-body">
+        <FieldDetails rule={rule} onChange={onChange} />
+        <RuleExamplesEditor
+          rule={rule}
+          onChange={examples => onChange({ examples })}
+          onRequirementChange={exampleRequirement => onChange({ exampleRequirement })}
+          onError={onError}
+        />
+      </div>
+    </details>
   );
 }
 
@@ -448,10 +487,12 @@ export default function PlaybooksPage() {
 
   const selectPlaybook = useCallback((playbook: Playbook) => {
     const version = latest(playbook);
+    const nextBlocks = cloneBlocks(version?.blocks || []);
     setSelectedId(playbook.playbookId);
     setName(playbook.name);
     setDescription(playbook.description || '');
-    setBlocks(cloneBlocks(version?.blocks || []));
+    setBlocks(nextBlocks);
+    setCollapsedBlockIds(new Set(nextBlocks.slice(1).map(block => block.blockId)));
     setChangeNote('');
     setCreating(false);
     setDirty(false);
@@ -530,6 +571,7 @@ export default function PlaybooksPage() {
     setName('');
     setDescription('');
     setBlocks([blankBlock()]);
+    setCollapsedBlockIds(new Set());
     setChangeNote('Initial version');
     setCreating(true);
     setDirty(true);
@@ -637,8 +679,8 @@ export default function PlaybooksPage() {
                   <div className="playbook-stage-toolbar">
                     <span className="playbook-stage-number">{blockIndex + 1}</span>
                     <div>
-                      <strong>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.label || 'Custom stage'} <span className={`playbook-stage-status ${blockIsReady(block) ? 'ready' : 'draft'}`}>{blockIsReady(block) ? 'Ready' : 'Needs details'}</span></strong>
-                      <span>{block.rules.length} field{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required · {blockEvidenceCount(block)} screenshot{blockEvidenceCount(block) === 1 ? '' : 's'}</span>
+                      <strong>{block.name || 'Unnamed block'} <span className={`playbook-stage-status ${blockIsReady(block) ? 'ready' : 'draft'}`}>{blockIsReady(block) ? 'Ready' : 'Needs details'}</span></strong>
+                      <span>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.label || 'Custom stage'} · {block.rules.length} rule{block.rules.length === 1 ? '' : 's'} · {block.rules.filter(rule => rule.required).length} required{blockEvidenceCount(block) > 0 ? ` · ${blockEvidenceCount(block)} reference${blockEvidenceCount(block) === 1 ? '' : 's'}` : ''}</span>
                     </div>
                     <div className="playbook-stage-actions">
                       <button type="button" onClick={() => moveBlock(blockIndex, -1)} disabled={blockIndex === 0} aria-label={`Move ${block.name} earlier`}><ArrowUp size={14} /></button>
@@ -648,14 +690,21 @@ export default function PlaybooksPage() {
                   </div>
 
                   {!collapsedBlockIds.has(block.blockId) && <>
-                  <div className="playbook-block-header">
-                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related evidence, for example Market Context, Location, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
-                    <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-                    <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
-                  </div>
-                  <p style={{ margin: '-5px 0 12px', color: 'var(--text-muted)', fontSize: 11 }}>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.description || BLOCK_CATEGORIES[BLOCK_CATEGORIES.length - 1].description}</p>
-
-                  <BlockEvidenceEditor block={block} onChange={evidence => updateBlock(block.blockId, { evidence })} onError={setError} />
+                  <details className="playbook-block-options">
+                    <summary><Settings2 size={14} />Block settings{(block.evidence || []).length > 0 ? ` · ${(block.evidence || []).length} cover reference${(block.evidence || []).length === 1 ? '' : 's'}` : ''}</summary>
+                    <div className="playbook-block-options-body">
+                      <div className="playbook-block-header">
+                        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}><span>Block name<InfoHint text="Blocks organize related rules, for example Market Context, Entry Confirmation, Risk, or Execution." /></span><input value={block.name} onChange={e => updateBlock(block.blockId, { name: e.target.value })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 10px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontWeight: 700 }} /></label>
+                        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>Lifecycle stage<select value={block.category} onChange={e => updateBlock(block.blockId, { category: e.target.value as BlockCategory })} style={{ minHeight: 42, border: '1px solid var(--border)', borderRadius: 8, padding: '0 8px', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{BLOCK_CATEGORIES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+                        <button onClick={() => removeBlock(block.blockId)} disabled={blocks.length === 1} aria-label={`Remove ${block.name}`} className="icon-btn" style={{ color: 'var(--red)', minWidth: 42, minHeight: 42 }}><Trash2 size={15} /></button>
+                      </div>
+                      <p style={{ margin: '-5px 0 12px', color: 'var(--text-muted)', fontSize: 11 }}>{BLOCK_CATEGORIES.find(item => item.value === block.category)?.description || BLOCK_CATEGORIES[BLOCK_CATEGORIES.length - 1].description}</p>
+                      <details className="playbook-cover-evidence">
+                        <summary><ImagePlus size={14} />Optional block cover images</summary>
+                        <BlockEvidenceEditor block={block} onChange={evidence => updateBlock(block.blockId, { evidence })} onError={setError} />
+                      </details>
+                    </div>
+                  </details>
 
                   <div style={{ display: 'grid', gap: 9 }}>
                     {block.rules.map((rule, ruleIndex) => (
@@ -665,8 +714,7 @@ export default function PlaybooksPage() {
                         {['single_choice', 'multi_choice'].includes(rule.inputType) ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Choices<ChoiceOptionsInput key={`${rule.ruleId}-${rule.inputType}`} options={rule.options} onChange={options => updateRule(block.blockId, rule.ruleId, { options })} /></label> : primitiveInputType(rule.inputType) === 'number' ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Format<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{NUMBER_FORMATS.map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label> : primitiveInputType(rule.inputType) === 'text' ? <label style={{ display: 'grid', gap: 3, fontSize: 10.5, color: 'var(--text-muted)' }}>Format<select value={rule.inputType} onChange={e => updateRule(block.blockId, rule.ruleId, { inputType: e.target.value as InputType })} style={{ minHeight: 40, border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 7px' }}>{TEXT_FORMATS.map(type => <option key={type} value={type}>{INPUT_LABELS[type]}</option>)}</select></label> : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Boolean value</span>}
                         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}><input type="checkbox" checked={rule.required} onChange={e => updateRule(block.blockId, rule.ruleId, { required: e.target.checked })} />Required</label>
                         <button onClick={() => removeRule(block.blockId, rule.ruleId)} aria-label={`Remove ${rule.label || 'rule'} from next version`} className="icon-btn" style={{ color: 'var(--red)' }}><Trash2 size={14} /></button>
-                        <FieldDetails rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} />
-                        <RuleExamplesEditor rule={rule} onChange={examples => updateRule(block.blockId, rule.ruleId, { examples })} onRequirementChange={exampleRequirement => updateRule(block.blockId, rule.ruleId, { exampleRequirement })} onError={setError} />
+                        <RuleAdvancedOptions rule={rule} onChange={patch => updateRule(block.blockId, rule.ruleId, patch)} onError={setError} />
                       </div>
                     ))}
                   </div>

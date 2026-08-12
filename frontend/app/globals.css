@@ -1071,17 +1071,12 @@ tbody td.text {
   border: 1px solid var(--border);
 }
 .playbook-field-details {
-  grid-column: 1 / -1;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
+  display: grid;
+  gap: 8px;
 }
-.playbook-field-details summary {
-  width: fit-content;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
+.playbook-advanced-section-heading { display: grid; gap: 2px; }
+.playbook-advanced-section-heading strong { color: var(--text-primary); font-size: 11px; }
+.playbook-advanced-section-heading span { color: var(--text-muted); font-size: 9.5px; }
 .playbook-field-details-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1091,6 +1086,44 @@ tbody td.text {
   border-radius: 8px;
   background: var(--bg-surface);
 }
+.playbook-rule-advanced {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.playbook-rule-advanced > summary,
+.playbook-block-options > summary,
+.playbook-cover-evidence > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.playbook-rule-advanced > summary::-webkit-details-marker,
+.playbook-block-options > summary::-webkit-details-marker,
+.playbook-cover-evidence > summary::-webkit-details-marker { display: none; }
+.playbook-rule-advanced > summary { width: 100%; justify-content: space-between; }
+.playbook-rule-advanced-summary { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.playbook-rule-advanced-summary em {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 700;
+}
+.playbook-rule-advanced-body { display: grid; gap: 12px; margin-top: 9px; padding: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface); }
+.playbook-block-options { margin-bottom: 12px; }
+.playbook-block-options-body { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elevated); }
+.playbook-cover-evidence { padding-top: 2px; }
+.playbook-cover-evidence[open] > summary { margin-bottom: 9px; }
+.playbook-cover-evidence .playbook-evidence-editor { margin-bottom: 0; background: var(--bg-surface); }
 .playbook-rule-examples { grid-column: 1 / -1; display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .playbook-rule-examples-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .playbook-rule-examples-heading > div { display: grid; flex: 1 1 220px; gap: 1px; }
@@ -1104,6 +1137,10 @@ tbody td.text {
 .playbook-rule-example-toggle input:checked + span::after { transform: translateX(14px); }
 .playbook-rule-example-toggle input:focus-visible + span { box-shadow: 0 0 0 2px var(--accent-mid); }
 .playbook-rule-example-toggle > strong { font-size: 9.5px; color: var(--text-secondary); }
+.playbook-trade-evidence-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); }
+.playbook-trade-evidence-setting > div { display: grid; gap: 2px; }
+.playbook-trade-evidence-setting > div strong { color: var(--text-primary); font-size: 10.5px; }
+.playbook-trade-evidence-setting > div span { color: var(--text-muted); font-size: 9.5px; }
 .playbook-rule-example-requirement { width: fit-content; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 800; }
 .playbook-rule-example-requirement.met { background: var(--green-bg); color: var(--green); }
 .playbook-rule-example-requirement.missing { background: var(--red-bg); color: var(--red); }
@@ -1337,6 +1374,9 @@ tbody td.text {
   .playbook-evidence-card { grid-template-columns: 1fr; }
   .playbook-rule-examples-heading { align-items: stretch; flex-direction: column; }
   .playbook-rule-example-grid { grid-template-columns: 1fr; }
+  .playbook-rule-advanced > summary { align-items: flex-start; flex-direction: column; }
+  .playbook-rule-advanced-summary { justify-content: flex-start; }
+  .playbook-trade-evidence-setting { align-items: flex-start; flex-direction: column; }
   .playbook-stage-toolbar { grid-template-columns: 34px minmax(0, 1fr); }
   .playbook-stage-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }

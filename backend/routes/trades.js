@@ -302,9 +302,8 @@ function normalizeBlocks(input) {
           maximumImages: Math.max(1, Math.min(12, Number(exampleRequirementSource.maximumImages) || 6)),
         };
         if (exampleRequirement.required && exampleRequirement.minimumImages < 1) exampleRequirement.minimumImages = 1;
-        if (exampleRequirement.minimumImages > exampleRequirement.maximumImages) throw new Error(`Minimum example images cannot exceed maximum for: ${label}`);
+        if (exampleRequirement.minimumImages > exampleRequirement.maximumImages) throw new Error(`Minimum trade screenshots cannot exceed maximum for: ${label}`);
         const examples = normalizePlaybookEvidence(rule.examples, label, exampleRequirement.maximumImages);
-        if (examples.length < exampleRequirement.minimumImages) throw new Error(`"${label}" needs at least ${exampleRequirement.minimumImages} example image${exampleRequirement.minimumImages === 1 ? '' : 's'}`);
         return {
           ruleId: String(rule.ruleId || id('rule')),
           label,

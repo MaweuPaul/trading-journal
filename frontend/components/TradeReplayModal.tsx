@@ -4,7 +4,7 @@ import {
   X, Play, Pause, SkipBack, SkipForward,
   Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
   BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
-  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle,
+  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronDown,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -45,6 +45,7 @@ type ReplayAnnotation =
   | (DrawnHorizontal & { type: 'horizontal' }) | (DrawnArrow & { type: 'arrow' })
   | (DrawnText & { type: 'text' }) | (DrawnImage & { type: 'image' });
 type DrawingTool = 'none' | 'select' | 'rect' | 'line' | 'horizontal' | 'arrow' | 'text' | 'image' | 'event';
+type ShapeDrawingTool = Extract<DrawingTool, 'rect' | 'line' | 'horizontal' | 'arrow'>;
 interface AnnotationHistory { rects: DrawnRect[]; lines: DrawnLine[]; horizontals: DrawnHorizontal[]; arrows: DrawnArrow[]; texts: DrawnText[]; images: DrawnImage[]; }
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
@@ -77,7 +78,22 @@ const EMOTIONS = [
   { name: 'Fearful', emoji: '😨' }, { name: 'FOMO', emoji: '💥' },
 ];
 const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
-const RECT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const DRAWING_COLORS = [
+  { value: '#3b82f6', label: 'Blue' }, { value: '#10b981', label: 'Green' },
+  { value: '#f59e0b', label: 'Amber' }, { value: '#ef4444', label: 'Red' },
+  { value: '#8b5cf6', label: 'Purple' }, { value: '#ec4899', label: 'Pink' },
+] as const;
+const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
+const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
+  select: { label: 'Select', instruction: 'Click an annotation to select it, then use Delete or the Delete key.' },
+  rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area. The tool turns off after one zone.' },
+  line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
+  horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
+  arrow: { label: 'Arrow', instruction: 'Drag from the observation toward the outcome.' },
+  text: { label: 'Text note', instruction: 'Write the note, then click the candle and price where it belongs.' },
+  image: { label: 'Chart image', instruction: 'Add a caption, then click the chart to pin the evidence.' },
+  event: { label: 'Timeline moment', instruction: 'Click the candle where the decision, emotion, mistake, or lesson happened.' },
+};
 const REPLAY_TIMEFRAMES = [
   { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
   { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
@@ -151,7 +167,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [drawingTool, setDrawingTool] = useState<DrawingTool>('none');
-  const [rectColor, setRectColor] = useState(RECT_COLORS[0]);
+  const [showDrawingTools, setShowDrawingTools] = useState(false);
+  const [rectColor, setRectColor] = useState<string>(DRAWING_COLORS[0].value);
   const [drawnRects, setDrawnRects] = useState<DrawnRect[]>([]);
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
   const [drawnHorizontals, setDrawnHorizontals] = useState<DrawnHorizontal[]>([]);
@@ -233,6 +250,28 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     ...drawnTexts.map(annotation => ({ ...annotation, type: 'text' as const })),
     ...drawnImages.map(annotation => ({ ...annotation, type: 'image' as const })),
   ], [drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts]);
+  const activeToolGuidance = TOOL_GUIDANCE[drawingTool];
+  const isShapeToolActive = SHAPE_DRAWING_TOOLS.includes(drawingTool as ShapeDrawingTool);
+  const stopDrawing = () => {
+    setDrawingTool('none');
+    setShowDrawingTools(false);
+    setPendingImage(null);
+    setEventLocation(null);
+    setEditingEventId('');
+    setAnnotationText('');
+    drawStart.current = null;
+    currentPreview.current = null;
+    redrawCanvasRef.current();
+  };
+  const activateDrawingTool = (tool: Exclude<DrawingTool, 'image'>) => {
+    const turningOff = drawingTool === tool;
+    setDrawingTool(turningOff ? 'none' : tool);
+    setShowDrawingTools(!turningOff && SHAPE_DRAWING_TOOLS.includes(tool as ShapeDrawingTool));
+    setSelectedAnnotationId('');
+    setPendingImage(null);
+    setEventLocation(null);
+    setEditingEventId('');
+  };
   const annotationKey = `${tradeId}:${selectedInterval}`;
   useEffect(() => { activeAnnotationKeyRef.current = annotationKey; }, [annotationKey]);
   const pushAnnotationHistory = () => {
@@ -724,10 +763,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
       if (time == null || price == null || (drawingTool === 'image' && !pendingImage)) return;
       pushAnnotationHistory(); setSelectedAnnotationId('');
-      if (drawingTool === 'horizontal') setDrawnHorizontals(current => [...current, { id: `horizontal-${Date.now()}`, time: Number(time), price, color: rectColor }]);
+      if (drawingTool === 'horizontal') {
+        setDrawnHorizontals(current => [...current, { id: `horizontal-${Date.now()}`, time: Number(time), price, color: rectColor }]);
+        setDrawingTool('none'); setShowDrawingTools(false);
+      }
       else if (pendingImage) {
         setDrawnImages(current => [...current, { id: `image-${Date.now()}`, time: Number(time), price, color: rectColor, ...pendingImage }]);
-        setPendingImage(null); setDrawingTool('select');
+        setPendingImage(null); setDrawingTool('none');
       }
       return;
     }
@@ -740,7 +782,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         pushAnnotationHistory();
         setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
         setAnnotationText('');
-        queueMicrotask(() => annotationInputRef.current?.focus());
+        setDrawingTool('none');
       }
       return;
     }
@@ -757,6 +799,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
     const r = canvas.getBoundingClientRect(); const x2 = e.clientX - r.left; const y2 = e.clientY - r.top;
+    let placed = false;
     if (Math.hypot(x2 - drawStart.current.x, y2 - drawStart.current.y) > 6) {
       const t1 = chart.timeScale().coordinateToTime(drawStart.current.x);
       const t2 = chart.timeScale().coordinateToTime(x2);
@@ -768,9 +811,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
         else if (drawingTool === 'arrow') setDrawnArrows(prev => [...prev, shape]);
         else setDrawnRects(prev => [...prev, shape]);
+        placed = true;
       }
     }
     drawStart.current = null; currentPreview.current = null; redrawCanvas();
+    if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
   };
 
   const handleReplayImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -831,7 +876,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       if (e.key !== 'Escape') return;
       if (showShortcutHelp) { e.preventDefault(); setShowShortcutHelp(false); }
       else if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
-        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setDrawingTool('none');
+        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setAnnotationText(''); setShowDrawingTools(false); setDrawingTool('none');
       } else onClose();
     };
     const previousOverflow = document.body.style.overflow;
@@ -1028,29 +1073,50 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         </div>
         <div className="replay-toolbar-divider" />
         <div className="replay-tool-group">
-          <span className="replay-tool-group-label">Annotate</span>
-          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => { setDrawingTool(tool => tool === 'select' ? 'none' : 'select'); setPendingImage(null); }} title="Select an annotation to inspect or delete"><MousePointer2 size={16} /> Select</button>
-          <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones"><Square size={16} /> Zone</button>
-          <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'line' ? 'none' : 'line')} title="Draw a trend line"><Minus size={16} /> Line</button>
-          <button type="button" aria-pressed={drawingTool === 'horizontal'} className={`replay-tool-btn${drawingTool === 'horizontal' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'horizontal' ? 'none' : 'horizontal')} title="Place a horizontal support or resistance level"><MoveHorizontal size={16} /> Level</button>
-          <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'arrow' ? 'none' : 'arrow')} title="Draw a directional arrow"><ArrowUpRight size={16} /> Arrow</button>
-          <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart"><TypeIcon size={16} /> Text</button>
+          <span className="replay-tool-group-label">Document</span>
+          <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn replay-tool-primary${drawingTool === 'event' ? ' active' : ''}`} onClick={() => activateDrawingTool('event')} title="Record a decision, emotion, mistake, or lesson at a candle"><MapPin size={16} /> Moment</button>
+          <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => activateDrawingTool('text')} title="Write directly on the chart"><TypeIcon size={16} /> Text</button>
           <input ref={imageInputRef} className="replay-hidden-file" type="file" accept="image/*" onChange={handleReplayImageUpload} />
-          <button type="button" disabled={uploadingImage} aria-pressed={drawingTool === 'image'} className={`replay-tool-btn${drawingTool === 'image' ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload an image and pin it to a candle and price"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Image'}</button>
-          <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn${drawingTool === 'event' ? ' active' : ''}`} onClick={() => { setDrawingTool(tool => tool === 'event' ? 'none' : 'event'); setEventLocation(null); setEditingEventId(''); }} title="Attach a journal event to a candle"><MapPin size={16} /> Event</button>
+          <button type="button" disabled={uploadingImage} aria-pressed={drawingTool === 'image'} className={`replay-tool-btn${drawingTool === 'image' ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload and pin visual evidence to the chart"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Evidence'}</button>
+          <button type="button" aria-expanded={showDrawingTools} aria-controls="replay-drawing-tray" aria-pressed={isShapeToolActive} className={`replay-tool-btn${isShapeToolActive || showDrawingTools ? ' active' : ''}`} onClick={() => setShowDrawingTools(current => !current)} title="Open drawing tools"><Square size={16} /> {isShapeToolActive ? TOOL_GUIDANCE[drawingTool]?.label : 'Draw'} <ChevronDown size={14} /></button>
         </div>
-        {['rect', 'line', 'horizontal', 'arrow', 'text', 'image'].includes(drawingTool) && <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
-          <span className="replay-tool-group-label">Color</span>
-          {RECT_COLORS.map(color => <button type="button" key={color} aria-label={`Use drawing color ${color}`} aria-pressed={color === rectColor} className={color === rectColor ? 'active' : ''} onClick={() => setRectColor(color)} style={{ '--replay-swatch': color } as React.CSSProperties} />)}
-        </div>}
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
         <div className="replay-tool-group replay-tool-actions">
+          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Select an annotation to inspect or delete"><MousePointer2 size={16} /> Select</button>
           <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
           <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} title="Delete the selected annotation (Delete)"><Trash2 size={16} /> Delete</button>
           {allAnnotations.length > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Objects ({allAnnotations.length})</button>}
         </div>
       </div>
+
+      {showDrawingTools && (
+        <div id="replay-drawing-tray" className="replay-drawing-tray" aria-label="Drawing tools">
+          <div className="replay-tool-group">
+            <span className="replay-tool-group-label">Drawing</span>
+            <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => activateDrawingTool('rect')}><Square size={16} /> Zone</button>
+            <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => activateDrawingTool('line')}><Minus size={16} /> Trend line</button>
+            <button type="button" aria-pressed={drawingTool === 'horizontal'} className={`replay-tool-btn${drawingTool === 'horizontal' ? ' active' : ''}`} onClick={() => activateDrawingTool('horizontal')}><MoveHorizontal size={16} /> Price level</button>
+            <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => activateDrawingTool('arrow')}><ArrowUpRight size={16} /> Arrow</button>
+          </div>
+          <div className="replay-toolbar-divider" />
+          <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
+            <span className="replay-tool-group-label">Color</span>
+            {DRAWING_COLORS.map(color => <button type="button" key={color.value} aria-label={`Use ${color.label.toLowerCase()} drawing color`} title={color.label} aria-pressed={color.value === rectColor} className={color.value === rectColor ? 'active' : ''} onClick={() => setRectColor(color.value)} style={{ '--replay-swatch': color.value } as React.CSSProperties} />)}
+          </div>
+          <span className="replay-drawing-tray-help">Choose a tool, then make one mark. Select it later to delete it.</span>
+          <button type="button" className="replay-tool-tray-close" onClick={() => setShowDrawingTools(false)} aria-label="Close drawing tools"><X size={16} /></button>
+        </div>
+      )}
+
+      {activeToolGuidance && (
+        <div className="replay-active-tool" role="status">
+          <strong>{activeToolGuidance.label}</strong>
+          <span>{activeToolGuidance.instruction}</span>
+          <kbd>Esc</kbd>
+          <button type="button" onClick={stopDrawing}>Cancel</button>
+        </div>
+      )}
 
       <div className="replay-body">
         <div className="replay-chart-wrap">
@@ -1077,7 +1143,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           )}
           {eventLocation && (
             <div className="replay-event-editor" role="dialog" aria-label={editingEventId ? 'Edit timeline event' : 'Add timeline event'}>
-              <div className="replay-event-editor-head"><strong>{editingEventId ? 'Edit chart event' : 'What happened here?'}</strong><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); }}>×</button></div>
+              <div className="replay-event-editor-head"><strong>{editingEventId ? 'Edit chart event' : 'What happened here?'}</strong><button type="button" aria-label="Cancel timeline moment" onClick={() => { setEventLocation(null); setEditingEventId(''); setDrawingTool('none'); }}>×</button></div>
               <div className="replay-event-editor-grid">
                 <label>Event type<select value={eventDraft.eventType} onChange={event => setEventDraft(current => ({ ...current, eventType: event.target.value }))}>{REPLAY_EVENT_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
                 <label>Importance<select value={eventDraft.severity} onChange={event => setEventDraft(current => ({ ...current, severity: event.target.value as ReplayEventDraft['severity'] }))}><option value="minor">Minor</option><option value="important">Important</option><option value="critical">Critical</option></select></label>
@@ -1097,7 +1163,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                 <label>Emotion<select value={eventDraft.emotion} onChange={event => setEventDraft(current => ({ ...current, emotion: event.target.value }))}><option value="">None</option>{EMOTIONS.map(item => <option key={item.name}>{item.name}</option>)}</select></label>
                 <label>Playbook rule<select value={eventDraft.playbookRuleId} onChange={event => setEventDraft(current => ({ ...current, playbookRuleId: event.target.value }))}><option value="">No linked rule</option>{allPlaybookRules.map(rule => <option value={rule.ruleId} key={rule.ruleId}>{rule.label}</option>)}</select></label>
               </div>
-              <div className="replay-event-editor-actions"><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); }}>Cancel</button><button type="button" className="primary" disabled={!eventDraft.title.trim()} onClick={saveTimelineEvent}>{editingEventId ? 'Update event' : 'Add to timeline'}</button></div>
+              <div className="replay-event-editor-actions"><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); setDrawingTool('none'); }}>Cancel</button><button type="button" className="primary" disabled={!eventDraft.title.trim()} onClick={saveTimelineEvent}>{editingEventId ? 'Update event' : 'Add to timeline'}</button></div>
             </div>
           )}
           {showAnnotationList && allAnnotations.length > 0 && (
@@ -1105,7 +1171,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               <div className="replay-annotation-manager-head"><strong>Saved annotations</strong><button type="button" onClick={clearAnnotations}>Clear all</button></div>
               {allAnnotations.map((annotation, index) => (
                 <div className={`replay-annotation-row${selectedAnnotationId === annotation.id ? ' selected' : ''}`} key={annotation.id}>
-                  <button type="button" className="replay-annotation-select" aria-pressed={selectedAnnotationId === annotation.id} onClick={() => { setSelectedAnnotationId(annotation.id); setDrawingTool('select'); }}>
+                  <button type="button" className="replay-annotation-select" aria-pressed={selectedAnnotationId === annotation.id} onClick={() => { setSelectedAnnotationId(annotation.id); setShowDrawingTools(false); setDrawingTool('select'); }}>
                     <i style={{ background: annotation.color }} />
                     <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Trend line' : annotation.type === 'horizontal' ? 'Level' : annotation.type === 'arrow' ? 'Arrow' : annotation.type === 'image' ? 'Image' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : annotation.type === 'image' ? ` — ${annotation.caption || 'Chart evidence'}` : ` ${index + 1}`}</span>
                   </button>
@@ -1174,7 +1240,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               <small className={eventSaveState} title={eventSaveError}>{eventSaveState === 'saving' ? 'Saving…' : eventSaveState === 'error' ? 'Not saved' : 'Saved'}</small>
             </div>
             {visibleTimelineEvents.length === 0 ? (
-              <button type="button" className="replay-timeline-empty" onClick={() => setDrawingTool('event')}><MapPin size={14} /> Select Event, then click a candle to tell the trade story.</button>
+              <button type="button" className="replay-timeline-empty" onClick={() => activateDrawingTool('event')}><MapPin size={14} /> Add a timeline moment, then click the candle where it happened.</button>
             ) : visibleTimelineEvents.map(event => (
               <article className="replay-timeline-event" key={event.eventId} onClick={() => navigateToTimelineEvent(event)}>
                 <i className={event.severity} />

@@ -2618,6 +2618,16 @@ body.replay-open .main-content {
 .replay-topbar-pnl.negative { background: #ef444418; color: #ef4444; border: 1px solid #ef444430; }
 .replay-topbar-meta { font-size: 11px; color: #8b95b0; }
 .replay-workspace-toolbar { min-height: 56px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid #1a2035; background: #0a0e14; flex: none; overflow-x: auto; scrollbar-width: thin; }
+.replay-drawing-tray { min-height: 58px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid #25304a; background: #0d131d; flex: none; overflow-x: auto; scrollbar-width: thin; }
+.replay-drawing-tray-help { min-width: 240px; margin-left: auto; color: #7f8aa7; font-size: 10px; line-height: 1.35; }
+.replay-tool-tray-close { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 1px solid #25304a; border-radius: 8px; background: transparent; color: #8b95b0; cursor: pointer; }
+.replay-tool-tray-close:hover { border-color: #3b82f6; color: #dbeafe; background: #2563eb15; }
+.replay-active-tool { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid #25304a; background: #172033; color: #9fb0d0; flex: none; font-size: 11px; }
+.replay-active-tool strong { color: #dbeafe; }
+.replay-active-tool span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replay-active-tool kbd { margin-left: auto; padding: 2px 5px; border: 1px solid #3b4a69; border-bottom-width: 2px; border-radius: 4px; background: #0d131d; color: #9fb0d0; font: 700 9px var(--font-mono); }
+.replay-active-tool button { min-width: 64px; min-height: 32px; border: 1px solid #3b4a69; border-radius: 7px; background: transparent; color: #c4cee3; cursor: pointer; font-size: 10px; font-weight: 700; }
+.replay-active-tool button:hover { border-color: #60a5fa; background: #2563eb18; color: white; }
 .replay-tool-group { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 .replay-tool-group-label { color: #64708e; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
 .replay-toolbar-divider { width: 1px; height: 30px; flex: none; background: #25304a; }
@@ -2954,12 +2964,14 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .replay-tool-btn:hover:not(:disabled) { background: #1a2035; color: #dbe4f7; }
+.replay-tool-btn.replay-tool-primary { border-color: #2d4e7e; background: #15223a; color: #bcd5ff; }
+.replay-tool-btn.replay-tool-primary:hover:not(:disabled) { border-color: #3b82f6; background: #1d3155; color: white; }
 .replay-tool-btn.active { background: #2563eb25; border-color: #3b82f6; color: #93c5fd; box-shadow: inset 0 0 0 1px #3b82f625; }
 .replay-tool-btn:disabled { opacity: .38; cursor: not-allowed; }
 .replay-delete-tool:not(:disabled) { border-color: #ef44445c; color: #fb7185; }
 .replay-delete-tool:hover:not(:disabled) { border-color: #ef4444; background: #ef44441c; color: #fecdd3; }
 .replay-color-group { padding-left: 4px; }
-.replay-color-group button { width: 36px; height: 36px; flex: none; border: 3px solid #0a0e14; border-radius: 9px; background: var(--replay-swatch); cursor: pointer; box-shadow: 0 0 0 1px #303b55; }
+.replay-color-group button { width: 44px; height: 44px; flex: none; border: 3px solid #0a0e14; border-radius: 9px; background: var(--replay-swatch); cursor: pointer; box-shadow: 0 0 0 1px #303b55; }
 .replay-color-group button:hover { box-shadow: 0 0 0 2px #7f8aa7; }
 .replay-color-group button.active { box-shadow: 0 0 0 2px #f8fafc; }
 .replay-close-btn {
@@ -2979,10 +2991,15 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-topbar-meta { width: 100%; }
   .replay-close-btn { min-width: 44px; min-height: 44px; padding-inline: 10px; }
   .replay-workspace-toolbar { min-height: 62px; padding: 8px 10px; gap: 9px; }
+  .replay-drawing-tray { min-height: 62px; padding: 8px 10px; }
+  .replay-drawing-tray-help { display: none; }
+  .replay-active-tool { padding: 7px 10px; }
+  .replay-active-tool span { white-space: normal; line-height: 1.35; }
+  .replay-active-tool kbd { display: none; }
   .replay-tool-group-label { display: none; }
   .replay-timeframes button { min-width: 44px; min-height: 44px; }
   .replay-tool-btn { min-height: 44px; }
-  .replay-color-group button { width: 40px; height: 40px; }
+  .replay-color-group button { width: 44px; height: 44px; }
   .replay-chart-text-editor { top: 10px; left: 10px; right: 10px; grid-template-columns: auto minmax(0, 1fr); }
   .replay-chart-image-placer { top: 10px; left: 10px; right: 10px; max-width: none; }
   .replay-shortcut-help { top: 10px; right: 10px; left: 10px; width: auto; }

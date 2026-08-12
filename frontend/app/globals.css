@@ -2643,6 +2643,16 @@ body.replay-open .main-content {
 .replay-event-editor input, .replay-event-editor select, .replay-event-editor textarea { width: 100%; min-height: 34px; box-sizing: border-box; border: 1px solid #303b55; border-radius: 7px; outline: none; background: #111722; color: #eef3ff; padding: 7px 8px; font: 11px var(--font-sans); }
 .replay-event-editor textarea { min-height: 68px; resize: vertical; }
 .replay-event-editor input:focus, .replay-event-editor select:focus, .replay-event-editor textarea:focus { border-color: #f59e0b; }
+.replay-event-visibility { min-width: 0; margin: 0; padding: 0; border: 0; }
+.replay-event-visibility legend { margin-bottom: 5px; color: #8e9ab7; font-size: 10px; }
+.replay-event-visibility > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.replay-event-visibility label { position: relative; cursor: pointer; }
+.replay-event-visibility input { position: absolute; opacity: 0; pointer-events: none; }
+.replay-event-visibility label > span { min-height: 46px; display: grid; align-content: center; gap: 1px; padding: 7px 9px; border: 1px solid #303b55; border-radius: 8px; background: #111722; color: #aeb9d2; font-size: 10.5px; font-weight: 700; }
+.replay-event-visibility label small { color: #65708d; font-size: 8.5px; font-weight: 500; }
+.replay-event-visibility input:checked + span { border-color: #f59e0b; background: #f59e0b14; color: #fcd88d; }
+.replay-event-visibility input:focus-visible + span { box-shadow: 0 0 0 2px #f59e0b55; }
+.replay-event-visibility > p { margin: 5px 0 0; color: #65708d; font-size: 9px; line-height: 1.4; }
 .replay-event-editor-actions { justify-content: flex-end; }
 .replay-event-editor-actions button { min-height: 34px; border: 1px solid #303b55; border-radius: 7px; background: #151b26; color: #aeb9d2; padding: 6px 11px; cursor: pointer; }
 .replay-event-editor-actions button.primary { border-color: #d97706; background: #d97706; color: white; font-weight: 700; }
@@ -2662,6 +2672,7 @@ body.replay-open .main-content {
 .replay-timeline-event > i.critical { background: #ef4444; }
 .replay-timeline-event > div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
 .replay-timeline-event span { color: #64708e; font-size: 9px; }
+.replay-timeline-event span em { display: inline-flex; margin-left: 4px; padding: 1px 5px; border: 1px solid #29466f; border-radius: 999px; color: #7eb3ff; font-size: 8px; font-style: normal; font-weight: 700; }
 .replay-timeline-event strong { color: #dbe4f7; font-size: 11px; }
 .replay-timeline-event p { margin: 0; color: #8e9ab7; font-size: 10px; line-height: 1.4; }
 .replay-timeline-actions { display: flex; gap: 2px; opacity: .3; }
@@ -2910,6 +2921,7 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-annotation-manager { top: 10px; right: 10px; left: 10px; width: auto; }
   .replay-event-editor { top: 10px; left: 10px; right: 10px; width: auto; }
   .replay-event-editor-grid { grid-template-columns: 1fr; }
+  .replay-event-visibility > div { grid-template-columns: 1fr; }
   .replay-body { flex-direction: column; overflow-y: auto; }
   .replay-chart-wrap { flex: 0 0 48dvh; min-height: 300px; }
   .replay-journal-panel { flex: 0 0 auto; overflow: visible; border-left: 0; border-top: 1px solid #1a2035; }

@@ -104,6 +104,10 @@ Add a `WeeklyReview` model and `/journal/weekly` page. Pre-fill the review with 
 
 **Still missing:** Revision browsing and explicit recovery of an older draft. Current autosave preserves the latest draft only; it does not yet expose a draft history UI.
 
+### Replay Review Controls — Complete
+
+Replay provides auto-pause at entry/exit, direct entry/exit jumps, previous/next decision-moment navigation, labelled scrubber markers, and a discoverable keyboard guide. Quick Review shortcuts are suppressed while typing, grading unlocks only after the qualitative sequence is complete, and contradictory plan/grade combinations receive an honesty check. These controls intentionally support review of what happened rather than adding technical-analysis indicators.
+
 ---
 
 ## Nice to Have

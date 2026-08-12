@@ -584,6 +584,10 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 9. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
 10. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
 11. Confirm entry and exit markers appear only after their corresponding candles are revealed.
+   - Confirm the scrubber labels Entry and Exit and shows a dot for every visible timeline event.
+   - Enable **Auto-pause**, begin before entry, and confirm playback pauses exactly at entry. Resume and confirm it pauses again at exit. Disable Auto-pause and confirm playback passes both markers normally.
+   - Use **Entry**, **Exit**, **Previous note**, and **Next note**. Confirm each action pauses playback, reveals the exact candle, and recenters it even when moving backward in the trade.
+   - Open **Shortcuts** and verify Space, arrows, `E`/`X`, brackets, `Y`/`N`, emotion numbers, and grade letters match the displayed guide. Focus every text/select field and confirm typing never activates a Replay shortcut.
 12. Use **Zone**, **Line**, **Level**, and **Arrow**, then enter a Text label and click the chart. Confirm the status changes from **Saving notes…** to **Notes saved**. Resize the browser and confirm all annotations remain aligned with candle time and price.
 13. Choose **Image**, select an image smaller than 8MB, edit its evidence caption, and click a candle/price after the upload completes. Confirm the captioned preview is pinned to that location and the trade screenshot collection also contains the uploaded evidence.
 14. Reset Replay to before each annotation's anchor candle. Play forward and confirm text, levels, shapes, and image evidence appear only when their first anchor candle is revealed.
@@ -598,6 +602,8 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 23. Edit an event and remove another one. Refresh Replay and confirm the updated timeline persists. Attempt to submit a fabricated rule/version link through the API and confirm the backend rejects it.
 24. Confirm **Quick Review** is the default. Select No for plan adherence and verify the form asks for the main mistake; select Yes and verify it instead asks what should be repeated.
 25. Choose an emotion, enter the branch-specific answer and lesson, and choose a process grade. Refresh before completion and confirm the draft restores.
+   - Confirm process-grade buttons remain disabled until plan adherence, emotion, the branch-specific answer, and lesson are all complete.
+   - Choose **No** plus grade A/B, then **Yes** plus grade C/D/F. Confirm each surprising combination shows a non-blocking honesty prompt.
 26. Leave one required Quick Review answer empty and choose **Mark Complete & Save**. Confirm the UI returns to Quick Review and explains the missing answer. Complete it and save successfully.
 27. Reopen the trade and confirm Quick Review shows Complete, while its primary emotion and process grade also appear in the trade's established emotion/grade fields.
 28. Open **Deep Playbook** and confirm the immutable playbook rules, phase navigation, detailed outcome review, notes, emotions, and tags still work.

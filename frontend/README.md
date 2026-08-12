@@ -14,7 +14,9 @@ The journal form is not hard-coded. A published playbook defines:
 
 When a playbook is attached to a trade, the frontend renders its fields in Plan, Manage, and Review tabs. The first save stores the complete published snapshot on that trade. Later playbook versions do not rewrite the journal, and an attached trade cannot switch to another version.
 
-The Playbook editor uses progressive disclosure: rules initially show only their name, primitive answer type, format or choices, required state, and actions. Open **More options** for guidance, validation, optional visual references, and trade-evidence settings. Reference images never block publishing. Enable **Require a trade screenshot** only when the generated journal must collect visual evidence from the actual trade, linked to the exact rule and immutable playbook version.
+The Playbook editor uses progressive disclosure: rules initially show only their name, primitive answer type, format or choices, required state, and actions. Open **More options** for rule purpose, timeframe scope, failure behavior, guidance, validation, optional visual references, and trade-evidence settings. Reference images never block publishing. Enable **Require a trade screenshot** only when the generated journal must collect visual evidence from the actual trade, linked to the exact rule and immutable playbook version.
+
+Rule purpose can be Observation, Confirmation, Decision gate, Invalidation, or Risk limit. Timeframe scope is optional; no selection means all timeframes. Failure behavior records whether an unmet condition should only be recorded, warn the trader, skip the setup, or stop the session. Published values are displayed consistently in Read Playbook, Trade Journal Details, and Deep Playbook Replay without preventing an old journal from remaining editable.
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 

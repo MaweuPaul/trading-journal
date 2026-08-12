@@ -8,6 +8,8 @@ import InfoHint from '@/components/InfoHint';
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
 type PrimitiveInputType = 'boolean' | 'number' | 'text' | 'single_choice' | 'multi_choice';
 type BlockCategory = 'concept' | 'context' | 'setup' | 'entry' | 'risk' | 'execution' | 'management' | 'exit' | 'review' | 'custom';
+type RuleToolRole = 'observation' | 'confirmation' | 'decision_gate' | 'invalidation' | 'risk_limit';
+type RuleFailureAction = 'none' | 'warn' | 'skip_trade' | 'stop_session';
 
 interface PlaybookRule {
   ruleId: string;
@@ -27,6 +29,10 @@ interface PlaybookRule {
   };
   examples?: PlaybookEvidence[];
   exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
+  toolRole?: RuleToolRole;
+  timeframes?: string[];
+  failureAction?: RuleFailureAction;
+  failureMessage?: string;
   order?: number;
 }
 
@@ -93,6 +99,20 @@ const PRIMITIVE_INPUT_LABELS: Record<PrimitiveInputType, string> = {
 };
 const NUMBER_FORMATS: InputType[] = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward', 'rating'];
 const TEXT_FORMATS: InputType[] = ['text', 'long_text', 'date', 'time'];
+const RULE_TOOL_ROLES: Array<{ value: RuleToolRole; label: string; description: string }> = [
+  { value: 'observation', label: 'Observation', description: 'Record context without deciding whether the trade is valid.' },
+  { value: 'confirmation', label: 'Confirmation', description: 'Evidence that supports the setup or execution.' },
+  { value: 'decision_gate', label: 'Decision gate', description: 'A condition that must pass before the strategy continues.' },
+  { value: 'invalidation', label: 'Invalidation', description: 'A condition that makes the setup or trade invalid.' },
+  { value: 'risk_limit', label: 'Risk limit', description: 'A threshold that protects trade or session risk.' },
+];
+const RULE_TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'] as const;
+const FAILURE_ACTIONS: Array<{ value: RuleFailureAction; label: string }> = [
+  { value: 'none', label: 'Record only' },
+  { value: 'warn', label: 'Show a warning' },
+  { value: 'skip_trade', label: 'Mark setup as skipped' },
+  { value: 'stop_session', label: 'Stop the trading session' },
+];
 
 function primitiveInputType(inputType: InputType): PrimitiveInputType {
   if (NUMBER_FORMATS.includes(inputType)) return 'number';
@@ -117,7 +137,7 @@ type TemplateCategory = Exclude<BlockCategory, 'custom'>;
 type TemplateRule = Omit<PlaybookRule, 'ruleId'>;
 
 const templateRule = (label: string, inputType: InputType, helpText: string, extra: Partial<TemplateRule> = {}): TemplateRule => ({
-  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, ...extra,
+  label, inputType, helpText, options: [], required: false, placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, toolRole: 'observation', timeframes: [], failureAction: 'none', failureMessage: '', ...extra,
 });
 
 const CATEGORY_TEMPLATES: Record<TemplateCategory, { name: string; rules: TemplateRule[] }> = {
@@ -204,6 +224,10 @@ function cloneBlocks(blocks: PlaybookBlock[]) {
       ...rule,
       examples: rule.examples || [],
       exampleRequirement: rule.exampleRequirement || { required: false, minimumImages: 0, maximumImages: 6 },
+      toolRole: rule.toolRole || 'observation',
+      timeframes: rule.timeframes || [],
+      failureAction: rule.failureAction || 'none',
+      failureMessage: rule.failureMessage || '',
     })),
   }));
 }
@@ -444,18 +468,52 @@ function RuleExamplesEditor({ rule, onChange, onRequirementChange, onError }: { 
 function RuleAdvancedOptions({ rule, onChange, onError }: { rule: PlaybookRule; onChange: (patch: Partial<PlaybookRule>) => void; onError: (message: string) => void }) {
   const exampleCount = (rule.examples || []).length;
   const hasGuidance = Boolean(rule.helpText?.trim() || rule.placeholder?.trim() || rule.unit?.trim() || Object.values(rule.validation || {}).some(value => value !== null && value !== undefined));
+  const selectedTimeframes = rule.timeframes || [];
+  const toolRole = rule.toolRole || 'observation';
+  const failureAction = rule.failureAction || 'none';
+  const toggleTimeframe = (timeframe: string) => onChange({ timeframes: selectedTimeframes.includes(timeframe) ? selectedTimeframes.filter(item => item !== timeframe) : [...selectedTimeframes, timeframe] });
 
   return (
     <details className="playbook-rule-advanced">
       <summary>
         <span><Settings2 size={14} />More options</span>
         <span className="playbook-rule-advanced-summary">
+          {toolRole !== 'observation' && <em>{RULE_TOOL_ROLES.find(item => item.value === toolRole)?.label}</em>}
+          {selectedTimeframes.length > 0 && <em>{selectedTimeframes.join(' · ')}</em>}
+          {failureAction !== 'none' && <em>{FAILURE_ACTIONS.find(item => item.value === failureAction)?.label}</em>}
           {hasGuidance && <em>Guidance</em>}
           {exampleCount > 0 && <em>{exampleCount} reference{exampleCount === 1 ? '' : 's'}</em>}
           {rule.exampleRequirement?.required && <em>Trade screenshot required</em>}
         </span>
       </summary>
       <div className="playbook-rule-advanced-body">
+        <section className="playbook-rule-logic">
+          <div className="playbook-advanced-section-heading">
+            <strong>Strategy logic</strong>
+            <span>Define what this rule does, where it applies, and what happens when it is not satisfied.</span>
+          </div>
+          <div className="playbook-rule-logic-grid">
+            <label>Rule tool
+              <select value={toolRole} onChange={event => onChange({ toolRole: event.target.value as RuleToolRole })}>
+                {RULE_TOOL_ROLES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+              <small>{RULE_TOOL_ROLES.find(item => item.value === toolRole)?.description}</small>
+            </label>
+            <label>When not satisfied
+              <select value={failureAction} onChange={event => onChange({ failureAction: event.target.value as RuleFailureAction })}>
+                {FAILURE_ACTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+              <small>This records the intended decision; completed journals remain editable audit records.</small>
+            </label>
+          </div>
+          <fieldset className="playbook-timeframe-picker">
+            <legend>Applicable timeframes <span>Leave empty when the rule applies everywhere.</span></legend>
+            <div>{RULE_TIMEFRAMES.map(timeframe => <label key={timeframe}><input type="checkbox" checked={selectedTimeframes.includes(timeframe)} onChange={() => toggleTimeframe(timeframe)} /><span>{timeframe}</span></label>)}</div>
+          </fieldset>
+          {failureAction !== 'none' && <label className="playbook-failure-message">Decision guidance
+            <input maxLength={240} value={rule.failureMessage || ''} onChange={event => onChange({ failureMessage: event.target.value })} placeholder={failureAction === 'warn' ? 'Explain the warning shown to the trader' : failureAction === 'skip_trade' ? 'Explain why this setup must be skipped' : 'Explain why trading must stop for the session'} />
+          </label>}
+        </section>
         <FieldDetails rule={rule} onChange={onChange} />
         <RuleExamplesEditor
           rule={rule}
@@ -561,7 +619,7 @@ export default function PlaybooksPage() {
   const addRule = (blockId: string) => {
     setBlocks(current => current.map(block => block.blockId === blockId ? {
       ...block,
-      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 } }],
+      rules: [...block.rules, { ruleId: uid('rule'), label: '', inputType: 'boolean', options: [], required: false, helpText: '', placeholder: '', unit: '', defaultValue: null, validation: {}, examples: [], exampleRequirement: { required: false, minimumImages: 0, maximumImages: 6 }, toolRole: 'observation', timeframes: [], failureAction: 'none', failureMessage: '' }],
     } : block));
     markDirty();
   };

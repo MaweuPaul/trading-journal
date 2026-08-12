@@ -50,13 +50,15 @@ The trade journal is derived from the selected published playbook rather than fr
 
 1. Each playbook stage contains rules with answer configuration, help text, validation, and instructional examples.
 2. The rule editor exposes five primitive answer types: Yes/No, Number, Text, Single choice, and Multiple choice. Percentage, Currency, Price, Duration, R:R, and Rating are Number formats; Long explanation, Date, and Time are Text formats.
-3. The editor keeps each rule compact and places guidance, validation, formats, and visual references under **More options**. Instructional reference images are always optional.
-4. Enable **Require a trade screenshot** only when the journal must collect visual evidence from the actual trade. This requirement is independent of optional teaching references and exposes minimum and maximum trade-screenshot controls.
-5. Publishing freezes the complete rule structure, answer configuration, example images, captions, and ordering.
-6. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version, including a trade-screenshot uploader beneath every rule that requires trade evidence.
-7. The first save permanently attaches the complete snapshot to the trade.
-8. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
-9. Publishing a newer playbook version affects only trades that attach that newer version.
+3. The editor keeps each rule compact and places strategy logic, guidance, validation, formats, and visual references under **More options**. Instructional reference images are always optional.
+4. Strategy logic gives every rule a purpose—Observation, Confirmation, Decision gate, Invalidation, or Risk limit—plus an optional timeframe scope and an explicit response when the condition is not satisfied.
+5. Leaving timeframe scope empty means the rule applies everywhere. A scoped rule displays its timeframes in the reader, trade journal, and Replay; its saved answer still belongs to the immutable rule rather than to the currently viewed chart timeframe.
+6. Enable **Require a trade screenshot** only when the journal must collect visual evidence from the actual trade. This requirement is independent of optional teaching references and exposes minimum and maximum trade-screenshot controls.
+7. Publishing freezes the complete rule structure, decision behavior, answer configuration, example images, captions, and ordering.
+8. Selecting a playbook on an unattached trade generates the Plan, Manage, and Review sections from that version, including decision guidance and a trade-screenshot uploader beneath every rule that requires trade evidence.
+9. The first save permanently attaches the complete snapshot to the trade.
+10. The journal's answers can be corrected later, but its strategy and version cannot be replaced.
+11. Publishing a newer playbook version affects only trades that attach that newer version.
 
 This creates a reliable audit chain: the rule teaches what to look for, its images demonstrate the condition, the trade records whether it happened, and Edge Coach compares that answer with the outcome.
 

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, BookOpen, FileClock, ShieldCheck } from 'lucide-react';
 
 interface Evidence { evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid'; linkedRuleId?: string }
-interface Rule { ruleId: string; label: string; inputType: string; required: boolean; helpText?: string; unit?: string; options?: string[]; examples?: Evidence[]; exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number } }
+interface Rule { ruleId: string; label: string; inputType: string; required: boolean; helpText?: string; unit?: string; options?: string[]; examples?: Evidence[]; exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number }; toolRole?: string; timeframes?: string[]; failureAction?: string; failureMessage?: string }
 interface Block { blockId: string; name: string; category: string; rules: Rule[]; evidence?: Evidence[] }
 interface Version { versionId: string; versionNumber: number; schemaVersion?: number; changeNote: string; publishedAt: string; blocks: Block[] }
 interface Playbook { playbookId: string; name: string; description: string; archived: boolean; versions: Version[] }
@@ -13,6 +13,14 @@ interface Playbook { playbookId: string; name: string; description: string; arch
 const CATEGORY_LABELS: Record<string, string> = {
   concept: 'Strategy concept', context: 'Market context', setup: 'Setup and location', entry: 'Entry confirmation',
   risk: 'Risk plan', execution: 'Execution', management: 'Trade management', exit: 'Exit', review: 'Post-trade review', custom: 'Custom stage',
+};
+
+const RULE_TOOL_LABELS: Record<string, string> = {
+  observation: 'Observation', confirmation: 'Confirmation', decision_gate: 'Decision gate',
+  invalidation: 'Invalidation', risk_limit: 'Risk limit',
+};
+const FAILURE_ACTION_LABELS: Record<string, string> = {
+  warn: 'Show a warning', skip_trade: 'Skip this setup', stop_session: 'Stop the trading session',
 };
 
 export default function ReadPlaybookPage() {
@@ -92,7 +100,13 @@ export default function ReadPlaybookPage() {
               <div className="playbook-reader-rules">
                 {block.rules.map((rule, ruleIndex) => <div key={rule.ruleId} className="playbook-reader-rule">
                   <span>{String(ruleIndex + 1).padStart(2, '0')}</span>
-                  <div><h3>{rule.label}{rule.required && <em>Required</em>}</h3>{rule.helpText && <p>{rule.helpText}</p>}{rule.options && rule.options.length > 0 && <div className="playbook-reader-options">{rule.options.map(option => <span key={option}>{option}</span>)}</div>}
+                  <div><h3>{rule.label}{rule.required && <em>Required</em>}</h3>
+                    <div className="playbook-reader-rule-context">
+                      <span>{RULE_TOOL_LABELS[rule.toolRole || 'observation'] || 'Observation'}</span>
+                      <span>{rule.timeframes?.length ? rule.timeframes.join(' · ') : 'All timeframes'}</span>
+                    </div>
+                    {rule.helpText && <p>{rule.helpText}</p>}{rule.options && rule.options.length > 0 && <div className="playbook-reader-options">{rule.options.map(option => <span key={option}>{option}</span>)}</div>}
+                    {rule.failureAction && rule.failureAction !== 'none' && <div className="playbook-reader-decision"><strong>If not satisfied: {FAILURE_ACTION_LABELS[rule.failureAction] || rule.failureAction.replaceAll('_', ' ')}</strong>{rule.failureMessage && <span>{rule.failureMessage}</span>}</div>}
                     {(rule.examples || []).length > 0 && <div className="playbook-reader-rule-examples">{(rule.examples || []).map(example => <figure key={example.evidenceId} className={example.kind}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={example.url} alt={example.caption} />

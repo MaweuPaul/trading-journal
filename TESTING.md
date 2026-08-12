@@ -16,6 +16,19 @@ The following checks were run against the repository on August 10, 2026:
 
 Tests requiring real external credentials cannot be fully executed in a source-only environment. MongoDB persistence, Cloudinary upload/recovery, and MT5 synchronization must be verified against your own services using the procedures below.
 
+## Test encrypted multi-account synchronization
+
+1. Set matching `SYNC_SECRET` values in the root and backend environment files and a stable `ACCOUNT_ENCRYPTION_KEY` in `backend/.env`.
+2. Sign in, open **Accounts**, and add two MT5 demo accounts with clear labels.
+3. Confirm the page never displays login, password, or broker server. Inspect MongoDB `tradingaccounts` records and confirm credential fields contain only versioned ciphertext, IV, and authentication-tag values.
+4. Run `python sync.py --once`. Each enabled account should move from **Waiting for agent** to **Connected**, with its own balance and last-sync time.
+5. Open Trades, choose each account filter, and confirm only that account's trades appear. Identical MT5 deal tickets from different accounts must remain separate.
+6. Enter a wrong password for one account. Its card should show **Needs attention** while other accounts continue syncing.
+7. Disable that account and rerun the worker. It must not attempt that login. Archive it and confirm its historical trades remain filterable.
+8. Change a saved password while leaving login and server empty. Only the supplied password changes; the other encrypted values remain usable.
+
+Run `npm test` in `backend` to verify encryption context binding, tamper rejection, account-key normalization, and Replay validation. Run `npx tsc --noEmit` plus `npm run build` in `frontend` to verify the Accounts route and responsive UI.
+
 ## Seed the dummy visual playbook
 
 The repository includes a complete test strategy, three local chart illustrations, and three sample response sets:

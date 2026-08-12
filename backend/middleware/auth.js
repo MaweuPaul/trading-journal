@@ -23,6 +23,23 @@ module.exports = function (req, res, next) {
     if (mongoose.connection.readyState === 1 && !mongoose.Types.ObjectId.isValid(String(decoded.userId || ''))) {
       return res.status(401).json({ error: 'Your offline session expired after MongoDB reconnected. Please sign in again.' });
     }
+    if (decoded.role === 'sync_agent') {
+      const path = req.originalUrl.split('?')[0];
+      const permitted = [
+        ['GET', /^\/api\/sync-agent\/trading-accounts$/],
+        ['POST', /^\/api\/sync-agent\/trading-accounts\/[^/]+\/status$/],
+        ['POST', /^\/api\/sync-agent\/trading-accounts\/import-legacy$/],
+        ['GET', /^\/api\/trades\/latest-close$/],
+        ['POST', /^\/api\/sync$/],
+        ['POST', /^\/api\/sync-account-events$/],
+        ['GET', /^\/api\/maintenance\/resync-request$/],
+        ['POST', /^\/api\/maintenance\/resync-complete$/],
+        ['GET', /^\/api\/replay-requests$/],
+        ['POST', /^\/api\/trades\/[^/]+\/replay-candles$/],
+        ['POST', /^\/api\/trades\/[^/]+\/replay-failed$/],
+      ].some(([method, pattern]) => method === req.method && pattern.test(path));
+      if (!permitted) return res.status(403).json({ error: 'This sync-agent token cannot access owner journal endpoints.' });
+    }
     req.user = decoded;
     next();
   } catch (err) {

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
@@ -14,15 +14,17 @@ const navItems = [
   { href: '/coach',       label: 'Edge Coach',   icon: Brain },
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
   { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },
+  { href: '/accounts',    label: 'Accounts',      icon: Landmark },
 ];
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
   const router = useRouter();
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
+  const [accountSummary, setAccountSummary] = useState({ connected: 0, enabled: 0, total: 0 });
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    const timer = window.setTimeout(() => {
       const uStr = localStorage.getItem('user');
       if (uStr) {
         try {
@@ -31,7 +33,23 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
           setUserEmail(u.email || '');
         } catch {}
       }
-    }
+      const token = localStorage.getItem('token');
+      if (token) {
+        fetch('/api/trading-accounts', { headers: { Authorization: `Bearer ${token}` } })
+          .then(response => response.ok ? response.json() : Promise.reject())
+          .then(body => {
+            const accounts = body.accounts || [];
+            setAccountSummary({
+              connected: accounts.filter((account: { enabled: boolean; lastStatus: string }) => account.enabled && account.lastStatus === 'connected').length,
+              enabled: accounts.filter((account: { enabled: boolean }) => account.enabled).length,
+              total: accounts.length,
+            });
+          })
+          .catch(() => {});
+
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const handleLogout = () => {
@@ -87,9 +105,9 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
             </button>
           </div>
         )}
-        <div className="sync-pill">
+        <div className={`sync-pill ${accountSummary.enabled > accountSummary.connected ? 'attention' : ''}`}>
           <span className="sync-dot" />
-          <span>MT5 Sync Connected</span>
+          <span>{accountSummary.total === 0 ? 'No trading accounts' : `${accountSummary.connected}/${accountSummary.enabled} accounts connected`}</span>
         </div>
       </div>
     </>

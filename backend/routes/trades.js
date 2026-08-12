@@ -6,6 +6,7 @@ const ReplaySession = require('../models/ReplaySession');
 const ReplayJournal = require('../models/ReplayJournal');
 const AccountEvent = require('../models/AccountEvent');
 const User = require('../models/User');
+const TradingAccount = require('../models/TradingAccount');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -60,6 +61,11 @@ const replayRequests = new Map(); // transient request queue consumed by sync.py
 const replayAgentHeartbeats = new Map(); // userId -> last poll observed by this API process
 const REPLAY_INSTANCE_ID = `${process.env.VERCEL_REGION || process.env.RENDER_SERVICE_ID || 'local'}-${Math.random().toString(36).slice(2, 8)}`;
 const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes; candles are never written to a trade
+
+function syncAgentOnly(req, res, next) {
+  if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+  next();
+}
 try {
   if (fs.existsSync(LOCAL_DB_PATH)) {
     inMemoryTrades = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
@@ -609,8 +615,10 @@ function sameTradeOwnerAndDealId(trade, userId, dealId, accountKey = '') {
   return !accountKey || !existingKey || existingKey === accountKey;
 }
 
-function sameEventOwnerAndExternalId(event, userId, externalId) {
-  return isOfflineAccountEventVisibleToUser(event, userId) && String(event.externalId || '') === String(externalId || '');
+function sameEventOwnerAndExternalId(event, userId, externalId, accountKey = '') {
+  return isOfflineAccountEventVisibleToUser(event, userId)
+    && String(event.externalId || '') === String(externalId || '')
+    && (!accountKey || String(event.accountKey || '') === String(accountKey));
 }
 
 function accountEventNetAmount(event) {
@@ -989,7 +997,7 @@ router.post('/maintenance/resync-request', auth, async (req, res) => {
 });
 
 // GET /api/maintenance/resync-request  consumed by sync.py
-router.get('/maintenance/resync-request', auth, async (req, res) => {
+router.get('/maintenance/resync-request', auth, syncAgentOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
       const request = inMemorySyncRequests[String(req.user.userId)] || {};
@@ -1012,7 +1020,7 @@ router.get('/maintenance/resync-request', auth, async (req, res) => {
 });
 
 // POST /api/maintenance/resync-complete  called by sync.py after a forced full sync
-router.post('/maintenance/resync-complete', auth, async (req, res) => {
+router.post('/maintenance/resync-complete', auth, syncAgentOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
       inMemorySyncRequests[String(req.user.userId)] = {
@@ -1429,7 +1437,7 @@ router.delete('/account-events/:id', auth, async (req, res) => {
 });
 
 // POST /api/sync-account-events  receive MT5 balance operations from sync.py
-router.post('/sync-account-events', auth, async (req, res) => {
+router.post('/sync-account-events', auth, syncAgentOnly, async (req, res) => {
   try {
     const { events } = req.body;
     if (!Array.isArray(events)) {
@@ -1443,7 +1451,8 @@ router.post('/sync-account-events', auth, async (req, res) => {
     if (mongoose.connection.readyState !== 1) {
       for (const e of events) {
         const externalId = String(e.externalId || '');
-        if (!externalId || inMemoryAccountEvents.some(x => sameEventOwnerAndExternalId(x, req.user.userId, externalId))) {
+        const accountKey = cleanAccountField(e.accountKey, 180).toLowerCase();
+        if (!externalId || !accountKey || inMemoryAccountEvents.some(x => sameEventOwnerAndExternalId(x, req.user.userId, externalId, accountKey))) {
           skipped++;
           continue;
         }
@@ -1460,6 +1469,8 @@ router.post('/sync-account-events', auth, async (req, res) => {
           source: 'mt5',
           externalId,
           balanceAfter: e.balanceAfter == null ? null : Number(e.balanceAfter),
+          accountKey,
+          tradingAccount: mongoose.Types.ObjectId.isValid(String(e.tradingAccountId || '')) ? String(e.tradingAccountId) : null,
           user: req.user.userId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1478,7 +1489,12 @@ router.post('/sync-account-events', auth, async (req, res) => {
         continue;
       }
 
-      const existing = await AccountEvent.findOne({ user: req.user.userId, externalId }).select('_id');
+      const accountKey = cleanAccountField(e.accountKey, 180).toLowerCase();
+      if (!accountKey) {
+        skipped++;
+        continue;
+      }
+      const existing = await AccountEvent.findOne({ user: req.user.userId, accountKey, externalId }).select('_id');
       if (existing) {
         skipped++;
         continue;
@@ -1495,6 +1511,8 @@ router.post('/sync-account-events', auth, async (req, res) => {
         source: 'mt5',
         externalId,
         balanceAfter: e.balanceAfter == null ? null : Number(e.balanceAfter),
+        accountKey,
+        tradingAccount: mongoose.Types.ObjectId.isValid(String(e.tradingAccountId || '')) ? e.tradingAccountId : null,
         user: req.user.userId,
       });
 
@@ -1689,10 +1707,31 @@ router.get('/performance', auth, async (req, res) => {
 // GET /api/trade-accounts  account identities represented in this owner's trades
 router.get('/trade-accounts', auth, async (req, res) => {
   try {
-    const trades = mongoose.connection.readyState === 1
-      ? await Trade.find({ user: req.user.userId }).select('accountKey accountLogin accountServer accountName accountType').lean()
-      : inMemoryTrades.filter(trade => isOfflineTradeVisibleToUser(trade, req.user.userId));
-    res.json(summarizeTradeAccounts(trades));
+    if (mongoose.connection.readyState !== 1) {
+      const trades = inMemoryTrades.filter(trade => isOfflineTradeVisibleToUser(trade, req.user.userId));
+      return res.json(summarizeTradeAccounts(trades));
+    }
+    const [accounts, counts, unassignedCount] = await Promise.all([
+      TradingAccount.find({ user: req.user.userId }).select('accountKey label actualAccountType archivedAt').sort({ createdAt: 1 }).lean(),
+      Trade.aggregate([
+        { $match: { user: new mongoose.Types.ObjectId(req.user.userId), accountKey: { $nin: ['', null] } } },
+        { $group: { _id: '$accountKey', count: { $sum: 1 } } },
+      ]),
+      Trade.countDocuments({ user: req.user.userId, $or: [{ accountKey: '' }, { accountKey: null }, { accountKey: { $exists: false } }] }),
+    ]);
+    const countMap = new Map(counts.map(item => [item._id, item.count]));
+    res.json({
+      accounts: accounts.map(account => ({
+        accountKey: account.accountKey,
+        accountLogin: '',
+        accountServer: '',
+        accountName: account.label,
+        accountType: account.actualAccountType || '',
+        label: `${account.label}${account.archivedAt ? ' — archived' : ''}`,
+        count: countMap.get(account.accountKey) || 0,
+      })).filter(account => account.count > 0),
+      unassignedCount,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1772,7 +1811,7 @@ router.get('/trades', auth, async (req, res) => {
 });
 
 // GET /api/replay-requests  consumed by the authenticated local MT5 sync agent
-router.get('/replay-requests', auth, async (req, res) => {
+router.get('/replay-requests', auth, syncAgentOnly, async (req, res) => {
   try {
     const now = Date.now();
     replayAgentHeartbeats.set(String(req.user.userId), now);
@@ -1824,7 +1863,7 @@ router.get('/replay-requests', auth, async (req, res) => {
 });
 
 // POST /api/trades/:id/replay-candles  transient exact-broker candles from MT5
-router.post('/trades/:id/replay-candles', auth, async (req, res) => {
+router.post('/trades/:id/replay-candles', auth, syncAgentOnly, async (req, res) => {
   try {
     const rawCandles = Array.isArray(req.body.candles) ? req.body.candles : [];
     if (!rawCandles.length || rawCandles.length > 5000) {
@@ -1871,7 +1910,7 @@ router.post('/trades/:id/replay-candles', auth, async (req, res) => {
   }
 });
 
-router.post('/trades/:id/replay-failed', auth, async (req, res) => {
+router.post('/trades/:id/replay-failed', auth, syncAgentOnly, async (req, res) => {
   try {
     const error = String(req.body.error || 'MT5 could not return replay candles.').slice(0, 500);
     const interval = requestedReplayInterval(req.body.interval, 0);
@@ -2041,7 +2080,7 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
     let trade;
     if (mongoose.connection.readyState === 1) {
       trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
-        .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct notes emotion grade tags analysisGrade executionGrade plannedRR exitReason manuallyIntervened confidenceRating accountType playbookSnapshot playbookResponses screenshots')
+        .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct notes emotion grade tags analysisGrade executionGrade plannedRR exitReason manuallyIntervened confidenceRating accountType accountKey playbookSnapshot playbookResponses screenshots')
         .lean();
     } else {
       trade = inMemoryTrades.find(
@@ -2069,7 +2108,7 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
           {
             $set: {
               status: 'pending', error: '', result: null, claimCount: 0, claimedAt: null,
-              request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
+              request: { brokerSymbol: trade.symbol, accountKey: trade.accountKey || '', interval: window.interval, start: window.start, end: window.end },
               interval: selectedInterval,
               expiresAt: new Date(Date.now() + REPLAY_CACHE_TTL_MS),
             },
@@ -2610,7 +2649,7 @@ router.delete('/trades/:id/screenshots/:screenshotId', auth, async (req, res) =>
 });
 
 // POST /api/sync  receve trades from Python scrpt
-router.post('/sync', auth, async (req, res) => {
+router.post('/sync', auth, syncAgentOnly, async (req, res) => {
   try {
     const { trades } = req.body;
     if (!Array.isArray(trades) || trades.length === 0) {
@@ -2625,6 +2664,28 @@ router.post('/sync', auth, async (req, res) => {
         missingAccountCount: tradesMissingAccount.length,
       });
     }
+
+    const requestedAccountIds = [...new Set(trades.map(trade => String(trade.tradingAccountId || '')).filter(Boolean))];
+    const managedAccounts = mongoose.connection.readyState === 1 && requestedAccountIds.length
+      ? await TradingAccount.find({ _id: { $in: requestedAccountIds }, user: req.user.userId, archivedAt: null }).lean()
+      : [];
+    const managedAccountMap = new Map(managedAccounts.map(account => [String(account._id), account]));
+    if (requestedAccountIds.some(accountId => !managedAccountMap.has(accountId))) {
+      return res.status(400).json({ error: 'One or more synced trades reference an unknown trading account.' });
+    }
+
+    const identityForTrade = trade => {
+      const base = normalizeAccountIdentity(trade);
+      const managed = managedAccountMap.get(String(trade.tradingAccountId || ''));
+      if (!managed) return base;
+      return {
+        ...base,
+        accountKey: managed.accountKey,
+        accountName: managed.label,
+        accountType: managed.actualAccountType || base.accountType,
+        tradingAccount: managed._id,
+      };
+    };
 
     let inserted = 0;
     let skipped = 0;
@@ -2643,7 +2704,7 @@ router.post('/sync', auth, async (req, res) => {
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       for (const t of trades) {
-        const accountIdentity = normalizeAccountIdentity(t);
+        const accountIdentity = identityForTrade(t);
         const existingIndex = inMemoryTrades.findIndex(x => sameTradeOwnerAndDealId(x, req.user.userId, t.dealId, accountIdentity.accountKey));
         if (existingIndex !== -1) {
           const existingTrade = inMemoryTrades[existingIndex];
@@ -2692,7 +2753,7 @@ router.post('/sync', auth, async (req, res) => {
 
     for (const t of trades) {
       try {
-        const accountIdentity = normalizeAccountIdentity(t);
+        const accountIdentity = identityForTrade(t);
         let existing = await Trade.findOne({
           user: req.user.userId,
           dealId: String(t.dealId),

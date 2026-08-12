@@ -37,6 +37,7 @@ const tradeSchema = new mongoose.Schema({
   accountLogin:     { type: String, default: '' },
   accountServer:    { type: String, default: '' },
   accountName:      { type: String, default: '' },
+  tradingAccount:   { type: mongoose.Schema.Types.ObjectId, ref: 'TradingAccount', default: null, index: true },
 
   // -- Edge Coach: Setup Builder --------------------------------------------
   isReEntry:          { type: Boolean, default: false }, // was this a re-entry on the same setup/idea?

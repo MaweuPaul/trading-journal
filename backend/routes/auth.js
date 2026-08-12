@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const { safeSecretEqual } = require('../lib/credentialEncryption');
 
 const router = express.Router();
 
@@ -18,6 +19,11 @@ function ownerEnv() {
 function signToken(user) {
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
   return jwt.sign({ userId: user.id || user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+}
+
+function signAgentToken(user) {
+  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
+  return jwt.sign({ userId: user.id || user._id, email: user.email, role: 'sync_agent' }, process.env.JWT_SECRET, { expiresIn: '24h' });
 }
 
 function publicUser(user) {
@@ -103,6 +109,21 @@ router.post('/login', async (req, res) => {
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Server error during login.' });
+  }
+});
+
+// POST /api/auth/sync-agent -- exchanges the installation secret for a short-lived agent JWT.
+router.post('/sync-agent', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB is required for sync-agent authentication.' });
+    if (!process.env.SYNC_SECRET) return res.status(503).json({ error: 'SYNC_SECRET is not configured on the API.' });
+    const supplied = req.header('X-Sync-Secret') || req.body.syncSecret || '';
+    if (!safeSecretEqual(supplied, process.env.SYNC_SECRET)) return res.status(401).json({ error: 'Invalid sync agent secret.' });
+    const owner = await User.findOne({}).sort({ createdAt: 1 });
+    if (!owner) return res.status(404).json({ error: 'Complete journal owner setup first.' });
+    res.json({ token: signAgentToken(owner), user: publicUser(owner) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

@@ -1,0 +1,225 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const auth = require('../middleware/auth');
+const TradingAccount = require('../models/TradingAccount');
+const Trade = require('../models/Trade');
+const { encryptCredential, decryptCredential } = require('../lib/credentialEncryption');
+
+const router = express.Router();
+
+function ownerOnly(req, res, next) {
+  if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
+  next();
+}
+
+function credentialContext(userId, accountId, field) {
+  return `${userId}:${accountId}:${field}`;
+}
+
+function encryptFields(userId, accountId, values) {
+  return Object.fromEntries(['login', 'password', 'server'].map(field => [
+    field,
+    encryptCredential(values[field], credentialContext(userId, accountId, field)),
+  ]));
+}
+
+function publicAccount(account, tradeCount = 0) {
+  return {
+    id: String(account._id),
+    accountKey: account.accountKey,
+    provider: account.provider,
+    label: account.label,
+    enabled: account.enabled,
+    archived: Boolean(account.archivedAt),
+    requireRealAccount: account.requireRealAccount,
+    symbolAliases: account.symbolAliases || '',
+    lastStatus: account.enabled ? account.lastStatus : 'disabled',
+    lastError: account.lastError || '',
+    lastConnectedAt: account.lastConnectedAt,
+    lastSyncAt: account.lastSyncAt,
+    lastAgentSeenAt: account.lastAgentSeenAt,
+    lastBalance: account.lastBalance,
+    actualAccountType: account.actualAccountType || '',
+    tradeCount,
+    hasCredentials: true,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
+}
+
+function validateInput(body, creating = false) {
+  const label = String(body.label || '').trim();
+  const login = String(body.login || '').trim();
+  const password = String(body.password || '');
+  const server = String(body.server || '').trim();
+  if (!label || label.length > 80) return 'Enter an account label of 80 characters or fewer.';
+  if (creating && (!login || !password || !server)) return 'Login, password and broker server are required.';
+  if (login && !/^\d{3,20}$/.test(login)) return 'MT5 login must contain 3 to 20 digits.';
+  if (password && password.length > 200) return 'MT5 password is too long.';
+  if (server && server.length > 160) return 'Broker server is too long.';
+  return '';
+}
+
+router.get('/trading-accounts', auth, ownerOnly, async (req, res) => {
+  try {
+    const accounts = await TradingAccount.find({ user: req.user.userId, archivedAt: null }).sort({ createdAt: 1 }).lean();
+    const counts = await Trade.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(req.user.userId) } },
+      { $group: { _id: '$accountKey', count: { $sum: 1 } } },
+    ]);
+    const countMap = new Map(counts.map(item => [item._id, item.count]));
+    res.json({ accounts: accounts.map(account => publicAccount(account, countMap.get(account.accountKey) || 0)) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/trading-accounts', auth, ownerOnly, async (req, res) => {
+  try {
+    const validationError = validateInput(req.body, true);
+    if (validationError) return res.status(400).json({ error: validationError });
+    const accountId = new mongoose.Types.ObjectId();
+    const userId = String(req.user.userId);
+    const account = await TradingAccount.create({
+      _id: accountId,
+      user: userId,
+      accountKey: `mt5:${accountId}`,
+      provider: 'mt5',
+      label: String(req.body.label).trim(),
+      credentials: encryptFields(userId, accountId, req.body),
+      enabled: req.body.enabled !== false,
+      requireRealAccount: Boolean(req.body.requireRealAccount),
+      symbolAliases: String(req.body.symbolAliases || '').trim(),
+      lastStatus: 'pending',
+    });
+    res.status(201).json({ account: publicAccount(account) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.patch('/trading-accounts/:id', auth, ownerOnly, async (req, res) => {
+  try {
+    const account = await TradingAccount.findOne({ _id: req.params.id, user: req.user.userId, archivedAt: null });
+    if (!account) return res.status(404).json({ error: 'Trading account not found.' });
+    const validationError = validateInput({ ...req.body, label: req.body.label ?? account.label }, false);
+    if (validationError) return res.status(400).json({ error: validationError });
+    if (req.body.label !== undefined) account.label = String(req.body.label).trim();
+    if (req.body.enabled !== undefined) account.enabled = Boolean(req.body.enabled);
+    if (req.body.requireRealAccount !== undefined) account.requireRealAccount = Boolean(req.body.requireRealAccount);
+    if (req.body.symbolAliases !== undefined) account.symbolAliases = String(req.body.symbolAliases || '').trim();
+    for (const field of ['login', 'password', 'server']) {
+      if (req.body[field]) {
+        account.credentials[field] = encryptCredential(
+          req.body[field],
+          credentialContext(req.user.userId, account._id, field),
+        );
+      }
+    }
+    if (['login', 'password', 'server'].some(field => req.body[field])) {
+      account.lastStatus = 'pending';
+      account.lastError = '';
+    }
+    if (!account.enabled) account.lastStatus = 'disabled';
+    else if (account.lastStatus === 'disabled') account.lastStatus = 'pending';
+    await account.save();
+    res.json({ account: publicAccount(account) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete('/trading-accounts/:id', auth, ownerOnly, async (req, res) => {
+  try {
+    const account = await TradingAccount.findOne({ _id: req.params.id, user: req.user.userId, archivedAt: null });
+    if (!account) return res.status(404).json({ error: 'Trading account not found.' });
+    account.enabled = false;
+    account.archivedAt = new Date();
+    account.lastStatus = 'disabled';
+    await account.save();
+    res.json({ archived: true, accountId: String(account._id) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/sync-agent/trading-accounts', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+    const accounts = await TradingAccount.find({ user: req.user.userId, archivedAt: null, enabled: true }).sort({ createdAt: 1 });
+    const values = accounts.map(account => {
+      const context = field => credentialContext(req.user.userId, account._id, field);
+      return {
+        id: String(account._id),
+        accountKey: account.accountKey,
+        label: account.label,
+        login: decryptCredential(account.credentials.login, context('login')),
+        password: decryptCredential(account.credentials.password, context('password')),
+        server: decryptCredential(account.credentials.server, context('server')),
+        requireRealAccount: account.requireRealAccount,
+        symbolAliases: account.symbolAliases || '',
+      };
+    });
+    await TradingAccount.updateMany({ _id: { $in: accounts.map(account => account._id) } }, { $set: { lastAgentSeenAt: new Date() } });
+    res.json({ accounts: values });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/sync-agent/trading-accounts/import-legacy', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+    if (await TradingAccount.exists({ user: req.user.userId, archivedAt: null })) {
+      return res.status(409).json({ error: 'A database-managed trading account already exists.' });
+    }
+    const validationError = validateInput(req.body, true);
+    if (validationError) return res.status(400).json({ error: validationError });
+    const accountId = new mongoose.Types.ObjectId();
+    const userId = String(req.user.userId);
+    const account = await TradingAccount.create({
+      _id: accountId,
+      user: userId,
+      accountKey: `mt5:${accountId}`,
+      provider: 'mt5',
+      label: String(req.body.label).trim(),
+      credentials: encryptFields(userId, accountId, req.body),
+      enabled: true,
+      requireRealAccount: Boolean(req.body.requireRealAccount),
+      symbolAliases: String(req.body.symbolAliases || '').trim(),
+      lastStatus: 'pending',
+    });
+    res.status(201).json({ account: publicAccount(account), imported: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/sync-agent/trading-accounts/:id/status', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+    const status = ['connected', 'error'].includes(req.body.status) ? req.body.status : 'error';
+    const update = {
+      lastStatus: status,
+      lastError: status === 'error' ? String(req.body.error || 'Connection failed').slice(0, 500) : '',
+      lastAgentSeenAt: new Date(),
+    };
+    if (status === 'connected') {
+      update.lastConnectedAt = new Date();
+      if (req.body.synced) update.lastSyncAt = new Date();
+      if (Number.isFinite(Number(req.body.balance))) update.lastBalance = Number(req.body.balance);
+      if (['live', 'demo'].includes(req.body.accountType)) update.actualAccountType = req.body.accountType;
+    }
+    const account = await TradingAccount.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.userId, archivedAt: null },
+      { $set: update },
+      { new: true },
+    );
+    if (!account) return res.status(404).json({ error: 'Trading account not found.' });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;

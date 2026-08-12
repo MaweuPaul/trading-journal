@@ -8,6 +8,7 @@ const path = require('path');
 
 const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
+const tradingAccountsRouter = require('./routes/tradingAccounts');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -28,6 +29,7 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Routes
 app.use('/api/auth', authRouter);
+app.use('/api', tradingAccountsRouter);
 app.use('/api', tradesRouter);
 
 // Health check
@@ -119,6 +121,19 @@ if (!process.env.MONGODB_URI) {
           await Trade.collection.dropIndex(legacyDealIndex.name);
           console.log(' Upgraded trade uniqueness to include the MT5 account identity.');
         }
+
+        const eventIndexes = await AccountEvent.collection.indexes();
+        const legacyEventIndex = eventIndexes.find(index => (
+          index.unique
+          && index.key?.user === 1
+          && index.key?.externalId === 1
+          && Object.keys(index.key).length === 2
+        ));
+        if (legacyEventIndex) await AccountEvent.collection.dropIndex(legacyEventIndex.name);
+        await AccountEvent.collection.createIndex(
+          { user: 1, accountKey: 1, externalId: 1 },
+          { unique: true, partialFilterExpression: { source: 'mt5' }, name: 'user_1_accountKey_1_externalId_1' },
+        );
       } catch (e) {
         console.error(' Owner setup or migration failed:', e.message);
       }

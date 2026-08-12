@@ -8,15 +8,13 @@ Requirements:
 
 Configuration:
     Copy .env.example to .env in the same directory and fill in your values:
-        MT5_LOGIN=YOUR_MT5_ACCOUNT_NUMBER
-        MT5_PASSWORD=YOUR_MT5_PASSWORD
-        MT5_SERVER=YOUR_MT5_SERVER_NAME
-        MT5_REQUIRE_REAL_ACCOUNT=false
+        SYNC_SECRET=THE_SAME_RANDOM_SECRET_AS_THE_BACKEND
         API_BASE=http://localhost:4000/api
         API_TIMEOUT=60
         SYNC_INTERVAL=60
-        USER_EMAIL=YOUR_JOURNAL_OWNER_EMAIL
-        USER_PASSWORD=YOUR_JOURNAL_OWNER_PASSWORD
+
+    MT5_LOGIN, MT5_PASSWORD and MT5_SERVER are supported only for the one-time
+    automatic migration into encrypted database-managed Trading Accounts.
 """
 
 import time
@@ -32,19 +30,20 @@ import MetaTrader5 as mt5
 load_dotenv()
 
 # -- Config -------------------------------------------------------------------
-MT5_LOGIN    = int(os.getenv("MT5_LOGIN", "0"))
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER   = os.getenv("MT5_SERVER", "")
-MT5_REQUIRE_REAL_ACCOUNT = os.getenv("MT5_REQUIRE_REAL_ACCOUNT", "false").lower() in {"1", "true", "yes", "on"}
+LEGACY_MT5_LOGIN = str(os.getenv("MT5_LOGIN", "")).strip()
+LEGACY_MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+LEGACY_MT5_SERVER = os.getenv("MT5_SERVER", "")
+LEGACY_REQUIRE_REAL = os.getenv("MT5_REQUIRE_REAL_ACCOUNT", "false").lower() in {"1", "true", "yes", "on"}
 API_BASE      = os.getenv("API_BASE", "http://localhost:4000/api")
 API_TIMEOUT   = int(os.getenv("API_TIMEOUT", "60"))
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
-USER_EMAIL    = os.getenv("USER_EMAIL", "")
-USER_PASSWORD = os.getenv("USER_PASSWORD", "")
-MT5_SYMBOL_ALIASES = os.getenv("MT5_SYMBOL_ALIASES", "")
+SYNC_SECRET   = os.getenv("SYNC_SECRET", "")
+LEGACY_SYMBOL_ALIASES = os.getenv("MT5_SYMBOL_ALIASES", "")
 
 JWT_TOKEN = None
 MT5_LOCK = threading.RLock()
+ACTIVE_ACCOUNT = None
+ACCOUNT_CACHE = {}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,20 +54,17 @@ log = logging.getLogger("MT5Sync")
 
 
 def get_jwt_token():
-    """Authenticate with user email/password against the API and retrieve JWT."""
+    """Authenticate this local worker without storing the journal password when possible."""
     global JWT_TOKEN
-    if not USER_EMAIL or not USER_PASSWORD:
-        log.error("[AUTH] USER_EMAIL and USER_PASSWORD must be configured in .env")
-        return False
-
     try:
-        log.info("[AUTH] Authenticating sync pipeline for %s...", USER_EMAIL)
         auth_url = f"{API_BASE.replace('/api', '')}/api/auth/login"
-        resp = requests.post(
-            auth_url,
-            json={"email": USER_EMAIL, "password": USER_PASSWORD},
-            timeout=API_TIMEOUT,
-        )
+        if SYNC_SECRET:
+            auth_url = f"{API_BASE.replace('/api', '')}/api/auth/sync-agent"
+            log.info("[AUTH] Authenticating with the installation sync secret...")
+            resp = requests.post(auth_url, headers={"X-Sync-Secret": SYNC_SECRET}, timeout=API_TIMEOUT)
+        else:
+            log.error("[AUTH] SYNC_SECRET must be configured in .env")
+            return False
         resp.raise_for_status()
         data = resp.json()
         JWT_TOKEN = data.get("token")
@@ -79,14 +75,27 @@ def get_jwt_token():
         return False
 
 
-def connect_mt5():
-    """Initialize and login to MT5. Returns True on success."""
+def activate_account(account):
+    global ACTIVE_ACCOUNT
+    ACTIVE_ACCOUNT = account
+
+
+def connect_mt5(account=None):
+    """Initialize MT5 and log into one database-managed account."""
+    if account is not None:
+        activate_account(account)
+    if not ACTIVE_ACCOUNT:
+        log.error("[MT5] No active database-managed trading account.")
+        return False
+    login = int(ACTIVE_ACCOUNT.get("login") or 0)
+    password = ACTIVE_ACCOUNT.get("password", "")
+    server = ACTIVE_ACCOUNT.get("server", "")
     with MT5_LOCK:
         if not mt5.initialize():
             log.error("[MT5] mt5.initialize() failed -- is MetaTrader 5 running? Error: %s", mt5.last_error())
             return False
 
-        authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+        authorized = mt5.login(login, password=password, server=server)
         if not authorized:
             log.error("[MT5] Login failed: %s", mt5.last_error())
             return False
@@ -96,11 +105,11 @@ def connect_mt5():
             log.error("[MT5] Connected, but account_info() returned no account details: %s", mt5.last_error())
             return False
 
-    if int(info.login) != MT5_LOGIN:
+    if int(info.login) != login:
         log.critical(
             "[MT5] Refusing to sync. Connected login %s does not match MT5_LOGIN %s.",
             info.login,
-            MT5_LOGIN,
+            login,
         )
         return False
 
@@ -112,7 +121,7 @@ def connect_mt5():
     }
     trade_mode = trade_mode_names.get(info.trade_mode, f"UNKNOWN({info.trade_mode})")
 
-    if MT5_REQUIRE_REAL_ACCOUNT and info.trade_mode != real_trade_mode:
+    if ACTIVE_ACCOUNT.get("requireRealAccount") and info.trade_mode != real_trade_mode:
         log.critical(
             "[MT5] Refusing to sync. Account %s on %s is %s, not REAL.",
             info.login,
@@ -158,7 +167,8 @@ def history_deals_get_with_retry(*args, **kwargs):
 def configured_symbol_aliases():
     """Parse XAUUSD:XAUUSDm,USTEC:USTECm style explicit broker mappings."""
     aliases = {}
-    for item in MT5_SYMBOL_ALIASES.split(","):
+    configured = (ACTIVE_ACCOUNT or {}).get("symbolAliases", LEGACY_SYMBOL_ALIASES)
+    for item in configured.split(","):
         source, separator, target = item.partition(":")
         if separator and source.strip() and target.strip():
             aliases[source.strip().upper()] = target.strip()
@@ -244,20 +254,85 @@ def get_account_identity():
     """Return the stable identity of the MT5 account connected to this agent."""
     info = mt5.account_info()
     if not info:
-        return {"accountKey": "", "accountLogin": "", "accountServer": "", "accountName": "", "accountType": ""}
-    login = str(getattr(info, "login", "") or "").strip()
-    server = str(getattr(info, "server", "") or "").strip()
-    name = str(getattr(info, "name", "") or "").strip()
+        return {"accountKey": "", "accountName": "", "accountType": "", "tradingAccountId": ""}
     real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
     account_type = "live" if info.trade_mode == real_mode else "demo"
-    account_key = f"{server.lower()}::{login}" if login else ""
     return {
-        "accountKey": account_key,
-        "accountLogin": login,
-        "accountServer": server,
-        "accountName": name,
+        "accountKey": (ACTIVE_ACCOUNT or {}).get("accountKey", ""),
+        "accountName": (ACTIVE_ACCOUNT or {}).get("label", "MT5 account"),
         "accountType": account_type,
+        "tradingAccountId": (ACTIVE_ACCOUNT or {}).get("id", ""),
     }
+
+
+def fetch_trading_accounts():
+    """Download enabled account credentials over the authenticated TLS API channel."""
+    global JWT_TOKEN
+    if not JWT_TOKEN and not get_jwt_token():
+        return []
+    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+    try:
+        resp = requests.get(f"{API_BASE}/sync-agent/trading-accounts", headers=headers, timeout=API_TIMEOUT)
+        if resp.status_code == 401 and get_jwt_token():
+            headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+            resp = requests.get(f"{API_BASE}/sync-agent/trading-accounts", headers=headers, timeout=API_TIMEOUT)
+        resp.raise_for_status()
+        accounts = resp.json().get("accounts", [])
+        ACCOUNT_CACHE.clear()
+        ACCOUNT_CACHE.update({account.get("accountKey"): account for account in accounts if account.get("accountKey")})
+        return accounts
+    except requests.RequestException as exc:
+        log.error("[ACCOUNTS] Could not load trading accounts: %s", exc)
+        return []
+
+
+def import_legacy_account():
+    """One-time bridge from old MT5_* variables to encrypted database storage."""
+    if not (LEGACY_MT5_LOGIN and LEGACY_MT5_PASSWORD and LEGACY_MT5_SERVER and JWT_TOKEN):
+        return False
+    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
+    payload = {
+        "label": "Primary MT5 Account",
+        "login": LEGACY_MT5_LOGIN,
+        "password": LEGACY_MT5_PASSWORD,
+        "server": LEGACY_MT5_SERVER,
+        "requireRealAccount": LEGACY_REQUIRE_REAL,
+        "symbolAliases": LEGACY_SYMBOL_ALIASES,
+    }
+    try:
+        resp = requests.post(
+            f"{API_BASE}/sync-agent/trading-accounts/import-legacy",
+            json=payload, headers=headers, timeout=API_TIMEOUT,
+        )
+        if resp.status_code == 409:
+            return False
+        resp.raise_for_status()
+        log.info("[ACCOUNTS] Imported the legacy MT5 account into encrypted database storage.")
+        return True
+    except requests.RequestException as exc:
+        log.error("[ACCOUNTS] Legacy account import failed: %s", exc)
+        return False
+
+
+def report_account_status(account, status, error="", synced=False):
+    if not JWT_TOKEN or not account.get("id"):
+        return
+    info = mt5.account_info() if status == "connected" else None
+    real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
+    payload = {
+        "status": status,
+        "error": str(error)[:500],
+        "synced": synced,
+        "balance": float(info.balance) if info else None,
+        "accountType": ("live" if info and info.trade_mode == real_mode else "demo") if info else "",
+    }
+    try:
+        requests.post(
+            f"{API_BASE}/sync-agent/trading-accounts/{account['id']}/status",
+            json=payload, headers={"Authorization": f"Bearer {JWT_TOKEN}"}, timeout=API_TIMEOUT,
+        ).raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("[ACCOUNTS] Could not report %s status for %s: %s", status, account.get("label"), exc)
 
 
 def get_latest_trade_time(account_key=""):
@@ -593,12 +668,6 @@ def process_replay_requests(wait_seconds=0):
         "4h": mt5.TIMEFRAME_H4,
         "1day": mt5.TIMEFRAME_D1,
     }
-    with MT5_LOCK:
-        account = mt5.account_info()
-        if account is None and mt5_ipc_failed() and reconnect_mt5(f"account_info failure {mt5.last_error()}"):
-            account = mt5.account_info()
-        server = getattr(account, "server", "") if account else ""
-
     for request in replay_requests:
         trade_id = request.get("tradeId")
         symbol = request.get("brokerSymbol", "")
@@ -609,6 +678,17 @@ def process_replay_requests(wait_seconds=0):
             start = datetime.fromisoformat(request["start"].replace("Z", "+00:00")).astimezone(timezone.utc)
             end = datetime.fromisoformat(request["end"].replace("Z", "+00:00")).astimezone(timezone.utc)
             with MT5_LOCK:
+                target_account = ACCOUNT_CACHE.get(request.get("accountKey"))
+                if not target_account:
+                    fetch_trading_accounts()
+                    target_account = ACCOUNT_CACHE.get(request.get("accountKey"))
+                if not target_account:
+                    raise RuntimeError("The trade account is disabled, archived, or unavailable to this agent")
+                if not ACTIVE_ACCOUNT or ACTIVE_ACCOUNT.get("id") != target_account.get("id"):
+                    if not connect_mt5(target_account):
+                        raise RuntimeError(f"Could not connect to {target_account.get('label', 'the trade account')}")
+                account = mt5.account_info()
+                server = getattr(account, "server", "") if account else ""
                 resolved_symbol = resolve_broker_symbol(symbol)
                 rates = mt5.copy_rates_range(resolved_symbol, timeframe_map[interval], start, end)
                 if rates is None and mt5_ipc_failed() and reconnect_mt5(f"copy_rates_range failure {mt5.last_error()}"):
@@ -655,56 +735,56 @@ def main(once=False, full=False):
         log.critical("[START] Could not authenticate -- exiting.")
         return
 
-    if not connect_mt5():
-        log.critical("[START] Could not connect to MT5 -- exiting.")
-        return
-
     if once:
-        process_replay_requests()
+        pass
     else:
         threading.Thread(target=replay_worker, name="MT5ReplayWorker", daemon=True).start()
 
     while True:
-        try:
-            force_full_sync = full or get_resync_request()
-            with MT5_LOCK:
+        accounts = fetch_trading_accounts()
+        if not accounts and import_legacy_account():
+            accounts = fetch_trading_accounts()
+        if not accounts:
+            log.warning("[ACCOUNTS] No enabled trading accounts. Add one from the Trading Accounts page.")
+
+        force_full_sync = full or get_resync_request()
+        for account in accounts:
+            try:
+                if not connect_mt5(account):
+                    error = f"MT5 rejected login or server for {account.get('label', 'account')}"
+                    report_account_status(account, "error", error)
+                    continue
                 account_identity = get_account_identity()
-            latest_time = None if force_full_sync else get_latest_trade_time(account_identity.get("accountKey", ""))
-            if full:
-                log.info("[SYNC] Full history sync requested from command line...")
-                from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
-            elif force_full_sync:
-                log.info("[SYNC] Dashboard requested full history resync...")
-                from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
-            elif latest_time:
-                log.info("[SYNC] Latest trade: %s. Syncing incrementally...", latest_time)
-                from_date = latest_time
-            else:
-                log.info("[SYNC] No trades in DB. Syncing full history...")
-                from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                latest_time = None if force_full_sync else get_latest_trade_time(account_identity.get("accountKey", ""))
+                if force_full_sync:
+                    from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                    log.info("[SYNC] Full history for %s...", account.get("label"))
+                elif latest_time:
+                    from_date = latest_time
+                    log.info("[SYNC] %s from %s...", account.get("label"), latest_time)
+                else:
+                    from_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                    log.info("[SYNC] First history sync for %s...", account.get("label"))
 
-            # MetaTrader5's Python IPC connection is process-global and is not
-            # safe to use concurrently with the Replay worker.
-            with MT5_LOCK:
-                trades = fetch_deals(from_date)
-                # Cash-flow operations are sparse and deduped by MT5 ticket, so scan
-                # the full history every cycle to avoid missing withdrawals that do
-                # not line up neatly with the latest trade close time.
-                account_events = fetch_account_events(datetime(2000, 1, 1, tzinfo=timezone.utc))
-            inserted, skipped = sync_trades(trades)
-            events_inserted, events_skipped = sync_account_events(account_events)
-            if inserted > 0 or skipped > 0:
-                log.info("[SYNC] Complete -> inserted: %d, skipped (dup): %d", inserted, skipped)
-            else:
-                log.info("[SYNC] Complete -> no new trades")
-            if events_inserted > 0 or events_skipped > 0:
-                log.info("[CASHFLOW] Complete -> inserted: %d, skipped (dup): %d", events_inserted, events_skipped)
+                with MT5_LOCK:
+                    trades = fetch_deals(from_date)
+                    account_events = fetch_account_events(datetime(2000, 1, 1, tzinfo=timezone.utc))
+                inserted, skipped = sync_trades(trades)
+                events_inserted, events_skipped = sync_account_events(account_events)
+                report_account_status(account, "connected", synced=True)
+                log.info(
+                    "[SYNC] %s complete -> trades inserted: %d, existing: %d; cash flows inserted: %d, existing: %d",
+                    account.get("label"), inserted, skipped, events_inserted, events_skipped,
+                )
+            except Exception as e:
+                log.error("[SYNC] %s failed: %s", account.get("label", "Account"), e)
+                report_account_status(account, "error", e)
 
-            if force_full_sync and not full:
-                mark_resync_complete()
+        if force_full_sync and not full:
+            mark_resync_complete()
 
-        except Exception as e:
-            log.error("[SYNC] Unexpected error: %s", e)
+        if once:
+            process_replay_requests()
 
         if once:
             log.info("[STOP] One-shot sync complete.")

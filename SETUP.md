@@ -203,29 +203,37 @@ Copy-Item .env.example .env
 Edit the root `.env`:
 
 ```env
-MT5_LOGIN=YOUR_MT5_ACCOUNT_NUMBER
-MT5_PASSWORD=YOUR_MT5_PASSWORD
-MT5_SERVER=YOUR_BROKER_SERVER_NAME
-MT5_REQUIRE_REAL_ACCOUNT=false
-# Optional; leave blank when trades already contain the exact broker symbols.
-# MT5_SYMBOL_ALIASES=XAUUSD:XAUUSDm,USTEC:USTECm
-
+SYNC_SECRET=THE_SAME_LONG_RANDOM_VALUE_AS_BACKEND_SYNC_SECRET
 API_BASE=http://localhost:4000/api
 API_TIMEOUT=60
 SYNC_INTERVAL=60
-
-USER_EMAIL=YOUR_JOURNAL_OWNER_EMAIL
-USER_PASSWORD=YOUR_JOURNAL_OWNER_PASSWORD
 ```
 
-`USER_EMAIL` and `USER_PASSWORD` are the TradeJournal owner credentials, not necessarily the MT5 credentials.
+Set the same `SYNC_SECRET` in `backend/.env`, then add a dedicated, stable encryption master key:
+
+```env
+ACCOUNT_ENCRYPTION_KEY=YOUR_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
+```
+
+Never rotate or delete `ACCOUNT_ENCRYPTION_KEY` without first re-encrypting the stored accounts. It is the only value capable of decrypting broker credentials.
+
+Sign in to the journal, open **Accounts**, and add each MT5 account. Login, password, and server are encrypted in MongoDB and are never returned to the browser. Configure the real-account restriction and optional symbol aliases per account.
 
 Account classification is automatic:
 
 - Real MT5 account → `live`
 - Demo or contest account → `demo`
 
-Set `MT5_REQUIRE_REAL_ACCOUNT=true` if the sync process must refuse demo accounts.
+Enable **Reject demo logins** on an account if the sync process must refuse demo accounts.
+
+For an existing installation, keep the old `MT5_*` values only long enough to run:
+
+```powershell
+cd backend
+npm run migrate:trading-account
+```
+
+After the Accounts page shows the migrated account and its historical trade count, remove `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`, `USER_EMAIL`, and `USER_PASSWORD` from the root `.env`.
 
 ## 9. Install Python dependencies
 
@@ -248,7 +256,7 @@ If PowerShell blocks activation, either adjust the execution policy for the curr
 Make sure:
 
 - MT5 desktop is running.
-- MT5 is logged into the same account as `MT5_LOGIN`.
+- At least one enabled account exists on the Accounts page.
 - Automated trading/API access is not being blocked by the terminal.
 - Backend is reachable through `API_BASE`.
 - The owner account already exists.
@@ -261,12 +269,12 @@ python sync.py --once
 
 The logs should show:
 
-- Successful journal authentication
-- MT5 login and account type
+- Successful sync-agent authentication
+- Each enabled account's MT5 login result and account type
 - Number of closed deals found
 - Number inserted or skipped
 
-Open the Trades page and verify that imported trades show a Live or Demo badge.
+Open the Accounts page and verify that each valid account becomes **Connected**. Then open Trades and filter by that account.
 
 ## 11. Run continuous synchronization
 
@@ -355,7 +363,7 @@ Add a long random `JWT_SECRET` to `backend/.env` and restart the backend.
 
 ### MT5 authentication succeeds but no trades appear
 
-Confirm the account has closed deals and that `MT5_SERVER` exactly matches the broker server shown in MT5. Run `python sync.py --once` and inspect the logs.
+Confirm the account has closed deals and that the broker server saved on the **Accounts** page exactly matches MT5. Run `python sync.py --once` and inspect the account card plus logs.
 
 ### Replay says a recorded broker symbol is unavailable
 

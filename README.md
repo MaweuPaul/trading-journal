@@ -231,6 +231,10 @@ requirements.txt
 | `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
 | `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
 | `/api/auth/register` | POST | Create the owner only when the database contains zero users |
+| `/api/auth/sync-agent` | POST | Exchange the installation secret for a short-lived worker token |
+| `/api/trading-accounts` | GET / POST | List safe summaries or encrypt a new MT5 account |
+| `/api/trading-accounts/:id` | PATCH / DELETE | Update, disable, or archive a trading account |
+| `/api/sync-agent/trading-accounts` | GET | Supply decrypted enabled accounts only to the authenticated local worker |
 | `/api/playbooks` | GET / POST | List playbooks or publish a new strategy |
 | `/api/playbooks/evidence` | POST | Upload reusable visual evidence for a draft playbook stage |
 | `/api/playbooks/:playbookId` | PUT | Publish a new immutable version |
@@ -249,16 +253,14 @@ All endpoints require authentication except login and health checks. Export and 
 
 | Variable | Description |
 |---|---|
-| `MT5_LOGIN` | MT5 account number |
-| `MT5_PASSWORD` | MT5 password |
-| `MT5_SERVER` | Broker server name |
-| `MT5_REQUIRE_REAL_ACCOUNT` | Set `true` to reject demo accounts; default `false` syncs and labels both account types |
-| `MT5_SYMBOL_ALIASES` | Optional comma-separated mappings such as `XAUUSD:XAUUSDm`; the recorded trade symbol is always attempted first |
+| `SYNC_SECRET` | Installation secret matching the backend; obtains a short-lived sync-agent token |
 | `API_BASE` | Backend API URL, normally `http://localhost:4000/api` |
 | `API_TIMEOUT` | HTTP timeout in seconds |
 | `SYNC_INTERVAL` | Polling interval in seconds |
-| `USER_EMAIL` | Journal admin email used by the sync process |
-| `USER_PASSWORD` | Journal admin password used by the sync process |
+
+MT5 login, password, server, real/demo policy, and symbol aliases are configured on the **Accounts** page. Each credential field is encrypted independently with AES-256-GCM before MongoDB persistence. JWT authenticates browser and worker sessions; it is not used as encryption. The backend keeps one stable `ACCOUNT_ENCRYPTION_KEY`, while the local worker keeps only `SYNC_SECRET`.
+
+The worker loads every enabled account and switches the local MT5 terminal sequentially. Trades and cash-flow events carry the account's opaque database key, so filters and ticket deduplication remain isolated per account. Editing or archiving an account never rewrites its historical trades.
 
 ### MT5-first trade replay
 

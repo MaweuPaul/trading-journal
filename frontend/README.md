@@ -6,6 +6,8 @@ The frontend is a Next.js 15 application for building versioned visual strategy 
 
 Use the **Auto / Light / Dark** selector on the sign-in and sign-up screens or at the bottom of the authenticated sidebar. Auto follows the operating-system color preference. An explicit Light or Dark selection is saved in the browser and restored before the page paints, which avoids a flash of the wrong theme. Replay charts and their drawing tools use the same app-wide appearance setting.
 
+The **Accounts** route manages multiple MT5 accounts. It shows safe labels, connection health, balance, trade count, and agent activity without returning broker credentials to browser JavaScript. Advanced symbol aliases and the real-account restriction are configured independently per account.
+
 ## Rule-driven journal model
 
 The journal form is not hard-coded. A published playbook defines:

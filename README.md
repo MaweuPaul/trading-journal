@@ -11,6 +11,7 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Automatic MT5 Sync | Python script polls MT5 and sends closed deals and account events to the backend |
 | Live/Demo Classification | Detects the connected MT5 account mode, labels trades automatically, and supports account-type filtering |
 | Dashboard | Account balance, equity curve, cash-flow-adjusted growth, and headline metrics |
+| Light/Dark Appearance | Choose Auto, Light, or Dark from the sign-in screen or sidebar; Auto follows the device setting and the choice persists across refreshes |
 | Performance | Equity curve, drawdown, profit factor, expectancy, and R:R metrics |
 | Trading Calendar | Daily P&L heatmap with trade drill-down |
 | Analytics | Breakdowns by session, symbol, emotion, grade, weekday, setup, and tags |

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { href: '/',            label: 'Dashboard',    icon: LayoutDashboard },
@@ -28,7 +29,7 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
           const u = JSON.parse(uStr);
           setUserName(u.name || '');
           setUserEmail(u.email || '');
-        } catch (e) {}
+        } catch {}
       }
     }
   }, []);
@@ -71,6 +72,10 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
       </nav>
 
       <div className="sidebar-footer">
+        <div className="sidebar-theme">
+          <span>Appearance</span>
+          <ThemeToggle />
+        </div>
         {userEmail && (
           <div className="user-profile-widget">
             <div className="user-info">

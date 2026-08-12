@@ -66,14 +66,14 @@ const CustomTooltip = ({ active, payload }: any) => {
   const d = payload[0].payload;
   return (
     <div style={{
-      background: '#fff', border: '1px solid #e4e8f0',
+      background: 'var(--bg-surface)', border: '1px solid var(--border)',
       borderRadius: 10, padding: '12px 16px',
       boxShadow: '0 4px 20px rgba(15,22,41,0.1)',
     }}>
       <div style={{ color: '#8b95b0', fontSize: 11, marginBottom: 6 }}>
         {new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
       </div>
-      <div style={{ color: '#0f1629', fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600 }}>
+      <div style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600 }}>
         {fmtUSD(d.balance)}
       </div>
       <div style={{
@@ -480,7 +480,7 @@ export default function DashboardPage() {
             </button>
 
             {/* Time Range Selector Tool */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
               <select
                 value={String(groupBySetup)}
@@ -495,7 +495,7 @@ export default function DashboardPage() {
               </select>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
               <select
                 value={range}
@@ -678,7 +678,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e8f0" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                 <XAxis
                   dataKey="date"
                   tickFormatter={v => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -696,7 +696,7 @@ export default function DashboardPage() {
                   stroke="#3b82f6" strokeWidth={2.5}
                   fill="url(#balGrad)"
                   dot={false}
-                  activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }}
+                  activeDot={{ r: 5, fill: '#3b82f6', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -705,7 +705,7 @@ export default function DashboardPage() {
           <div className="empty-state" style={{ padding: '40px 20px' }}>
             <div className="empty-icon"><Activity size={22} /></div>
             <h3>No equity data yet</h3>
-            <p>Run <code style={{ background: '#f0f4ff', padding: '2px 6px', borderRadius: 4, fontSize: 11 }}>python sync.py</code> to pull trades from MT5</p>
+            <p>Run <code style={{ background: 'var(--bg-hover)', padding: '2px 6px', borderRadius: 4, fontSize: 11 }}>python sync.py</code> to pull trades from MT5</p>
           </div>
         )}
       </div>

@@ -36,7 +36,7 @@ function PnLTooltip({ active, payload }: any) {
   const pnl = d.pnl ?? payload[0].value;
   return (
     <div style={{
-      background: '#fff', border: '1px solid #e4e8f0',
+      background: 'var(--bg-surface)', border: '1px solid var(--border)',
       borderRadius: 10, padding: '10px 14px',
       boxShadow: '0 4px 16px rgba(15,22,41,0.1)',
     }}>
@@ -62,7 +62,7 @@ function BarGroup({ data, dataKey = 'pnl', labelKey = 'symbol' }: {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e4e8f0" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
         <XAxis
           dataKey={labelKey}
           tick={{ fill: '#8b95b0', fontSize: 10 }}
@@ -159,7 +159,7 @@ export default function StatsPage() {
             <p>Deconstruct performance distributions and session correlations</p>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
               <select
                 value={String(groupBySetup)}
@@ -173,7 +173,7 @@ export default function StatsPage() {
                 <option value="true">🔁 Setups (Grouped Re-Entries)</option>
               </select>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
               <select
                 value={range}
@@ -425,7 +425,7 @@ export default function StatsPage() {
                   />
                   <Tooltip
                     formatter={(v: any) => [`$${Number(v).toFixed(2)}`, 'Volume']}
-                    contentStyle={{ background:'#fff', border:'1px solid #e4e8f0', borderRadius:10 }}
+                    contentStyle={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10 }}
                     itemStyle={{ color:'var(--text-primary)' }}
                   />
                 </PieChart>

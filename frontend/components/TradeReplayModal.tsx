@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
+import { useTheme } from './ThemeProvider';
 
 const API = '/api';
 
@@ -145,6 +146,7 @@ function ReplayDiagnostics({ debug }: { debug: ReplayDebug }) {
 }
 
 export default function TradeReplayModal({ tradeId, tradeSummary, initialInterval, initialJournalPhase, onIntervalChange, onJournalPhaseChange, onClose, onSaved }: Props) {
+  const { resolvedTheme } = useTheme();
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -503,14 +505,17 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
   useEffect(() => {
     if (!replayData || !chartContainerRef.current) return;
+    const chartTheme = resolvedTheme === 'dark'
+      ? { background: '#0d1117', text: '#8e9bb0', grid: '#1f2a3c' }
+      : { background: '#f8fafc', text: '#5b6780', grid: '#dfe5ee' };
     const el = chartContainerRef.current;
     const chart = createChart(el, {
       width: el.clientWidth, height: el.clientHeight,
-      layout: { background: { type: ColorType.Solid, color: '#0d1117' }, textColor: '#8b95b0' },
-      grid: { vertLines: { color: '#1a2035' }, horzLines: { color: '#1a2035' } },
+      layout: { background: { type: ColorType.Solid, color: chartTheme.background }, textColor: chartTheme.text },
+      grid: { vertLines: { color: chartTheme.grid }, horzLines: { color: chartTheme.grid } },
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { borderColor: '#1a2035', timeVisible: true, secondsVisible: false },
-      rightPriceScale: { borderColor: '#1a2035' },
+      timeScale: { borderColor: chartTheme.grid, timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: chartTheme.grid },
     });
     chartRef.current = chart;
     const series = chart.addSeries(CandlestickSeries, {
@@ -540,7 +545,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     ro.observe(el);
     chart.timeScale().subscribeVisibleTimeRangeChange(redrawAnnotations);
     return () => { ro.disconnect(); chart.timeScale().unsubscribeVisibleTimeRangeChange(redrawAnnotations); markersRef.current?.detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; markersRef.current = null; };
-  }, [replayData]);
+  }, [replayData, resolvedTheme]);
 
   useEffect(() => {
     if (!replayData || !seriesRef.current || !markersRef.current) return;
@@ -569,7 +574,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       });
     });
     markersRef.current.setMarkers(markers);
-  }, [replayIdx, replayData, selectedInterval, timelineEvents]);
+  }, [replayIdx, replayData, resolvedTheme, selectedInterval, timelineEvents]);
 
   useEffect(() => {
     if (!replayData || !pendingTimelineNavigationRef.current) return;
@@ -617,7 +622,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const revealedTime = Number(replayData?.candles[Math.min(replayIdx, (replayData?.candles.length || 1) - 1)]?.time || Number.POSITIVE_INFINITY);
     const selected = (id: string) => id === selectedAnnotationId;
     const drawSelection = (x: number, y: number, width: number, height: number) => {
-      ctx.save(); ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.save(); ctx.strokeStyle = resolvedTheme === 'dark' ? '#f8fafc' : '#0f172a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       ctx.strokeRect(x - 4, y - 4, width + 8, height + 8); ctx.restore();
     };
     const drawArrowHead = (x1: number, y1: number, x2: number, y2: number, color: string) => {
@@ -673,7 +678,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       if (x == null || y == null) continue;
       ctx.save(); ctx.font = '600 12px sans-serif';
       const width = ctx.measureText(note.text).width;
-      ctx.fillStyle = '#0a0d14dd'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
+      ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0d14dd' : '#ffffffee'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
       ctx.strokeStyle = note.color; ctx.strokeRect(x - 5, y - 17, width + 10, 23);
       ctx.fillStyle = note.color; ctx.fillText(note.text, x, y); ctx.restore();
       if (selected(note.id)) drawSelection(x - 5, y - 17, width + 10, 23);
@@ -688,12 +693,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         image = new window.Image(); image.crossOrigin = 'anonymous'; image.onload = () => redrawCanvasRef.current(); image.src = pin.url;
         imageCacheRef.current.set(pin.url, image);
       }
-      ctx.save(); ctx.fillStyle = '#0a0e14ee'; ctx.strokeStyle = pin.color; ctx.lineWidth = selected(pin.id) ? 2.5 : 1.5;
+      ctx.save(); ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0e14ee' : '#ffffffee'; ctx.strokeStyle = pin.color; ctx.lineWidth = selected(pin.id) ? 2.5 : 1.5;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cardX, cardY + 58); ctx.stroke();
       ctx.fillRect(cardX, cardY, 100, 66);
       if (image.complete && image.naturalWidth > 0) ctx.drawImage(image, cardX + 3, cardY + 3, 94, 48);
-      else { ctx.fillStyle = '#182033'; ctx.fillRect(cardX + 3, cardY + 3, 94, 48); }
-      ctx.strokeRect(cardX, cardY, 100, 66); ctx.fillStyle = '#cbd5e1'; ctx.font = '600 9px sans-serif';
+      else { ctx.fillStyle = resolvedTheme === 'dark' ? '#182033' : '#e8edf5'; ctx.fillRect(cardX + 3, cardY + 3, 94, 48); }
+      ctx.strokeRect(cardX, cardY, 100, 66); ctx.fillStyle = resolvedTheme === 'dark' ? '#cbd5e1' : '#334155'; ctx.font = '600 9px sans-serif';
       ctx.fillText((pin.caption || 'Chart evidence').slice(0, 18), cardX + 5, cardY + 61); ctx.restore();
       if (selected(pin.id)) drawSelection(cardX, cardY, 100, 66);
     }
@@ -705,7 +710,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       else { ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)); ctx.fill(); ctx.stroke(); }
       ctx.restore();
     }
-  }, [drawingTool, drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts, rectColor, replayData, replayIdx, selectedAnnotationId]);
+  }, [drawingTool, drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts, rectColor, replayData, replayIdx, resolvedTheme, selectedAnnotationId]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import ThemeProvider from "@/components/ThemeProvider";
+import { AuthThemeToggle } from "@/components/ThemeToggle";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -11,15 +13,20 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const themeScript = `(() => { try { const saved = localStorage.getItem('trade-journal-theme') || 'system'; const resolved = saved === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : saved; document.documentElement.dataset.theme = resolved; document.documentElement.style.colorScheme = resolved; } catch (_) {} })();`;
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
       <body>
-        <div className="app-shell">
-          <Sidebar />
-          <main className="main-content">
-            {children}
-          </main>
-        </div>
+        <ThemeProvider>
+          <AuthThemeToggle />
+          <div className="app-shell">
+            <Sidebar />
+            <main className="main-content">
+              {children}
+            </main>
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -463,7 +463,7 @@ export default function CalendarPage() {
                         <div 
                           key={t._id} 
                           className="session-summary-row"
-                          style={{ borderLeft: `3px solid ${isProfit ? 'var(--green)' : 'var(--red)'}`, background: '#fff' }}
+                          style={{ borderLeft: `3px solid ${isProfit ? 'var(--green)' : 'var(--red)'}`, background: 'var(--bg-surface)' }}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>

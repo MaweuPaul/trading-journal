@@ -4,6 +4,7 @@ import {
   X, Play, Pause, SkipBack, SkipForward,
   Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
   BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
+  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -36,7 +37,15 @@ interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; 
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
-type ReplayAnnotation = (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' }) | (DrawnText & { type: 'text' });
+interface DrawnHorizontal { id: string; time: number; price: number; color: string; }
+interface DrawnArrow { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
+interface DrawnImage { id: string; time: number; price: number; url: string; caption: string; screenshotId: string; color: string; }
+type ReplayAnnotation =
+  | (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' })
+  | (DrawnHorizontal & { type: 'horizontal' }) | (DrawnArrow & { type: 'arrow' })
+  | (DrawnText & { type: 'text' }) | (DrawnImage & { type: 'image' });
+type DrawingTool = 'none' | 'select' | 'rect' | 'line' | 'horizontal' | 'arrow' | 'text' | 'image' | 'event';
+interface AnnotationHistory { rects: DrawnRect[]; lines: DrawnLine[]; horizontals: DrawnHorizontal[]; arrows: DrawnArrow[]; texts: DrawnText[]; images: DrawnImage[]; }
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
   visibilityScope?: 'timeframe' | 'all';
@@ -128,6 +137,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [replayDebug, setReplayDebug] = useState<ReplayDebug | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const annotationInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -137,11 +147,17 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [drawingTool, setDrawingTool] = useState<'none' | 'rect' | 'line' | 'text' | 'event'>('none');
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>('none');
   const [rectColor, setRectColor] = useState(RECT_COLORS[0]);
   const [drawnRects, setDrawnRects] = useState<DrawnRect[]>([]);
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
+  const [drawnHorizontals, setDrawnHorizontals] = useState<DrawnHorizontal[]>([]);
+  const [drawnArrows, setDrawnArrows] = useState<DrawnArrow[]>([]);
   const [drawnTexts, setDrawnTexts] = useState<DrawnText[]>([]);
+  const [drawnImages, setDrawnImages] = useState<DrawnImage[]>([]);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState('');
+  const [pendingImage, setPendingImage] = useState<Omit<DrawnImage, 'id' | 'time' | 'price' | 'color'> | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [annotationText, setAnnotationText] = useState('');
   const [annotationSaveState, setAnnotationSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
   const [annotationSaveError, setAnnotationSaveError] = useState('');
@@ -149,7 +165,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [showAnnotationList, setShowAnnotationList] = useState(false);
   const annotationBaselineRef = useRef('');
   const activeAnnotationKeyRef = useRef('');
-  const annotationHistoryRef = useRef<Array<{ rects: DrawnRect[]; lines: DrawnLine[]; texts: DrawnText[] }>>([]);
+  const annotationHistoryRef = useRef<AnnotationHistory[]>([]);
   const [annotationHistoryDepth, setAnnotationHistoryDepth] = useState(0);
   const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [timelineEvents, setTimelineEvents] = useState<ReplayTimelineEvent[]>([]);
@@ -179,6 +195,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [notes, setNotes] = useState('');
   const [emotion, setEmotion] = useState('');
   const [grade, setGrade] = useState('');
@@ -208,13 +225,18 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const allAnnotations = useMemo<ReplayAnnotation[]>(() => [
     ...drawnRects.map(annotation => ({ ...annotation, type: 'rect' as const })),
     ...drawnLines.map(annotation => ({ ...annotation, type: 'line' as const })),
+    ...drawnHorizontals.map(annotation => ({ ...annotation, type: 'horizontal' as const })),
+    ...drawnArrows.map(annotation => ({ ...annotation, type: 'arrow' as const })),
     ...drawnTexts.map(annotation => ({ ...annotation, type: 'text' as const })),
-  ], [drawnLines, drawnRects, drawnTexts]);
+    ...drawnImages.map(annotation => ({ ...annotation, type: 'image' as const })),
+  ], [drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts]);
   const annotationKey = `${tradeId}:${selectedInterval}`;
-  activeAnnotationKeyRef.current = annotationKey;
+  useEffect(() => { activeAnnotationKeyRef.current = annotationKey; }, [annotationKey]);
   const pushAnnotationHistory = () => {
     annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
-      rects: drawnRects.map(item => ({ ...item })), lines: drawnLines.map(item => ({ ...item })), texts: drawnTexts.map(item => ({ ...item })),
+      rects: drawnRects.map(item => ({ ...item })), lines: drawnLines.map(item => ({ ...item })),
+      horizontals: drawnHorizontals.map(item => ({ ...item })), arrows: drawnArrows.map(item => ({ ...item })),
+      texts: drawnTexts.map(item => ({ ...item })), images: drawnImages.map(item => ({ ...item })),
     }];
     setAnnotationHistoryDepth(annotationHistoryRef.current.length);
   };
@@ -229,9 +251,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Could not load chart annotations');
         const annotations = Array.isArray(body.annotations) ? body.annotations as ReplayAnnotation[] : [];
-        setDrawnRects(annotations.filter(item => item.type === 'rect').map(({ type: _type, ...item }) => item as DrawnRect));
-        setDrawnLines(annotations.filter(item => item.type === 'line').map(({ type: _type, ...item }) => item as DrawnLine));
-        setDrawnTexts(annotations.filter(item => item.type === 'text').map(({ type: _type, ...item }) => item as DrawnText));
+        setDrawnRects(annotations.filter(item => item.type === 'rect').map(item => ({ ...item }) as DrawnRect));
+        setDrawnLines(annotations.filter(item => item.type === 'line').map(item => ({ ...item }) as DrawnLine));
+        setDrawnHorizontals(annotations.filter(item => item.type === 'horizontal').map(item => ({ ...item }) as DrawnHorizontal));
+        setDrawnArrows(annotations.filter(item => item.type === 'arrow').map(item => ({ ...item }) as DrawnArrow));
+        setDrawnTexts(annotations.filter(item => item.type === 'text').map(item => ({ ...item }) as DrawnText));
+        setDrawnImages(annotations.filter(item => item.type === 'image').map(item => ({ ...item }) as DrawnImage));
+        setSelectedAnnotationId(''); setPendingImage(null);
         annotationHistoryRef.current = [];
         setAnnotationHistoryDepth(0);
         annotationBaselineRef.current = JSON.stringify(annotations);
@@ -532,7 +558,21 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (!canvas || !chart || !series) return;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const revealedTime = Number(replayData?.candles[Math.min(replayIdx, (replayData?.candles.length || 1) - 1)]?.time || Number.POSITIVE_INFINITY);
+    const selected = (id: string) => id === selectedAnnotationId;
+    const drawSelection = (x: number, y: number, width: number, height: number) => {
+      ctx.save(); ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x - 4, y - 4, width + 8, height + 8); ctx.restore();
+    };
+    const drawArrowHead = (x1: number, y1: number, x2: number, y2: number, color: string) => {
+      const angle = Math.atan2(y2 - y1, x2 - x1); const size = 10;
+      ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    };
     for (const r of drawnRects) {
+      if (Math.max(r.time1, r.time2) > revealedTime) continue;
       const x1 = chart.timeScale().timeToCoordinate(r.time1 as UTCTimestamp);
       const x2 = chart.timeScale().timeToCoordinate(r.time2 as UTCTimestamp);
       const y1 = series.priceToCoordinate(r.price1); const y2 = series.priceToCoordinate(r.price2);
@@ -540,15 +580,38 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       ctx.save(); ctx.strokeStyle = r.color; ctx.fillStyle = r.color + '22'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1));
       ctx.fill(); ctx.stroke(); ctx.restore();
+      if (selected(r.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
     }
     for (const line of drawnLines) {
+      if (Math.max(line.time1, line.time2) > revealedTime) continue;
       const x1 = chart.timeScale().timeToCoordinate(line.time1 as UTCTimestamp);
       const x2 = chart.timeScale().timeToCoordinate(line.time2 as UTCTimestamp);
       const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
       if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
       ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+      if (selected(line.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
+    }
+    for (const level of drawnHorizontals) {
+      if (level.time > revealedTime) continue;
+      const x = chart.timeScale().timeToCoordinate(level.time as UTCTimestamp); const y = series.priceToCoordinate(level.price);
+      if (x == null || y == null) continue;
+      ctx.save(); ctx.strokeStyle = level.color; ctx.lineWidth = 1.5; ctx.setLineDash([7, 4]);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      ctx.fillStyle = level.color; ctx.font = '700 10px sans-serif'; ctx.fillText(level.price.toFixed(2), x + 6, y - 6); ctx.restore();
+      if (selected(level.id)) drawSelection(x, y - 2, Math.max(2, canvas.width - x), 4);
+    }
+    for (const arrow of drawnArrows) {
+      if (Math.max(arrow.time1, arrow.time2) > revealedTime) continue;
+      const x1 = chart.timeScale().timeToCoordinate(arrow.time1 as UTCTimestamp);
+      const x2 = chart.timeScale().timeToCoordinate(arrow.time2 as UTCTimestamp);
+      const y1 = series.priceToCoordinate(arrow.price1); const y2 = series.priceToCoordinate(arrow.price2);
+      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+      ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+      drawArrowHead(x1, y1, x2, y2, arrow.color);
+      if (selected(arrow.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
     }
     for (const note of drawnTexts) {
+      if (note.time > revealedTime) continue;
       const x = chart.timeScale().timeToCoordinate(note.time as UTCTimestamp);
       const y = series.priceToCoordinate(note.price);
       if (x == null || y == null) continue;
@@ -557,29 +620,97 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       ctx.fillStyle = '#0a0d14dd'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
       ctx.strokeStyle = note.color; ctx.strokeRect(x - 5, y - 17, width + 10, 23);
       ctx.fillStyle = note.color; ctx.fillText(note.text, x, y); ctx.restore();
+      if (selected(note.id)) drawSelection(x - 5, y - 17, width + 10, 23);
+    }
+    for (const pin of drawnImages) {
+      if (pin.time > revealedTime) continue;
+      const x = chart.timeScale().timeToCoordinate(pin.time as UTCTimestamp); const y = series.priceToCoordinate(pin.price);
+      if (x == null || y == null) continue;
+      const cardX = Math.min(canvas.width - 110, Math.max(8, x + 10)); const cardY = Math.max(8, y - 78);
+      let image = imageCacheRef.current.get(pin.url);
+      if (!image) {
+        image = new window.Image(); image.crossOrigin = 'anonymous'; image.onload = () => redrawCanvasRef.current(); image.src = pin.url;
+        imageCacheRef.current.set(pin.url, image);
+      }
+      ctx.save(); ctx.fillStyle = '#0a0e14ee'; ctx.strokeStyle = pin.color; ctx.lineWidth = selected(pin.id) ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cardX, cardY + 58); ctx.stroke();
+      ctx.fillRect(cardX, cardY, 100, 66);
+      if (image.complete && image.naturalWidth > 0) ctx.drawImage(image, cardX + 3, cardY + 3, 94, 48);
+      else { ctx.fillStyle = '#182033'; ctx.fillRect(cardX + 3, cardY + 3, 94, 48); }
+      ctx.strokeRect(cardX, cardY, 100, 66); ctx.fillStyle = '#cbd5e1'; ctx.font = '600 9px sans-serif';
+      ctx.fillText((pin.caption || 'Chart evidence').slice(0, 18), cardX + 5, cardY + 61); ctx.restore();
+      if (selected(pin.id)) drawSelection(cardX, cardY, 100, 66);
     }
     if (currentPreview.current) {
       const { x1, y1, x2, y2 } = currentPreview.current;
       ctx.save(); ctx.strokeStyle = rectColor; ctx.fillStyle = rectColor + '18'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
       ctx.beginPath();
-      if (drawingTool === 'line') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+      if (drawingTool === 'line' || drawingTool === 'arrow') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); if (drawingTool === 'arrow') drawArrowHead(x1, y1, x2, y2, rectColor); }
       else { ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)); ctx.fill(); ctx.stroke(); }
       ctx.restore();
     }
-  }, [drawingTool, drawnLines, drawnRects, drawnTexts, rectColor]);
+  }, [drawingTool, drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts, rectColor, replayData, replayIdx, selectedAnnotationId]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
+
+  const findAnnotationAt = (x: number, y: number) => {
+    const chart = chartRef.current, series = seriesRef.current, canvas = canvasRef.current;
+    if (!chart || !series || !canvas) return null;
+    const distanceToSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
+      const dx = x2 - x1, dy = y2 - y1; if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    };
+    for (const annotation of [...allAnnotations].reverse()) {
+      if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'horizontal') {
+        const ax = chart.timeScale().timeToCoordinate(annotation.time as UTCTimestamp); const ay = series.priceToCoordinate(annotation.price);
+        if (ax == null || ay == null) continue;
+        if (annotation.type === 'horizontal' && x >= ax - 8 && Math.abs(y - ay) <= 8) return annotation;
+        if (annotation.type === 'image') {
+          const cardX = Math.min(canvas.width - 110, Math.max(8, ax + 10)); const cardY = Math.max(8, ay - 78);
+          if ((x >= cardX - 5 && x <= cardX + 105 && y >= cardY - 5 && y <= cardY + 71) || Math.hypot(x - ax, y - ay) <= 12) return annotation;
+        }
+        if (annotation.type === 'text') {
+          const ctx = canvas.getContext('2d'); if (!ctx) continue; ctx.font = '600 12px sans-serif'; const width = ctx.measureText(annotation.text).width;
+          if (x >= ax - 9 && x <= ax + width + 9 && y >= ay - 21 && y <= ay + 7) return annotation;
+        }
+        continue;
+      }
+      const x1 = chart.timeScale().timeToCoordinate(annotation.time1 as UTCTimestamp); const x2 = chart.timeScale().timeToCoordinate(annotation.time2 as UTCTimestamp);
+      const y1 = series.priceToCoordinate(annotation.price1); const y2 = series.priceToCoordinate(annotation.price2);
+      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+      if (annotation.type === 'rect') {
+        const left = Math.min(x1, x2), right = Math.max(x1, x2), top = Math.min(y1, y2), bottom = Math.max(y1, y2);
+        if (x >= left - 7 && x <= right + 7 && y >= top - 7 && y <= bottom + 7) return annotation;
+      } else if (distanceToSegment(x, y, x1, y1, x2, y2) <= 9) return annotation;
+    }
+    return null;
+  };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (drawingTool === 'none') return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (drawingTool === 'select') { setSelectedAnnotationId(findAnnotationAt(x, y)?.id || ''); return; }
     if (drawingTool === 'event') {
       const chart = chartRef.current, series = seriesRef.current;
       if (!chart || !series) return;
-      const time = chart.timeScale().coordinateToTime(e.clientX - r.left);
-      const price = series.coordinateToPrice(e.clientY - r.top);
+      const time = chart.timeScale().coordinateToTime(x);
+      const price = series.coordinateToPrice(y);
       if (time != null && price != null) {
         setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setEventLocation({ time: Number(time), price });
+      }
+      return;
+    }
+    if (drawingTool === 'horizontal' || drawingTool === 'image') {
+      const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
+      const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
+      if (time == null || price == null || (drawingTool === 'image' && !pendingImage)) return;
+      pushAnnotationHistory(); setSelectedAnnotationId('');
+      if (drawingTool === 'horizontal') setDrawnHorizontals(current => [...current, { id: `horizontal-${Date.now()}`, time: Number(time), price, color: rectColor }]);
+      else if (pendingImage) {
+        setDrawnImages(current => [...current, { id: `image-${Date.now()}`, time: Number(time), price, color: rectColor, ...pendingImage }]);
+        setPendingImage(null); setDrawingTool('select');
       }
       return;
     }
@@ -587,7 +718,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const chart = chartRef.current, series = seriesRef.current;
       const text = annotationText.trim();
       if (!chart || !series || !text) return;
-      const x = e.clientX - r.left, y = e.clientY - r.top;
       const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
       if (time != null && price != null) {
         pushAnnotationHistory();
@@ -597,20 +727,20 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       }
       return;
     }
-    drawStart.current = { x: e.clientX - r.left, y: e.clientY - r.top };
+    drawStart.current = { x, y };
   };
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!['rect', 'line'].includes(drawingTool) || !drawStart.current) return;
+    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
     redrawCanvas();
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!['rect', 'line'].includes(drawingTool) || !drawStart.current) return;
+    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
     const r = canvas.getBoundingClientRect(); const x2 = e.clientX - r.left; const y2 = e.clientY - r.top;
-    if (Math.abs(x2 - drawStart.current.x) > 4 && Math.abs(y2 - drawStart.current.y) > 4) {
+    if (Math.hypot(x2 - drawStart.current.x, y2 - drawStart.current.y) > 6) {
       const t1 = chart.timeScale().coordinateToTime(drawStart.current.x);
       const t2 = chart.timeScale().coordinateToTime(x2);
       const p1 = series.coordinateToPrice(drawStart.current.y);
@@ -619,10 +749,38 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         pushAnnotationHistory();
         const shape = { id: `${drawingTool}-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor };
         if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
+        else if (drawingTool === 'arrow') setDrawnArrows(prev => [...prev, shape]);
         else setDrawnRects(prev => [...prev, shape]);
       }
     }
     drawStart.current = null; currentPreview.current = null; redrawCanvas();
+  };
+
+  const handleReplayImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
+    if (file.size > 8 * 1024 * 1024) { alert('Please keep chart images under 8MB.'); return; }
+    const token = localStorage.getItem('token'); if (!token) return;
+    setUploadingImage(true); setPendingImage(null);
+    try {
+      const imageData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Could not read the image')); reader.readAsDataURL(file);
+      });
+      const caption = file.name.replace(/\.[^.]+$/, '').slice(0, 160) || 'Replay chart evidence';
+      const response = await fetch(`${API}/trades/${tradeId}/screenshots`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ imageData, caption: `Replay evidence: ${caption}` }),
+      });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not upload chart image');
+      const screenshots = Array.isArray(body.screenshots) ? body.screenshots : [];
+      const uploaded = screenshots[screenshots.length - 1];
+      if (!uploaded?.url) throw new Error('The image uploaded but no image URL was returned');
+      setPendingImage({ url: String(uploaded.url), caption, screenshotId: String(uploaded._id || uploaded.publicId || '') });
+      setDrawingTool('image'); setSelectedAnnotationId('');
+    } catch (uploadError) {
+      alert(uploadError instanceof Error ? uploadError.message : 'Could not upload chart image'); setDrawingTool('none');
+    } finally { setUploadingImage(false); }
   };
 
   const handleSave = async () => {
@@ -652,7 +810,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   };
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
+        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setDrawingTool('none');
+      } else onClose();
+    };
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     document.body.classList.add('replay-open');
@@ -663,7 +826,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       document.body.classList.remove('replay-open');
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [drawingTool, eventLocation, onClose, pendingImage, selectedAnnotationId]);
 
   const totalCandles = replayData?.candles.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
@@ -682,7 +845,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const switchTimeframe = (interval: string) => {
     if (interval === selectedInterval) return;
     setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
-    setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null;
+    setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnImages([]);
+    setSelectedAnnotationId(''); setPendingImage(null); currentPreview.current = null;
     annotationHistoryRef.current = []; setAnnotationHistoryDepth(0);
     setSelectedInterval(interval);
     onIntervalChange?.(interval);
@@ -691,17 +855,35 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const previous = annotationHistoryRef.current.pop();
     if (!previous) return;
     setAnnotationHistoryDepth(annotationHistoryRef.current.length);
-    setDrawnRects(previous.rects); setDrawnLines(previous.lines); setDrawnTexts(previous.texts);
+    setDrawnRects(previous.rects); setDrawnLines(previous.lines); setDrawnHorizontals(previous.horizontals); setDrawnArrows(previous.arrows); setDrawnTexts(previous.texts); setDrawnImages(previous.images);
+    setSelectedAnnotationId('');
   };
   const deleteAnnotation = (annotation: ReplayAnnotation) => {
     pushAnnotationHistory();
     if (annotation.type === 'rect') setDrawnRects(current => current.filter(item => item.id !== annotation.id));
     if (annotation.type === 'line') setDrawnLines(current => current.filter(item => item.id !== annotation.id));
+    if (annotation.type === 'horizontal') setDrawnHorizontals(current => current.filter(item => item.id !== annotation.id));
+    if (annotation.type === 'arrow') setDrawnArrows(current => current.filter(item => item.id !== annotation.id));
     if (annotation.type === 'text') setDrawnTexts(current => current.filter(item => item.id !== annotation.id));
+    if (annotation.type === 'image') setDrawnImages(current => current.filter(item => item.id !== annotation.id));
+    setSelectedAnnotationId(current => current === annotation.id ? '' : current);
   };
+  const deleteSelectedAnnotation = () => {
+    const annotation = allAnnotations.find(item => item.id === selectedAnnotationId); if (annotation) deleteAnnotation(annotation);
+  };
+  useEffect(() => {
+    const onDelete = (event: KeyboardEvent) => {
+      if (!selectedAnnotationId || !['Delete', 'Backspace'].includes(event.key)) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault(); deleteSelectedAnnotation();
+    };
+    window.addEventListener('keydown', onDelete); return () => window.removeEventListener('keydown', onDelete);
+  });
   const clearAnnotations = () => {
     if (allAnnotations.length === 0 || !window.confirm(`Clear all ${allAnnotations.length} annotations from ${selectedInterval}?`)) return;
-    pushAnnotationHistory(); setDrawnRects([]); setDrawnLines([]); setDrawnTexts([]); currentPreview.current = null; redrawCanvas();
+    pushAnnotationHistory(); setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnImages([]);
+    setSelectedAnnotationId(''); currentPreview.current = null; redrawCanvas();
   };
   const saveTimelineEvent = () => {
     if (!eventLocation || !eventDraft.title.trim()) return;
@@ -777,13 +959,18 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         </div>
         <div className="replay-toolbar-divider" />
         <div className="replay-tool-group">
-          <span className="replay-tool-group-label">Draw</span>
+          <span className="replay-tool-group-label">Annotate</span>
+          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => { setDrawingTool(tool => tool === 'select' ? 'none' : 'select'); setPendingImage(null); }} title="Select an annotation to inspect or delete"><MousePointer2 size={16} /> Select</button>
           <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'rect' ? 'none' : 'rect')} title="Draw rectangle zones"><Square size={16} /> Zone</button>
           <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'line' ? 'none' : 'line')} title="Draw a trend line"><Minus size={16} /> Line</button>
+          <button type="button" aria-pressed={drawingTool === 'horizontal'} className={`replay-tool-btn${drawingTool === 'horizontal' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'horizontal' ? 'none' : 'horizontal')} title="Place a horizontal support or resistance level"><MoveHorizontal size={16} /> Level</button>
+          <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'arrow' ? 'none' : 'arrow')} title="Draw a directional arrow"><ArrowUpRight size={16} /> Arrow</button>
           <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => setDrawingTool(t => t === 'text' ? 'none' : 'text')} title="Place text on the chart"><TypeIcon size={16} /> Text</button>
+          <input ref={imageInputRef} className="replay-hidden-file" type="file" accept="image/*" onChange={handleReplayImageUpload} />
+          <button type="button" disabled={uploadingImage} aria-pressed={drawingTool === 'image'} className={`replay-tool-btn${drawingTool === 'image' ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload an image and pin it to a candle and price"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Image'}</button>
           <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn${drawingTool === 'event' ? ' active' : ''}`} onClick={() => { setDrawingTool(tool => tool === 'event' ? 'none' : 'event'); setEventLocation(null); setEditingEventId(''); }} title="Attach a journal event to a candle"><MapPin size={16} /> Event</button>
         </div>
-        {['rect', 'line', 'text'].includes(drawingTool) && <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
+        {['rect', 'line', 'horizontal', 'arrow', 'text', 'image'].includes(drawingTool) && <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
           <span className="replay-tool-group-label">Color</span>
           {RECT_COLORS.map(color => <button type="button" key={color} aria-label={`Use drawing color ${color}`} aria-pressed={color === rectColor} className={color === rectColor ? 'active' : ''} onClick={() => setRectColor(color)} style={{ '--replay-swatch': color } as React.CSSProperties} />)}
         </div>}
@@ -791,7 +978,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
         <div className="replay-tool-group replay-tool-actions">
           <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
-          {(drawnRects.length + drawnLines.length + drawnTexts.length) > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Notes ({allAnnotations.length})</button>}
+          <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} title="Delete the selected annotation (Delete)"><Trash2 size={16} /> Delete</button>
+          {allAnnotations.length > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Objects ({allAnnotations.length})</button>}
         </div>
       </div>
 
@@ -810,6 +998,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
                 onChange={event => setAnnotationText(event.target.value)}
               />
               <span>{annotationText.trim() ? 'Click the chart to place it' : 'Type your note first'}</span>
+            </div>
+          )}
+          {drawingTool === 'image' && pendingImage && (
+            <div className="replay-chart-image-placer" role="status">
+              <ImagePlus size={16} /><div><strong>Image ready to place</strong><input aria-label="Image caption" maxLength={180} value={pendingImage.caption} onChange={event => setPendingImage(current => current ? { ...current, caption: event.target.value } : current)} /><span>Describe the evidence, then click the candle and price where it belongs.</span></div>
+              <button type="button" onClick={() => { setPendingImage(null); setDrawingTool('none'); }}>Cancel</button>
             </div>
           )}
           {eventLocation && (
@@ -841,16 +1035,19 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             <div className="replay-annotation-manager" aria-label="Chart annotations">
               <div className="replay-annotation-manager-head"><strong>Saved annotations</strong><button type="button" onClick={clearAnnotations}>Clear all</button></div>
               {allAnnotations.map((annotation, index) => (
-                <div className="replay-annotation-row" key={annotation.id}>
-                  <i style={{ background: annotation.color }} />
-                  <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Line' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : ` ${index + 1}`}</span>
-                  <button type="button" onClick={() => deleteAnnotation(annotation)} aria-label={`Delete ${annotation.type} annotation`}><Trash2 size={13} /></button>
+                <div className={`replay-annotation-row${selectedAnnotationId === annotation.id ? ' selected' : ''}`} key={annotation.id}>
+                  <button type="button" className="replay-annotation-select" aria-pressed={selectedAnnotationId === annotation.id} onClick={() => { setSelectedAnnotationId(annotation.id); setDrawingTool('select'); }}>
+                    <i style={{ background: annotation.color }} />
+                    <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Trend line' : annotation.type === 'horizontal' ? 'Level' : annotation.type === 'arrow' ? 'Arrow' : annotation.type === 'image' ? 'Image' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : annotation.type === 'image' ? ` — ${annotation.caption || 'Chart evidence'}` : ` ${index + 1}`}</span>
+                  </button>
+                  <button type="button" onClick={click => { click.stopPropagation(); deleteAnnotation(annotation); }} aria-label={`Delete ${annotation.type} annotation`}><Trash2 size={13} /></button>
                 </div>
               ))}
             </div>
           )}
           <canvas ref={canvasRef}
-            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}`}
+            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}`}
+            aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
             onMouseLeave={() => { if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
           {loading && (

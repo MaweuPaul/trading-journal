@@ -20,11 +20,11 @@ Rule purpose can be Observation, Confirmation, Entry trigger, Decision gate, Inv
 
 The Answer type selector contains only the primitive values Yes/No, Number, Text, Single choice, and Multiple choice. Semantic controls are configured separately as formats: Number supports Percentage, Currency, Price, Duration, R:R, and Rating; Text supports Short text, Long explanation, Date, and Time.
 
-The Trades drawer includes a full-screen **Replay** workspace. It requests only the needed broker window from the local MT5 sync agent and polls until the backend's short-lived cache receives it; candle history is not stored on the trade. The screen reveals candles one by one, marks entry and exit, supports temporary rectangle zones, and saves notes, emotion, grade, and tags. An explicitly labelled Twelve Data fallback is available when MT5 history is unavailable.
+The Trades drawer includes a full-screen **Replay** workspace. It requests only the needed broker window from the local MT5 sync agent and polls until the backend's short-lived cache receives it; candle history is not stored on the trade. The screen reveals candles one by one, marks entry and exit, and saves notes, emotion, grade, and tags. An explicitly labelled Twelve Data fallback is available when MT5 history is unavailable.
 
 Replay timeline events default to **This timeframe** so chart-specific observations do not clutter every chart. Choose **All timeframes** for a trade-level decision or lesson that should follow the same timestamp and price across each Replay chart. Legacy events remain scoped to their original timeframe.
 
-Replay separates trade identity from chart interaction controls. The second toolbar groups timeframe selection, drawing tools, contextual colors, autosave status, Undo, and saved-note management. Controls have visible active states and remain horizontally reachable on narrow screens. Undo availability updates immediately when a chart annotation is created or restored.
+Replay separates trade identity from chart interaction controls. The second toolbar groups timeframe selection, Select, Zone, Line, Level, Arrow, Text, Image, and Event tools with contextual colors, autosave status, Undo, Delete, and saved-object management. Controls have visible active states and remain horizontally reachable on narrow screens. Select makes an object clickable; Delete/Backspace or the Delete button removes only that selected object. Image uploads become trade screenshots and are then pinned to an exact chart time and price. Annotation visibility follows candle playback so later documentation is not exposed early.
 
 ## Routes
 

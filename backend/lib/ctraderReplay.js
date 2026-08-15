@@ -124,6 +124,37 @@ async function getAuthenticatedClient({ accessToken, ctidTraderAccountId, isLive
   return client;
 }
 
+// Index/metal/energy names diverge a lot between MT5 brokers and cTrader
+// brokers — 'USTEC' (Exness) and 'Nasdaq100' (this account's broker) are the
+// same instrument with nothing in common textually, so no amount of suffix
+// stripping or fuzzy matching bridges that gap. This maps common MT5-side
+// names to the cTrader-side names/synonyms worth trying. Forex pairs need no
+// entry here — 'EURUSD' is universal enough that direct/stripped matching
+// already handles broker suffixes like 'EURUSDm' or 'EURUSD.a'.
+const SYMBOL_ALIASES = {
+  USTEC: ['NASDAQ100', 'NASDAQCOMP', 'US100', 'USTECH', 'NAS100', 'NDX100'],
+  NAS100: ['NASDAQ100', 'USTEC', 'US100', 'NASDAQCOMP'],
+  US100: ['NASDAQ100', 'USTEC', 'NAS100'],
+  US30: ['DOW30', 'WALLSTREET30', 'DJ30', 'US30CASH', 'DOWJONES30'],
+  DJ30: ['DOW30', 'US30', 'WALLSTREET30'],
+  US500: ['SPX500', 'SP500', 'US500CASH', 'SANDP500'],
+  SPX500: ['US500', 'SP500', 'SANDP500'],
+  SP500: ['SPX500', 'US500'],
+  GER40: ['GERMANY40', 'DAX40', 'DE40', 'DAX'],
+  GER30: ['GERMANY30', 'DAX30', 'DE30'],
+  UK100: ['FTSE100'],
+  FRA40: ['FRANCE40', 'CAC40'],
+  JPN225: ['JAPAN225', 'NIKKEI225', 'JP225'],
+  AUS200: ['AUSTRALIA200', 'ASX200'],
+  XAUUSD: ['GOLD'],
+  GOLD: ['XAUUSD'],
+  XAGUSD: ['SILVER'],
+  SILVER: ['XAGUSD'],
+  USOIL: ['WTI', 'CRUDEOIL', 'USOILCASH', 'WTICRUDE'],
+  UKOIL: ['BRENT', 'UKOILCASH', 'BRENTCRUDE'],
+  NATGAS: ['NATURALGAS', 'NGAS'],
+};
+
 async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
   let cache = symbolCache.get(ctidTraderAccountId);
   if (!cache || Date.now() - cache.fetchedAt > SYMBOL_CACHE_TTL_MS) {
@@ -132,21 +163,33 @@ async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
       includeArchivedSymbols: false,
     });
     const bySymbolName = new Map();
+    const strippedIndex = new Map(); // alnum-only, uppercased -> symbolId
     for (const symbol of res.symbol || []) {
-      bySymbolName.set(String(symbol.symbolName || '').toUpperCase(), symbol.symbolId);
+      const name = String(symbol.symbolName || '').toUpperCase();
+      bySymbolName.set(name, symbol.symbolId);
+      strippedIndex.set(name.replace(/[^A-Z0-9]/g, ''), symbol.symbolId);
     }
-    cache = { fetchedAt: Date.now(), bySymbolName };
+    cache = { fetchedAt: Date.now(), bySymbolName, strippedIndex };
     symbolCache.set(ctidTraderAccountId, cache);
   }
 
-  const normalized = normalizeSymbolForCTrader(symbolName);
-  if (cache.bySymbolName.has(normalized)) return cache.bySymbolName.get(normalized);
+  const tryMatch = candidate => {
+    const normalized = normalizeSymbolForCTrader(candidate);
+    if (cache.bySymbolName.has(normalized)) return cache.bySymbolName.get(normalized);
+    // Brokers append suffixes like 'm', '.a', '_i' to MT5 names, and cTrader's
+    // own naming can differ slightly in punctuation (e.g. slashes) — compare
+    // with everything but letters/digits stripped from both sides.
+    const stripped = normalized.replace(/[^A-Z0-9]/g, '');
+    return cache.strippedIndex.get(stripped) ?? null;
+  };
 
-  // Try a fuzzy match: brokers append suffixes like 'm', '.a', '_i' to MT5
-  // symbol names, and cTrader's own naming can differ slightly (e.g. slashes).
-  const strippedTarget = normalized.replace(/[^A-Z0-9]/g, '');
-  for (const [name, id] of cache.bySymbolName) {
-    if (name.replace(/[^A-Z0-9]/g, '') === strippedTarget) return id;
+  const direct = tryMatch(symbolName);
+  if (direct != null) return direct;
+
+  const aliasKey = normalizeSymbolForCTrader(symbolName);
+  for (const alias of SYMBOL_ALIASES[aliasKey] || []) {
+    const matched = tryMatch(alias);
+    if (matched != null) return matched;
   }
   return null;
 }

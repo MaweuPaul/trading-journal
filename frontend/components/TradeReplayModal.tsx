@@ -23,18 +23,12 @@ interface ReplayData {
   entryIndex: number; exitIndex: number; pnlUSD: number; pnlPct: number;
   durationMinutes: number; lotSize: number;
   existingNotes: string; existingEmotion: string; existingGrade: string; existingTags: string[];
-  source?: 'mt5' | 'twelve'; sourceLabel?: string;
+  source?: 'ctrader'; sourceLabel?: string;
   analysisGrade?: string; executionGrade?: string; plannedRR?: number | null; exitReason?: string;
   manuallyIntervened?: boolean | null; confidenceRating?: number | null; accountType?: string;
   playbookSnapshot?: ReplayPlaybookSnapshot | null; playbookResponses?: Record<string, unknown>;
 }
-interface ReplayDebug {
-  state: 'pending' | 'processing' | 'failed'; queuedAt: string; waitSeconds: number;
-  claimCount: number; lastError: string; agentSeenOnThisInstance: boolean;
-  lastAgentSeenAt: string | null; backendInstance: string;
-  transport?: 'mongodb-long-poll' | string;
-}
-interface ReplayPending { pending?: boolean; message?: string; setup?: boolean; error?: string; debug?: ReplayDebug; }
+interface ReplayError { setup?: boolean; error?: string; code?: string; }
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
 interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
@@ -125,34 +119,12 @@ const fmtDur = (mins: number) => {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 };
 
-function ReplayDiagnostics({ debug }: { debug: ReplayDebug }) {
-  const sharedTransport = debug.transport === 'mongodb-long-poll';
-  const agentLabel = debug.agentSeenOnThisInstance ? (sharedTransport ? 'Connected to live backend' : 'Connected to this API instance') : 'Not detected by live backend';
-  return (
-    <div className="replay-debug" role="status" aria-label="MT5 replay diagnostics">
-      <div className="replay-debug-title">Connection diagnostics</div>
-      <div><span>Request</span><strong>{debug.state} · {debug.waitSeconds}s</strong></div>
-      <div><span>MT5 agent</span><strong className={debug.agentSeenOnThisInstance ? 'ok' : 'warn'}>{agentLabel}</strong></div>
-      <div><span>Claims</span><strong>{debug.claimCount}</strong></div>
-      {sharedTransport && <div><span>Transport</span><strong className="ok">MongoDB long poll</strong></div>}
-      <div><span>API instance</span><code>{debug.backendInstance}</code></div>
-      {debug.lastAgentSeenAt && <div><span>Last agent poll</span><strong>{new Date(debug.lastAgentSeenAt).toLocaleTimeString()}</strong></div>}
-      {debug.lastError && <div className="replay-debug-error"><span>MT5 error</span><strong>{debug.lastError}</strong></div>}
-      {!debug.agentSeenOnThisInstance && (
-        <p>Check that sync.py is running and API_BASE points to this live backend.</p>
-      )}
-    </div>
-  );
-}
-
 export default function TradeReplayModal({ tradeId, tradeSummary, initialInterval, initialJournalPhase, onIntervalChange, onJournalPhaseChange, onClose, onSaved }: Props) {
   const { resolvedTheme } = useTheme();
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isSetupError, setIsSetupError] = useState(false);
-  const [waitingForMt5, setWaitingForMt5] = useState(false);
-  const [replayDebug, setReplayDebug] = useState<ReplayDebug | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const annotationInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -437,7 +409,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
   const applyReplay = useCallback((data: ReplayData) => {
     if (!Array.isArray(data?.candles) || data.candles.length === 0) {
-      throw new Error('The replay service returned no candle data. Restart the backend and MT5 sync agent, then try again.');
+      throw new Error('The replay service returned no candle data. Try again in a moment.');
     }
     const replay = { ...data };
     replay.candles = data.candles.map(candle => ({ ...candle, time: Number(candle.time) as UTCTimestamp }));
@@ -453,53 +425,24 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       replayJournalInitializedRef.current = true;
     }
     setReplayIdx(Math.max(0, data.entryIndex - 8));
-    setWaitingForMt5(false); setError(''); setLoading(false);
-    setReplayDebug(null);
+    setError(''); setLoading(false);
   }, []);
-
-  const loadTwelveFallback = useCallback(async () => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    setLoading(true); setWaitingForMt5(false); setError(''); setIsSetupError(false);
-    try {
-      const response = await fetch(`${API}/trades/${tradeId}/replay?fallback=twelve&interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await response.json() as ReplayData & ReplayPending;
-      if (!response.ok) { setError(data.error || 'Failed to load fallback chart data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
-      applyReplay(data);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); }
-  }, [applyReplay, selectedInterval, tradeId]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
     const controller = new AbortController();
-    const poll = async () => {
-      for (let attempt = 0; attempt < 8 && !controller.signal.aborted; attempt += 1) {
-        try {
-          const response = await fetch(`${API}/trades/${tradeId}/replay?interval=${selectedInterval}&wait=8`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
-          const data = await response.json() as ReplayData & ReplayPending;
-          if (response.status === 202 || data.pending === true) {
-            setReplayDebug(data.debug || null);
-            if (data.debug?.state === 'failed') {
-              setWaitingForMt5(true); setLoading(false);
-              setError(data.debug.lastError || 'MT5 could not return candles for this trade.');
-              return;
-            }
-            setWaitingForMt5(true); setLoading(true);
-            await new Promise(resolve => setTimeout(resolve, 200));
-            continue;
-          }
-          if (!response.ok) { setError(data.error || 'Failed to load replay data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
-          applyReplay(data);
-          return;
-        } catch (e) {
-          if ((e as Error).name !== 'AbortError') { setError((e as Error).message || 'Network error'); setLoading(false); }
-          return;
-        }
+    setLoading(true); setError(''); setIsSetupError(false);
+    (async () => {
+      try {
+        const response = await fetch(`${API}/trades/${tradeId}/replay?interval=${selectedInterval}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const data = await response.json() as ReplayData & ReplayError;
+        if (!response.ok) { setError(data.error || 'Failed to load replay data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
+        applyReplay(data);
+      } catch (e) {
+        if ((e as Error).name !== 'AbortError') { setError((e as Error).message || 'Network error'); setLoading(false); }
       }
-      if (!controller.signal.aborted) { setLoading(false); setWaitingForMt5(true); setError('MT5 has not supplied these candles yet. Keep the sync agent running or use the Twelve Data fallback.'); }
-    };
-    poll();
+    })();
     return () => controller.abort();
   }, [applyReplay, selectedInterval, tradeId]);
 
@@ -932,7 +875,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   }, [replayData]);
   const switchTimeframe = (interval: string) => {
     if (interval === selectedInterval) return;
-    setPlaying(false); setReplayData(null); setLoading(true); setError(''); setReplayDebug(null); setWaitingForMt5(false);
+    setPlaying(false); setReplayData(null); setLoading(true); setError('');
     setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnImages([]);
     setSelectedAnnotationId(''); setPendingImage(null); currentPreview.current = null;
     annotationHistoryRef.current = []; setAnnotationHistoryDepth(0);
@@ -1206,10 +1149,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           {loading && (
             <div className="replay-chart-state">
               <div className="replay-spinner" />
-              <h4>{waitingForMt5 ? 'Waiting for MT5…' : 'Loading chart data…'}</h4>
-              <p>{waitingForMt5 ? `Requesting exact ${tradeSummary.symbol} candles from your broker terminal` : 'Preparing trade replay'}</p>
-              {replayDebug && <ReplayDiagnostics debug={replayDebug} />}
-              {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
+              <h4>Loading chart data…</h4>
+              <p>Requesting {tradeSummary.symbol} candles from cTrader</p>
             </div>
           )}
           {!loading && error && (
@@ -1217,18 +1158,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               <AlertTriangle size={32} color="#f59e0b" />
               <h4>{isSetupError ? 'Replay Not Configured' : 'Chart Data Unavailable'}</h4>
               <p>{error}</p>
-              {replayDebug && <ReplayDiagnostics debug={replayDebug} />}
-              {waitingForMt5 && <button type="button" className="replay-setup-link" onClick={loadTwelveFallback}>Use Twelve Data fallback</button>}
               {isSetupError && (
-                <>
-                  <a href="https://twelvedata.com/register" target="_blank" rel="noopener noreferrer" className="replay-setup-link">
-                    Get Free API Key <ExternalLink size={12} />
-                  </a>
-                  <p style={{ fontSize: 11, maxWidth: 300, marginTop: 4 }}>
-                    Then add <code style={{ background: '#1a2035', padding: '1px 5px', borderRadius: 4 }}>TWELVE_DATA_API_KEY=your_key</code> to{' '}
-                    <code style={{ background: '#1a2035', padding: '1px 5px', borderRadius: 4 }}>backend/.env</code> and restart the server.
-                  </p>
-                </>
+                <a href="/accounts" className="replay-setup-link">
+                  Connect cTrader on the Accounts page <ExternalLink size={12} />
+                </a>
               )}
             </div>
           )}
@@ -1380,7 +1313,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             </div>
             {replayData && (
               <div style={{ fontSize: 10, color: '#4b5675', textAlign: 'center', marginTop: 4 }}>
-                {replayData.sourceLabel || (replayData.source === 'twelve' ? 'Twelve Data' : 'MT5')} · {replayData.normalizedSymbol} · {replayData.interval} · {replayData.candles.length} bars
+                {replayData.sourceLabel || 'cTrader'} · {replayData.normalizedSymbol} · {replayData.interval} · {replayData.candles.length} bars
               </div>
             )}
           </div>

@@ -78,8 +78,12 @@ CLOUDINARY_CLOUD_NAME=YOUR_CLOUD_NAME
 CLOUDINARY_API_KEY=YOUR_API_KEY
 CLOUDINARY_API_SECRET=YOUR_API_SECRET
 
-# Optional: full-screen historical candle replay
-TWELVE_DATA_API_KEY=YOUR_PERSONAL_TWELVE_DATA_KEY
+# Optional: full-screen historical candle replay, powered by the cTrader
+# Open API. Register a free app at https://openapi.ctrader.com — see the
+# comments in backend/.env.example for the full one-time setup flow.
+CTRADER_CLIENT_ID=YOUR_CTRADER_OPEN_API_CLIENT_ID
+CTRADER_CLIENT_SECRET=YOUR_CTRADER_OPEN_API_CLIENT_SECRET
+CTRADER_REDIRECT_URI=http://localhost:3000/accounts
 
 SEED_OWNER_ENABLED=false
 OWNER_NAME=
@@ -365,17 +369,13 @@ Add a long random `JWT_SECRET` to `backend/.env` and restart the backend.
 
 Confirm the account has closed deals and that the broker server saved on the **Accounts** page exactly matches MT5. Run `python sync.py --once` and inspect the account card plus logs.
 
-### Replay says a recorded broker symbol is unavailable
+### Replay says cTrader is not connected, or a symbol is unavailable
 
-First check for an accompanying `IPC send failed` message. The sync agent now serializes terminal calls and reconnects once, so restart `sync.py` after updating and confirm the exact recorded symbol succeeds. Also verify that the same MT5 account/server that created the trade is currently logged in and that the instrument is available in Market Watch.
+Replay's candle data comes entirely from the cTrader Open API — MT5 is only used for trade/cash-flow sync, not for chart candles. If Replay shows a "not connected" or setup error:
 
-The trade's recorded symbol is always tried first. Only if this terminal uses a different broker suffix, add an explicit root `.env` mapping such as:
-
-```env
-MT5_SYMBOL_ALIASES=XAUUSD:XAUUSDm,USTEC:USTECm
-```
-
-This changes only the instrument used to request Replay candles; it does not rename the historical trade.
+1. Confirm `CTRADER_CLIENT_ID`, `CTRADER_CLIENT_SECRET`, and `CTRADER_REDIRECT_URI` are set in `backend/.env` and match the app you registered at https://openapi.ctrader.com.
+2. On the **Accounts** page, under "Trade Replay Data Source", click **Connect cTrader** and authorize the account you want candles from. This is a one-time step; MongoDB must be connected to store the resulting tokens.
+3. If a specific symbol can't be found, cTrader's symbol name for that instrument may differ from what your MT5 broker calls it (e.g. a suffix like `XAUUSDm`) — the automatic matching strips common suffixes, but exotic naming may still need the exact cTrader symbol name enabled in your cTrader account's Market Watch.
 
 ### Demo account is rejected
 

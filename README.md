@@ -20,7 +20,7 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Edge Coach Evidence | Compare versions, stage compliance, structured answers, and numeric fields by outcome and sample size |
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
-| Trade Replay | Request only the needed candles from the connected MT5 broker, cache them briefly, replay price action, and use Twelve Data only as a fallback |
+| Trade Replay | Request exact historical candles from the connected cTrader Open API account, cache them briefly, and replay price action |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
@@ -262,15 +262,15 @@ MT5 login, password, server, real/demo policy, and symbol aliases are configured
 
 The worker loads every enabled account and switches the local MT5 terminal sequentially. Trades and cash-flow events carry the account's opaque database key, so filters and ticket deduplication remain isolated per account. Editing or archiving an account never rewrites its historical trades.
 
-### MT5-first trade replay
+### cTrader-powered trade replay
 
-Keep `sync.py` and the logged-in MT5 desktop terminal running. `sync.py` holds a lightweight 25-second long poll against the authenticated replay queue. Opening Replay writes only the selected trade's recorded broker symbol, time window, and appropriate timeframe to a MongoDB TTL session; the waiting agent receives it immediately, uses `copy_rates_range`, and returns the candles to that temporary session. Candles are never written to the trade or downloaded for unrelated trades. All Python MT5 calls are serialized because the terminal IPC connection is process-global; an IPC failure triggers one reconnect and retry. Replay first uses the trade's exact recorded symbol. Only when that name is genuinely absent does it try an explicit alias or a suffix-compatible symbol exposed by the same terminal.
+Trade Replay's candle data comes from the cTrader Open API, independent of MT5 (MT5 is used only for trade and cash-flow sync via `sync.py`). Connect it once from the **Accounts** page: register a free app at [openapi.ctrader.com](https://openapi.ctrader.com), set `CTRADER_CLIENT_ID`, `CTRADER_CLIENT_SECRET`, and `CTRADER_REDIRECT_URI` in `backend/.env`, then authorize the cTrader account you want candles from. The resulting OAuth tokens are stored encrypted the same way MT5 broker credentials are (`lib/credentialEncryption.js`) and refreshed automatically.
 
-The shared TTL session works across cloud instances and expires after 30 minutes. Replay shows the provider and connection diagnostics. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version. Select **Use Twelve Data fallback** only when the terminal cannot supply the history.
+Opening Replay resolves the trade's symbol against cTrader's own symbol list for that account (matching common broker suffixes like `XAUUSDm` automatically), requests exact historical trendbars for the needed window and timeframe over a persistent TLS/protobuf connection, and returns them directly — no background worker or polling queue involved. Results are cached in-process for 30 minutes per trade/timeframe.
 
-Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views. Switching timeframe requests only that broker interval, preserves the trade entry/exit timestamps, and leaves other timeframe sessions available until their TTL expires. The session identity is `user + trade + timeframe`, so multiple views never overwrite one another.
+Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views; switching timeframe requests only that interval and preserves the trade's entry/exit timestamps. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version.
 
-The browser also holds an 8-second Replay request open, allowing the backend to return as soon as MT5 uploads the requested interval instead of waiting for another browser polling delay. Expanded windows target roughly 700–1,100 surrounding bars depending on market hours and timeframe. Replay provides TradingView-style documentation tools for zones, trend lines, horizontal levels, arrows, colored text, candle events, and image evidence pinned to an exact time and price. Annotations are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups.
+Replay provides TradingView-style documentation tools for zones, trend lines, horizontal levels, arrows, colored text, candle events, and image evidence pinned to an exact time and price. Annotations are stored by trade and timeframe, autosave after changes, reload after refresh, and are included in JSON backups.
 
 Choose **Select** to click an existing chart object. The selected object receives a visible outline and can be removed with the toolbar **Delete** button or the keyboard Delete/Backspace key; **Undo**, individual list deletion, and protected **Clear all** remain available. Image pins reuse the journal screenshot upload pipeline, keep the uploaded evidence attached to the trade, and display a captioned preview on the chart. Static annotations remain hidden until their point anchor or all shape anchors have been revealed, so playback never exposes a future chart note early.
 

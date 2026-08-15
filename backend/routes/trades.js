@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const Trade = require('../models/Trade');
 const SyncRequest = require('../models/SyncRequest');
-const ReplaySession = require('../models/ReplaySession');
 const ReplayJournal = require('../models/ReplayJournal');
 const AccountEvent = require('../models/AccountEvent');
 const User = require('../models/User');
@@ -21,6 +20,7 @@ const {
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
 const { calculateMissedProfit } = require('../lib/tradeMath');
+const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -67,11 +67,8 @@ let inMemoryReplayJournals = {};
 const inMemorySyncRequests = {};
 
 // ── Trade Replay Cache (in-memory, 30-minute TTL) ──────────────────────────
-// Keyed by trade _id. Exact MT5/Twelve candles are transient, never journal data.
+// Keyed by trade _id. Exact cTrader candles are transient, never journal data.
 const replayCache = new Map(); // { tradeId: { ts: number, data: object } }
-const replayRequests = new Map(); // transient request queue consumed by sync.py
-const replayAgentHeartbeats = new Map(); // userId -> last poll observed by this API process
-const REPLAY_INSTANCE_ID = `${process.env.VERCEL_REGION || process.env.RENDER_SERVICE_ID || 'local'}-${Math.random().toString(36).slice(2, 8)}`;
 const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes; candles are never written to a trade
 
 function syncAgentOnly(req, res, next) {
@@ -133,34 +130,7 @@ const PLAYBOOK_FAILURE_ACTIONS = new Set(['none', 'warn', 'skip_trade', 'stop_se
 // ── Trade Replay Helpers ───────────────────────────────────────────────────
 
 /**
- * Convert an MT5 broker symbol name into the format Twelve Data expects.
- * MT5 brokers often append 'm' (micro), 'n' (nano) or '.' suffix.
- * Some brokers rename commodities: 'GOLD' instead of 'XAUUSD'.
- */
-function normalizeSymbolForReplay(raw) {
-  const s = String(raw || '').toUpperCase().trim();
-  // Strip trailing lowercase modifiers: m, n, +, .
-  const clean = s.replace(/[mn+\.]+$/i, '');
-  const MAP = {
-    'GOLD':   'XAU/USD',  'XAUUSD':  'XAU/USD',
-    'SILVER': 'XAG/USD',  'XAGUSD':  'XAG/USD',
-    'USOIL':  'WTI/USD',  'UKOIL':   'BRENT/USD',
-    'BRENT':  'BRENT/USD','NATGAS':  'NATGAS/USD',
-    'BTCUSD': 'BTC/USD',  'ETHUSD':  'ETH/USD',
-    'XRPUSD': 'XRP/USD',  'BNBUSD':  'BNB/USD',
-    'NAS100': 'NDX',      'USTEC':   'NDX',
-    'US100':  'NDX',      'NASDAQ100': 'NDX',
-    'US30':    'DJI',
-    'SP500':  'SPX',      'UK100':   'FTSE100',
-    'GER40':  'DAX',      'GER30':   'DAX',
-    'FRA40':  'CAC40',    'JPN225':  'N225',
-    'AUS200': 'ASX200',
-  };
-  return MAP[clean] || clean;
-}
-
-/**
- * Pick the best Twelve Data candle interval and chart padding window
+ * Pick the best candle interval and chart padding window
  * based on how long the trade was open.
  */
 function selectReplayInterval(durationMinutes) {
@@ -1937,126 +1907,6 @@ router.get('/trades', auth, ownerOnly, async (req, res) => {
   }
 });
 
-// GET /api/replay-requests  consumed by the authenticated local MT5 sync agent
-router.get('/replay-requests', auth, syncAgentOnly, async (req, res) => {
-  try {
-    const now = Date.now();
-    replayAgentHeartbeats.set(String(req.user.userId), now);
-    if (mongoose.connection.readyState === 1) {
-      await SyncRequest.findOneAndUpdate(
-        { user: req.user.userId },
-        { $set: { replayAgentLastSeen: new Date(now), replayAgentInstance: REPLAY_INSTANCE_ID } },
-        { upsert: true, setDefaultsOnInsert: true }
-      );
-      const waitMs = Math.min(25000, Math.max(0, Number(req.query.wait || 0) * 1000));
-      const deadline = Date.now() + waitMs;
-      let claimed = null;
-      do {
-        claimed = await ReplaySession.findOneAndUpdate(
-          {
-            user: req.user.userId,
-            expiresAt: { $gt: new Date() },
-            $or: [
-              { status: 'pending' },
-              { status: 'processing', claimedAt: { $lt: new Date(Date.now() - 2 * 60 * 1000) } },
-            ],
-          },
-          { $set: { status: 'processing', claimedAt: new Date() }, $inc: { claimCount: 1 } },
-          { new: true, sort: { createdAt: 1 } }
-        ).lean();
-        if (claimed || Date.now() >= deadline) break;
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } while (true);
-      return res.json({
-        requests: claimed ? [{ tradeId: String(claimed.tradeId), ...claimed.request }] : [],
-        debug: { backendInstance: REPLAY_INSTANCE_ID, polledAt: new Date().toISOString(), transport: 'mongodb-long-poll' },
-      });
-    }
-    const requests = [];
-    for (const [tradeId, queued] of replayRequests.entries()) {
-      if (now - queued.updatedAt > 10 * 60 * 1000) { replayRequests.delete(tradeId); continue; }
-      if (queued.userId !== String(req.user.userId)) continue;
-      const stale = queued.status === 'processing' && now - queued.updatedAt > 2 * 60 * 1000;
-      if (queued.status !== 'pending' && !stale) continue;
-      queued.status = 'processing'; queued.updatedAt = now;
-      queued.claimCount = (queued.claimCount || 0) + 1;
-      requests.push({ tradeId: queued.tradeId || tradeId, ...queued.request });
-      if (requests.length === 5) break;
-    }
-    res.json({ requests, debug: { backendInstance: REPLAY_INSTANCE_ID, polledAt: new Date(now).toISOString() } });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/trades/:id/replay-candles  transient exact-broker candles from MT5
-router.post('/trades/:id/replay-candles', auth, syncAgentOnly, async (req, res) => {
-  try {
-    const rawCandles = Array.isArray(req.body.candles) ? req.body.candles : [];
-    if (!rawCandles.length || rawCandles.length > 5000) {
-      return res.status(400).json({ error: 'Replay upload must contain between 1 and 5000 candles.' });
-    }
-    const candles = rawCandles.map(c => ({
-      time: Number(c.time), open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close),
-    })).filter(c => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close))
-      .sort((a, b) => a.time - b.time);
-    if (candles.length !== rawCandles.length) return res.status(400).json({ error: 'Replay candles contain invalid values.' });
-    const candleData = {
-      source: 'mt5', sourceLabel: req.body.server ? `MT5 - ${String(req.body.server).slice(0, 80)}` : 'MT5 broker history',
-      brokerSymbol: String(req.body.brokerSymbol || '').slice(0, 40),
-      resolvedBrokerSymbol: String(req.body.resolvedBrokerSymbol || req.body.brokerSymbol || '').slice(0, 40),
-      normalizedSymbol: String(req.body.resolvedBrokerSymbol || req.body.brokerSymbol || '').slice(0, 40),
-      interval: String(req.body.interval || '1min').slice(0, 10), candles, cachedAt: new Date().toISOString(),
-    };
-    const interval = requestedReplayInterval(candleData.interval, 0);
-    candleData.interval = interval;
-    let trade;
-    if (mongoose.connection.readyState === 1) {
-      trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
-        .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct notes emotion grade tags').lean();
-    } else {
-      trade = inMemoryTrades.find(t => String(t._id) === String(req.params.id) && isOfflineTradeVisibleToUser(t, req.user.userId));
-    }
-    if (!trade) return res.status(404).json({ error: 'Trade not found' });
-    if (candleData.brokerSymbol !== trade.symbol) return res.status(400).json({ error: 'Replay symbol does not match the trade broker symbol.' });
-    if (mongoose.connection.readyState === 1) {
-      const session = await ReplaySession.findOneAndUpdate(
-        { user: req.user.userId, tradeId: req.params.id, interval },
-        { $set: { status: 'ready', result: candleData, error: '', expiresAt: new Date(Date.now() + REPLAY_CACHE_TTL_MS) } },
-        { new: true }
-      );
-      if (!session) return res.status(404).json({ error: 'Replay request expired before MT5 returned its candles.' });
-      return res.json({ ok: true, candles: candles.length, transport: 'mongodb-ttl' });
-    }
-    const transientKey = `${req.params.id}:${interval}`;
-    replayCache.set(transientKey, { ts: Date.now(), data: buildReplayResult(trade, candleData) });
-    replayRequests.delete(transientKey);
-    res.json({ ok: true, candles: candles.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/trades/:id/replay-failed', auth, syncAgentOnly, async (req, res) => {
-  try {
-    const error = String(req.body.error || 'MT5 could not return replay candles.').slice(0, 500);
-    const interval = requestedReplayInterval(req.body.interval, 0);
-    if (mongoose.connection.readyState === 1) {
-      const session = await ReplaySession.findOneAndUpdate(
-        { user: req.user.userId, tradeId: req.params.id, interval },
-        { $set: { status: 'failed', error, expiresAt: new Date(Date.now() + 5 * 60 * 1000) } },
-        { new: true }
-      );
-      if (!session) return res.status(404).json({ error: 'Replay request not found' });
-      return res.json({ ok: true });
-    }
-    const queued = replayRequests.get(`${req.params.id}:${interval}`);
-    if (!queued || queued.userId !== String(req.user.userId)) return res.status(404).json({ error: 'Replay request not found' });
-    queued.status = 'failed'; queued.updatedAt = Date.now(); queued.error = error;
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 async function findReplayTrade(tradeId, userId) {
   if (mongoose.connection.readyState === 1) {
     if (!mongoose.isValidObjectId(tradeId)) return null;
@@ -2222,188 +2072,27 @@ router.get('/trades/:id/replay', auth, ownerOnly, async (req, res) => {
     if (cached && Date.now() - cached.ts < REPLAY_CACHE_TTL_MS && Array.isArray(cached.data?.candles)) return res.json(cached.data);
     if (cached) replayCache.delete(cacheKey);
 
-    if (mongoose.connection.readyState === 1 && req.query.fallback !== 'twelve') {
-      let session = await ReplaySession.findOne({ user: req.user.userId, tradeId: req.params.id, interval: selectedInterval, expiresAt: { $gt: new Date() } }).lean();
-      if (session?.status === 'ready' && Array.isArray(session.result?.candles)) {
-        return res.json(buildReplayResult(trade, session.result));
-      }
-      const retryFailed = session?.status === 'failed' && Date.now() - new Date(session.updatedAt).getTime() > 5000;
-      if (!session || retryFailed) {
-        const window = replayWindow(trade, selectedInterval);
-        session = await ReplaySession.findOneAndUpdate(
-          { user: req.user.userId, tradeId: req.params.id, interval: selectedInterval },
-          {
-            $set: {
-              status: 'pending', error: '', result: null, claimCount: 0, claimedAt: null,
-              request: { brokerSymbol: trade.symbol, accountKey: trade.accountKey || '', interval: window.interval, start: window.start, end: window.end },
-              interval: selectedInterval,
-              expiresAt: new Date(Date.now() + REPLAY_CACHE_TTL_MS),
-            },
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        ).lean();
-      }
-      const browserWaitMs = Math.min(10000, Math.max(0, Number(req.query.wait || 0) * 1000));
-      const browserDeadline = Date.now() + browserWaitMs;
-      while (browserWaitMs > 0 && ['pending', 'processing'].includes(session.status) && Date.now() < browserDeadline) {
-        await new Promise(resolve => setTimeout(resolve, 250));
-        session = await ReplaySession.findOne({ user: req.user.userId, tradeId: req.params.id, interval: selectedInterval, expiresAt: { $gt: new Date() } }).lean();
-        if (!session) break;
-        if (session.status === 'ready' && Array.isArray(session.result?.candles)) {
-          return res.json(buildReplayResult(trade, session.result));
-        }
-      }
-      if (!session) return res.status(410).json({ error: 'Replay request expired. Reopen Replay to request it again.' });
-      const agent = await SyncRequest.findOne({ user: req.user.userId }).select('replayAgentLastSeen replayAgentInstance').lean();
-      const lastAgentSeen = agent?.replayAgentLastSeen ? new Date(agent.replayAgentLastSeen).getTime() : null;
-      return res.status(202).json({
-        pending: true, source: 'mt5', message: 'Waiting for the local MT5 sync agent to upload exact broker candles.',
-        debug: {
-          state: session.status,
-          queuedAt: session.createdAt,
-          waitSeconds: Math.max(0, Math.floor((Date.now() - new Date(session.createdAt).getTime()) / 1000)),
-          claimCount: session.claimCount || 0, lastError: session.error || '',
-          agentSeenOnThisInstance: Boolean(lastAgentSeen && Date.now() - lastAgentSeen < 90 * 1000),
-          lastAgentSeenAt: lastAgentSeen ? new Date(lastAgentSeen).toISOString() : null,
-          backendInstance: agent?.replayAgentInstance || REPLAY_INSTANCE_ID,
-          transport: 'mongodb-long-poll',
-        },
+    const window = replayWindow(trade, selectedInterval);
+    let candleData;
+    try {
+      candleData = await getCTraderTrendbars({
+        userId: req.user.userId,
+        symbol: trade.symbol,
+        periodLabel: window.interval,
+        fromMs: new Date(window.start).getTime(),
+        toMs: new Date(window.end).getTime(),
       });
+    } catch (err) {
+      const setupCodes = new Set(['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED']);
+      const status = setupCodes.has(err.code) ? 503 : err.code === 'SYMBOL_NOT_FOUND' ? 422 : 502;
+      return res.status(status).json({ error: err.message, code: err.code || 'CTRADER_ERROR', setup: setupCodes.has(err.code) });
     }
 
-    if (req.query.fallback !== 'twelve') {
-      const existing = replayRequests.get(cacheKey);
-      if (!existing || existing.userId !== String(req.user.userId) || (existing.status === 'failed' && Date.now() - existing.updatedAt > 5000)) {
-        const window = replayWindow(trade, selectedInterval);
-        replayRequests.set(cacheKey, {
-          userId: String(req.user.userId), tradeId: String(req.params.id), status: 'pending', createdAt: Date.now(), updatedAt: Date.now(), error: '', claimCount: 0,
-          request: { brokerSymbol: trade.symbol, interval: window.interval, start: window.start, end: window.end },
-        });
-      }
-      const queued = replayRequests.get(cacheKey);
-      const lastAgentSeen = replayAgentHeartbeats.get(String(req.user.userId)) || null;
-      return res.status(202).json({
-        pending: true, source: 'mt5', message: 'Waiting for the local MT5 sync agent to upload exact broker candles.',
-        debug: {
-          state: queued.status,
-          queuedAt: new Date(queued.createdAt).toISOString(),
-          waitSeconds: Math.max(0, Math.floor((Date.now() - queued.createdAt) / 1000)),
-          claimCount: queued.claimCount || 0,
-          lastError: queued.error || '',
-          agentSeenOnThisInstance: Boolean(lastAgentSeen && Date.now() - lastAgentSeen < 90 * 1000),
-          lastAgentSeenAt: lastAgentSeen ? new Date(lastAgentSeen).toISOString() : null,
-          backendInstance: REPLAY_INSTANCE_ID,
-        },
-      });
+    if (!candleData.candles.length) {
+      return res.status(422).json({ error: `cTrader returned no candles for ${trade.symbol} (${window.interval}).` });
     }
 
-    const apiKey = process.env.TWELVE_DATA_API_KEY;
-    if (!apiKey) return res.status(503).json({
-      error: 'MT5 data is not available yet and Twelve Data fallback is not configured. Add TWELVE_DATA_API_KEY to backend/.env.', setup: true,
-    });
-
-    // ── Build Twelve Data request ───────────────────────────────────────────
-    const normalizedSymbol = normalizeSymbolForReplay(trade.symbol);
-    const interval = selectedInterval;
-    const paddingMs = REPLAY_TIMEFRAMES[interval];
-
-    const openMs  = new Date(trade.openTime).getTime();
-    const closeMs = new Date(trade.closeTime).getTime();
-    const startDate = new Date(openMs  - paddingMs).toISOString().replace('T', ' ').slice(0, 19);
-    const endDate   = new Date(closeMs + paddingMs).toISOString().replace('T', ' ').slice(0, 19);
-
-    const tdUrl = [
-      'https://api.twelvedata.com/time_series',
-      `?symbol=${encodeURIComponent(normalizedSymbol)}`,
-      `&interval=${interval}`,
-      `&start_date=${encodeURIComponent(startDate)}`,
-      `&end_date=${encodeURIComponent(endDate)}`,
-      `&timezone=UTC`,
-      `&format=JSON`,
-      `&outputsize=1500`,
-      `&apikey=${apiKey}`,
-    ].join('');
-
-    const tdRes = await fetch(tdUrl, { signal: AbortSignal.timeout(15000) });
-    const body = await tdRes.json().catch(() => ({}));
-    if (tdRes.status === 429) {
-      return res.status(429).json({ error: body.message || 'Twelve Data rate limit reached. Wait one minute and try replay again.' });
-    }
-    if (!tdRes.ok) {
-      return res.status(422).json({
-        error: body.message || `Twelve Data could not provide ${normalizedSymbol} candles (HTTP ${tdRes.status}).`,
-        code: body.code || tdRes.status,
-        symbol: normalizedSymbol,
-      });
-    }
-
-    if (body.status === 'error') {
-      return res.status(422).json({
-        error: body.message || `No chart data available for ${trade.symbol}`,
-        code: body.code,
-      });
-    }
-
-    // ── Transform candles (Twelve Data returns newest-first → reverse) ──────
-    const values = Array.isArray(body.values) ? body.values : [];
-    if (values.length === 0) {
-      return res.status(422).json({
-        error: `No candles returned for ${normalizedSymbol} (${interval}). The symbol may not be supported on the free Twelve Data plan.`,
-      });
-    }
-
-    const candles = values.reverse().map(v => ({
-      time:  Math.floor(new Date((v.datetime + '').replace(' ', 'T') + 'Z').getTime() / 1000),
-      open:  parseFloat(v.open),
-      high:  parseFloat(v.high),
-      low:   parseFloat(v.low),
-      close: parseFloat(v.close),
-    }));
-
-    // ── Locate entry/exit candle indices ────────────────────────────────────
-    const entryTs = Math.floor(openMs  / 1000);
-    const exitTs  = Math.floor(closeMs / 1000);
-    const candleAt = timestamp => {
-      const next = candles.findIndex(c => c.time >= timestamp);
-      if (next < 0) return candles.length - 1;
-      if (candles[next].time === timestamp || next === 0) return next;
-      return next - 1;
-    };
-    const entryIndex = candleAt(entryTs);
-    const exitIndex = candleAt(exitTs);
-
-    const result = {
-      candles,
-      source:           'twelve',
-      sourceLabel:      'Twelve Data fallback',
-      entryPrice:       trade.entryPrice,
-      exitPrice:        trade.exitPrice,
-      direction:        trade.direction,
-      symbol:           trade.symbol,
-      normalizedSymbol,
-      interval,
-      openTime:         trade.openTime,
-      closeTime:        trade.closeTime,
-      entryTimestamp:   entryTs,
-      exitTimestamp:    exitTs,
-      entryIndex,
-      exitIndex,
-      pnlUSD:           trade.pnlUSD,
-      pnlPct:           trade.pnlPct,
-      durationMinutes:  trade.durationMinutes,
-      lotSize:          trade.lotSize,
-      // Pre-fill existing journal data so the right panel shows current values
-      existingNotes:    trade.notes   || '',
-      existingEmotion:  trade.emotion || '',
-      existingGrade:    trade.grade   || '',
-      existingTags:     trade.tags    || [],
-      analysisGrade: trade.analysisGrade || '', executionGrade: trade.executionGrade || '',
-      plannedRR: trade.plannedRR ?? null, exitReason: trade.exitReason || '',
-      manuallyIntervened: trade.manuallyIntervened ?? null, confidenceRating: trade.confidenceRating ?? null,
-      accountType: trade.accountType || '', playbookSnapshot: trade.playbookSnapshot || null,
-      playbookResponses: trade.playbookResponses || {}, screenshots: trade.screenshots || [],
-    };
-
+    const result = buildReplayResult(trade, candleData);
     replayCache.set(cacheKey, { ts: Date.now(), data: result });
     res.json(result);
 

@@ -18,7 +18,10 @@ function authorize(method, originalUrl) {
 test('sync-agent JWT is limited to worker endpoints', () => {
   assert.equal(authorize('POST', '/api/sync').nextCalled, true);
   assert.equal(authorize('GET', '/api/sync-agent/trading-accounts?x=1').nextCalled, true);
-  assert.equal(authorize('POST', '/api/trades/abc/replay-candles').nextCalled, true);
   assert.equal(authorize('GET', '/api/trades').response.code, 403);
   assert.equal(authorize('DELETE', '/api/maintenance/trades').response.code, 403);
+  // Replay now runs entirely through cTrader on the API side — the MT5 sync
+  // agent no longer has any replay-related endpoints to reach.
+  assert.equal(authorize('GET', '/api/replay-requests').response.code, 403);
+  assert.equal(authorize('POST', '/api/trades/abc/replay-candles').response.code, 403);
 });

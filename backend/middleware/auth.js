@@ -34,9 +34,6 @@ module.exports = function (req, res, next) {
         ['POST', /^\/api\/sync-account-events$/],
         ['GET', /^\/api\/maintenance\/resync-request$/],
         ['POST', /^\/api\/maintenance\/resync-complete$/],
-        ['GET', /^\/api\/replay-requests$/],
-        ['POST', /^\/api\/trades\/[^/]+\/replay-candles$/],
-        ['POST', /^\/api\/trades\/[^/]+\/replay-failed$/],
       ].some(([method, pattern]) => method === req.method && pattern.test(path));
       if (!permitted) return res.status(403).json({ error: 'This sync-agent token cannot access owner journal endpoints.' });
     }

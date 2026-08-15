@@ -175,77 +175,6 @@ def history_orders_get_with_retry(*args, **kwargs):
         return orders
 
 
-def configured_symbol_aliases():
-    """Parse XAUUSD:XAUUSDm,USTEC:USTECm style explicit broker mappings."""
-    aliases = {}
-    configured = (ACTIVE_ACCOUNT or {}).get("symbolAliases", LEGACY_SYMBOL_ALIASES)
-    for item in configured.split(","):
-        source, separator, target = item.partition(":")
-        if separator and source.strip() and target.strip():
-            aliases[source.strip().upper()] = target.strip()
-    return aliases
-
-
-def symbol_key(symbol):
-    return "".join(character for character in str(symbol).upper() if character.isalnum())
-
-
-def resolve_broker_symbol(requested_symbol):
-    """Resolve a journal symbol to the exact name exposed by the connected broker."""
-    requested = str(requested_symbol or "").strip()
-    if not requested:
-        raise RuntimeError("Replay request did not include a broker symbol")
-
-    alias = configured_symbol_aliases().get(requested.upper())
-    ordered_exact = [candidate for candidate in [requested, alias] if candidate]
-    for candidate in ordered_exact:
-        if mt5.symbol_select(candidate, True):
-            if candidate != requested:
-                log.info("[REPLAY] Symbol alias resolved %s -> %s", requested, candidate)
-            return candidate
-
-    if mt5_ipc_failed() and reconnect_mt5(f"symbol_select({requested}) failure {mt5.last_error()}"):
-        for candidate in ordered_exact:
-            if mt5.symbol_select(candidate, True):
-                return candidate
-
-    symbols = mt5.symbols_get()
-    if symbols is None:
-        raise RuntimeError(f"Could not read MT5 symbols while resolving {requested}: {mt5.last_error()}")
-
-    requested_upper = requested.upper()
-    requested_key = symbol_key(requested)
-    candidates = []
-    for symbol in symbols:
-        name = str(getattr(symbol, "name", ""))
-        name_upper = name.upper()
-        name_key = symbol_key(name)
-        if not name:
-            continue
-        if name_upper == requested_upper:
-            score = 0
-        elif name_key == requested_key:
-            score = 1
-        elif name_upper.startswith(requested_upper):
-            score = 2 + min(len(name_upper) - len(requested_upper), 20)
-        elif name_key.startswith(requested_key):
-            score = 25 + min(len(name_key) - len(requested_key), 20)
-        else:
-            continue
-        candidates.append((score, 0 if getattr(symbol, "visible", False) else 1, name))
-
-    for _, _, candidate in sorted(candidates):
-        if mt5.symbol_select(candidate, True):
-            log.warning("[REPLAY] Broker symbol resolved automatically: %s -> %s", requested, candidate)
-            return candidate
-
-    hint = ", ".join(candidate[2] for candidate in sorted(candidates)[:5]) or "no suffix-compatible symbols found"
-    raise RuntimeError(
-        f"Broker symbol {requested} is not available in MT5 ({hint}). "
-        "Open Market Watch and enable the instrument, or configure MT5_SYMBOL_ALIASES."
-    )
-
-
 def get_account_balance():
     """Return current account balance from MT5."""
     info = mt5.account_info()
@@ -723,113 +652,12 @@ def sync_account_events(events):
         return 0, 0
 
 
-def process_replay_requests(wait_seconds=0):
-    """Fulfil on-demand replay requests with exact candles from this MT5 broker."""
-    global JWT_TOKEN
-    if not JWT_TOKEN and not get_jwt_token():
-        return
-
-    headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-    try:
-        request_timeout = max(API_TIMEOUT, wait_seconds + 10)
-        resp = requests.get(
-            f"{API_BASE}/replay-requests", params={"wait": wait_seconds},
-            headers=headers, timeout=request_timeout,
-        )
-        if resp.status_code == 401 and get_jwt_token():
-            headers = {"Authorization": f"Bearer {JWT_TOKEN}"}
-            resp = requests.get(
-                f"{API_BASE}/replay-requests", params={"wait": wait_seconds},
-                headers=headers, timeout=request_timeout,
-            )
-        resp.raise_for_status()
-        response_data = resp.json()
-        replay_requests = response_data.get("requests", [])
-        backend_instance = response_data.get("debug", {}).get("backendInstance", "unknown")
-        log.info("[REPLAY] Agent poll reached API instance %s | queued: %d", backend_instance, len(replay_requests))
-    except requests.RequestException as exc:
-        log.warning("[REPLAY] Could not poll replay requests: %s", exc)
-        return
-
-    timeframe_map = {
-        "1min": mt5.TIMEFRAME_M1,
-        "5min": mt5.TIMEFRAME_M5,
-        "15min": mt5.TIMEFRAME_M15,
-        "1h": mt5.TIMEFRAME_H1,
-        "4h": mt5.TIMEFRAME_H4,
-        "1day": mt5.TIMEFRAME_D1,
-    }
-    for request in replay_requests:
-        trade_id = request.get("tradeId")
-        symbol = request.get("brokerSymbol", "")
-        interval = request.get("interval", "1min")
-        try:
-            if not symbol or interval not in timeframe_map:
-                raise ValueError("Unsupported replay symbol or interval")
-            start = datetime.fromisoformat(request["start"].replace("Z", "+00:00")).astimezone(timezone.utc)
-            end = datetime.fromisoformat(request["end"].replace("Z", "+00:00")).astimezone(timezone.utc)
-            with MT5_LOCK:
-                target_account = ACCOUNT_CACHE.get(request.get("accountKey"))
-                if not target_account:
-                    fetch_trading_accounts()
-                    target_account = ACCOUNT_CACHE.get(request.get("accountKey"))
-                if not target_account:
-                    raise RuntimeError("The trade account is disabled, archived, or unavailable to this agent")
-                if not ACTIVE_ACCOUNT or ACTIVE_ACCOUNT.get("id") != target_account.get("id"):
-                    if not connect_mt5(target_account):
-                        raise RuntimeError(f"Could not connect to {target_account.get('label', 'the trade account')}")
-                account = mt5.account_info()
-                server = getattr(account, "server", "") if account else ""
-                resolved_symbol = resolve_broker_symbol(symbol)
-                rates = mt5.copy_rates_range(resolved_symbol, timeframe_map[interval], start, end)
-                if rates is None and mt5_ipc_failed() and reconnect_mt5(f"copy_rates_range failure {mt5.last_error()}"):
-                    resolved_symbol = resolve_broker_symbol(symbol)
-                    rates = mt5.copy_rates_range(resolved_symbol, timeframe_map[interval], start, end)
-            if rates is None or len(rates) == 0:
-                raise RuntimeError(f"MT5 returned no {interval} candles for {resolved_symbol}: {mt5.last_error()}")
-            candles = [{
-                "time": int(rate["time"]), "open": float(rate["open"]),
-                "high": float(rate["high"]), "low": float(rate["low"]), "close": float(rate["close"]),
-            } for rate in rates]
-            upload = requests.post(
-                f"{API_BASE}/trades/{trade_id}/replay-candles",
-                json={"brokerSymbol": symbol, "resolvedBrokerSymbol": resolved_symbol, "interval": interval, "server": server, "candles": candles},
-                headers=headers, timeout=API_TIMEOUT,
-            )
-            upload.raise_for_status()
-            log.info("[REPLAY] Uploaded %d %s candles for %s (journal symbol: %s)", len(candles), interval, resolved_symbol, symbol)
-        except Exception as exc:
-            log.error("[REPLAY] Failed trade %s (%s): %s", trade_id, symbol, exc)
-            try:
-                requests.post(
-                    f"{API_BASE}/trades/{trade_id}/replay-failed",
-                    json={"error": str(exc), "interval": interval}, headers=headers, timeout=API_TIMEOUT,
-                )
-            except requests.RequestException:
-                pass
-
-
-def replay_worker():
-    """Hold a lightweight request open so Replay clicks reach MT5 immediately."""
-    log.info("[REPLAY] On-demand worker started (25-second long poll).")
-    while True:
-        try:
-            process_replay_requests(wait_seconds=25)
-        except Exception as exc:
-            log.error("[REPLAY] Worker error: %s", exc)
-            time.sleep(2)
-
 def main(once=False, full=False):
     log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
 
     if not get_jwt_token():
         log.critical("[START] Could not authenticate -- exiting.")
         return
-
-    if once:
-        pass
-    else:
-        threading.Thread(target=replay_worker, name="MT5ReplayWorker", daemon=True).start()
 
     while True:
         accounts = fetch_trading_accounts()
@@ -873,9 +701,6 @@ def main(once=False, full=False):
 
         if force_full_sync and not full:
             mark_resync_complete()
-
-        if once:
-            process_replay_requests()
 
         if once:
             log.info("[STOP] One-shot sync complete.")

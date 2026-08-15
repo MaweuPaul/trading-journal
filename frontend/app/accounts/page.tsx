@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
-  ShieldCheck, Trash2, WifiOff,
+  ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video,
 } from 'lucide-react';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
@@ -41,6 +41,24 @@ const emptyForm: AccountForm = {
   requireRealAccount: false, symbolAliases: '',
 };
 
+interface CTraderStatus {
+  connected: boolean;
+  databaseAvailable?: boolean;
+  ctidTraderAccountId?: string;
+  isLive?: boolean;
+  brokerTitle?: string;
+  traderLogin?: string;
+  connectedAt?: string;
+  hasSelectedAccount?: boolean;
+}
+
+interface CTraderAccountOption {
+  ctidTraderAccountId: string;
+  isLive: boolean;
+  brokerTitle: string;
+  traderLogin: string;
+}
+
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString() : 'Not yet';
 }
@@ -65,6 +83,106 @@ export default function TradingAccountsPage() {
   const [form, setForm] = useState<AccountForm>(emptyForm);
 
   const token = () => localStorage.getItem('token');
+
+  // ── cTrader connection (Trade Replay candle source) ─────────────────────
+  const [ctraderStatus, setCtraderStatus] = useState<CTraderStatus | null>(null);
+  const [ctraderLoading, setCtraderLoading] = useState(true);
+  const [ctraderError, setCtraderError] = useState('');
+  const [ctraderNotice, setCtraderNotice] = useState('');
+  const [ctraderAccountOptions, setCtraderAccountOptions] = useState<CTraderAccountOption[]>([]);
+  const [ctraderConnecting, setCtraderConnecting] = useState(false);
+
+  const loadCtraderStatus = useCallback(async () => {
+    setCtraderLoading(true);
+    try {
+      const response = await fetch('/api/ctrader/status', { headers: { Authorization: `Bearer ${token()}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not load cTrader connection status.');
+      setCtraderStatus(body);
+    } catch (caught) {
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not load cTrader connection status.');
+    } finally {
+      setCtraderLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadCtraderStatus(); }, [loadCtraderStatus]);
+
+  // cTrader redirects back here with ?code=... after the owner authorizes.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (!code) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    (async () => {
+      setCtraderConnecting(true);
+      setCtraderError('');
+      setCtraderNotice('');
+      try {
+        const response = await fetch('/api/ctrader/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+          body: JSON.stringify({ code }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Could not complete the cTrader authorization.');
+        setCtraderStatus(body.connection);
+        if (body.accounts?.length > 1 && !body.connection?.hasSelectedAccount) {
+          setCtraderAccountOptions(body.accounts);
+        } else {
+          setCtraderNotice('cTrader connected. Trade Replay will now pull candles from it.');
+        }
+      } catch (caught) {
+        setCtraderError(caught instanceof Error ? caught.message : 'Could not complete the cTrader authorization.');
+      } finally {
+        setCtraderConnecting(false);
+      }
+    })();
+  }, []);
+
+  async function connectCtrader() {
+    setCtraderError('');
+    try {
+      const response = await fetch('/api/ctrader/auth-url', { headers: { Authorization: `Bearer ${token()}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not start cTrader authorization.');
+      window.location.href = body.url;
+    } catch (caught) {
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not start cTrader authorization.');
+    }
+  }
+
+  async function selectCtraderAccount(option: CTraderAccountOption) {
+    setCtraderError('');
+    try {
+      const response = await fetch('/api/ctrader/select-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(option),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not select the cTrader account.');
+      setCtraderStatus(body.connection);
+      setCtraderAccountOptions([]);
+      setCtraderNotice('cTrader account selected. Trade Replay will now pull candles from it.');
+    } catch (caught) {
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not select the cTrader account.');
+    }
+  }
+
+  async function disconnectCtrader() {
+    if (!confirm('Disconnect cTrader? Trade Replay will stop working until you reconnect.')) return;
+    setCtraderError('');
+    try {
+      const response = await fetch('/api/ctrader/connection', { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not disconnect cTrader.');
+      setCtraderStatus({ connected: false });
+      setCtraderNotice('cTrader disconnected.');
+    } catch (caught) {
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not disconnect cTrader.');
+    }
+  }
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
@@ -210,6 +328,67 @@ export default function TradingAccountsPage() {
               <div className="account-card-foot"><label className="account-switch"><input type="checkbox" checked={account.enabled} onChange={() => toggleAccount(account)} /><span />{account.enabled ? 'Sync enabled' : 'Sync disabled'}</label><div><button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button><button className="danger" onClick={() => archiveAccount(account)} aria-label={`Archive ${account.label}`}><Trash2 size={15} /> Archive</button></div></div>
             </article>;
           })}
+        </div>
+      )}
+
+      <section className="account-list-head" style={{ marginTop: 32 }}>
+        <div>
+          <div className="account-title-line"><Video size={22} /><h2>Trade Replay Data Source</h2></div>
+          <p>cTrader Open API supplies the exact historical candles shown in Trade Replay.</p>
+        </div>
+      </section>
+
+      {ctraderError && <div className="account-alert error" role="alert"><AlertCircle size={17} />{ctraderError}</div>}
+      {ctraderNotice && <div className="account-alert success" aria-live="polite"><CheckCircle2 size={17} />{ctraderNotice}</div>}
+
+      {ctraderAccountOptions.length > 0 ? (
+        <div className="account-empty">
+          <PlugZap size={28} />
+          <strong>Choose which cTrader account to use for Replay</strong>
+          <p>This access token can reach more than one account. Pick the one whose candles you want in Trade Replay.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 420 }}>
+            {ctraderAccountOptions.map(option => (
+              <button
+                key={option.ctidTraderAccountId}
+                className="btn-ghost"
+                style={{ justifyContent: 'space-between', display: 'flex', width: '100%' }}
+                onClick={() => selectCtraderAccount(option)}
+              >
+                <span>{option.brokerTitle || 'cTrader account'} · login {option.traderLogin}</span>
+                <span>{option.isLive ? 'Live' : 'Demo'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : ctraderLoading ? (
+        <div className="account-empty"><Loader2 className="spin" /><strong>Checking cTrader connection…</strong></div>
+      ) : ctraderStatus?.connected ? (
+        <div className="account-card-grid">
+          <article className="account-card">
+            <div className="account-card-top">
+              <div className="account-provider-icon"><Video size={19} /></div>
+              <div className="account-card-name"><h3>{ctraderStatus.brokerTitle || 'cTrader'}</h3><span>cTrader Open API · {ctraderStatus.isLive ? 'Live' : 'Demo'}</span></div>
+              <span className="account-status connected"><CheckCircle2 size={13} />Connected</span>
+            </div>
+            <dl className="account-metrics">
+              <div><dt>Login</dt><dd>{ctraderStatus.traderLogin || '—'}</dd></div>
+              <div><dt>Connected</dt><dd>{formatDate(ctraderStatus.connectedAt || null)}</dd></div>
+            </dl>
+            <div className="account-card-foot">
+              <span />
+              <div><button className="danger" onClick={disconnectCtrader}><Unlink size={15} /> Disconnect</button></div>
+            </div>
+          </article>
+        </div>
+      ) : (
+        <div className="account-empty">
+          <Video size={32} />
+          <strong>cTrader is not connected</strong>
+          <p>Connect a cTrader Open API app to power Trade Replay's chart data. Register one at openapi.ctrader.com if you haven't already.</p>
+          <button className="btn-primary" onClick={connectCtrader} disabled={ctraderConnecting}>
+            {ctraderConnecting ? <Loader2 size={17} className="spin" /> : <PlugZap size={17} />}
+            {ctraderConnecting ? 'Connecting…' : 'Connect cTrader'}
+          </button>
         </div>
       )}
     </main>

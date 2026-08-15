@@ -9,6 +9,7 @@ const path = require('path');
 const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
 const tradingAccountsRouter = require('./routes/tradingAccounts');
+const ctraderRouter = require('./routes/ctrader');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -46,6 +47,7 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api', tradingAccountsRouter);
+app.use('/api', ctraderRouter);
 app.use('/api', tradesRouter);
 
 // Health check

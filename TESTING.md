@@ -588,19 +588,18 @@ Expected results:
 
 ## Trade replay acceptance test
 
-Run the authenticated `sync.py` process with MT5 connected, then use a closed trade whose broker history is available. Configure `TWELVE_DATA_API_KEY` only to test the optional fallback.
+Connect cTrader from the **Accounts** page first (Client ID/Secret in `backend/.env`, then authorize an account). Use a closed trade whose symbol is available on that cTrader account.
 
-1. Open the trade drawer and select **Replay**. Confirm it says it is waiting for exact MT5 broker candles.
-2. Confirm `sync.py` logs its long-poll connection and `[REPLAY] Uploaded ... candles` within a few seconds of clicking Replay.
-3. Confirm the source label identifies MT5 and the broker server, and that it uses the exact broker symbol.
-4. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
-5. Switch through `1m`, `5m`, `15m`, `1H`, `4H`, and `1D`; confirm each control loads its labelled MT5 interval and keeps entry/exit markers on the candle containing the trade timestamp.
+1. Open the trade drawer and select **Replay**. Confirm the chart loads without any "waiting for agent" state — cTrader resolves synchronously.
+2. Confirm the source label identifies cTrader, and that the resolved symbol is sensible for a broker-suffixed instrument (e.g. `XAUUSDm` still matches cTrader's `XAUUSD`).
+3. Confirm the full-screen chart loads candles before and after the trade and displays entry/exit price lines.
+4. Switch through `1m`, `5m`, `15m`, `1H`, `4H`, and `1D`; confirm each control loads its labelled interval and keeps entry/exit markers on the candle containing the trade timestamp.
    - Confirm the toolbar is split into labelled Timeframe and Annotate groups on desktop. Select Select, Zone, Line, Level, Arrow, Text, Image, and Event in turn; verify the selected tool has a clearly visible active state and every control remains keyboard focusable.
    - Select Zone, Line, Level, Arrow, Text, or Image and verify the larger color controls appear. Change color, draw an annotation, and confirm Undo becomes enabled immediately. Use Undo and confirm it disables again when history is empty.
    - At phone width, confirm the toolbar remains one touch-friendly horizontal strip that can be scrolled without shrinking its buttons.
-6. On an uncached timeframe, confirm the chart appears as soon as MT5 uploads it without waiting for a separate 2.5-second browser poll. Confirm the loaded bar count provides substantial context around the trade.
-7. Return to a previously loaded timeframe and confirm its TTL session loads immediately without overwriting the other intervals.
-8. Close and reopen Replay within 30 minutes. Confirm it loads immediately from the MongoDB TTL session and that exported trade data contains no replay candles.
+5. Return to a previously loaded timeframe and confirm it loads instantly from the in-process 30-minute cache.
+6. Close and reopen Replay within 30 minutes. Confirm it loads immediately from cache and that exported trade data contains no replay candles.
+7. Disconnect cTrader from the Accounts page, open a trade's Replay, and confirm it shows a clear "cTrader is not connected" setup message with a link back to Accounts rather than a generic error. Reconnect before continuing.
 9. Confirm the journal identifies the immutable playbook version, separates Plan, Execution, and Review rules, and preserves changed answers after saving.
 10. Play, pause, step backward/forward, jump to the beginning/end, scrub the progress bar, and change replay speed.
 11. Confirm entry and exit markers appear only after their corresponding candles are revealed.
@@ -631,15 +630,14 @@ Run the authenticated `sync.py` process with MT5 connected, then use a closed tr
 30. Switch timeframes while the draft contains unsaved playbook work. Confirm candle data changes without resetting the draft to the trade's older completed values.
 31. Temporarily interrupt the backend, change a draft field, and confirm **Draft not saved** is visible with the error. Restore the backend, make another change, and confirm autosave recovers.
 32. Inspect the URL and browser local storage; confirm private draft content is absent. Download JSON backup and confirm the Replay Journal draft is present.
-33. Repeat with a broker-suffixed symbol such as `EURUSDm`.
-34. Stop `sync.py`, open a different trade without stored replay data, and select **Use Twelve Data fallback**.
-35. Remove the fallback key temporarily and confirm Replay shows setup instructions; then restore it and test a rate-limited or unsupported symbol.
-36. Test an Exness `USTEC` fallback. Confirm it requests `NDX` and displays a plan-coverage message rather than a generic HTTP 404 when indices are unavailable.
+33. Repeat with a broker-suffixed symbol such as `EURUSDm` and confirm it still resolves to cTrader's `EURUSD`.
+34. Remove `CTRADER_CLIENT_ID`/`CTRADER_CLIENT_SECRET` temporarily, restart the backend, and confirm Replay shows a clear setup error rather than a generic failure; then restore them.
+35. Open Replay for a symbol that doesn't exist on the connected cTrader account and confirm it reports "symbol not found" rather than a blank chart.
 
 Expected results:
 
-- The Twelve Data key is used only by the backend proxy and never appears in browser requests.
-- MT5 requests use UTC date ranges and their returned candles remain only in a 30-minute authenticated MongoDB TTL session; Twelve Data requests time out after 15 seconds and use a transient cache.
+- cTrader OAuth tokens are stored encrypted in MongoDB and never appear in browser requests; only the connection status (broker name, login, live/demo) is returned to the frontend.
+- Replay resolves synchronously — no long-poll, no MongoDB TTL session, no background worker. Candles are cached in-process for 30 minutes per trade/timeframe.
 - The modal works at desktop and phone widths, locks background scrolling, supports Escape to close, and exposes visible keyboard focus.
 - Chart annotations persist through an ownership-scoped Replay Journal endpoint. Invalid types, timeframes, duplicate IDs, empty text, and invalid chart coordinates are rejected by the backend.
 - Timeline events persist in the same Replay Journal, but rule links are accepted only when they belong to the immutable playbook snapshot attached to that trade.

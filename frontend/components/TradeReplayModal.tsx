@@ -83,7 +83,7 @@ const DRAWING_COLORS = [
 ] as const;
 const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
 const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  select: { label: 'Select', instruction: 'Click an annotation to select it, drag to move it, or use Delete/Backspace to remove it.' },
+  select: { label: 'Select', instruction: 'Drag an annotation to move it. Click it (without dragging) to delete it.' },
   rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area. The tool turns off after one zone.' },
   line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
   horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
@@ -788,7 +788,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     redrawCanvas();
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (movingAnnotationRef.current) { movingAnnotationRef.current = null; return; }
+    if (movingAnnotationRef.current) {
+      const move = movingAnnotationRef.current;
+      movingAnnotationRef.current = null;
+      if (!move.moved) deleteAnnotation(move.annotation);
+      return;
+    }
     if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
@@ -1107,7 +1112,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
         <div className="replay-tool-group replay-tool-actions">
-          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Select an annotation to inspect or delete"><MousePointer2 size={16} /> Select</button>
+          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Drag an annotation to move it, click it to delete it"><MousePointer2 size={16} /> Select</button>
           <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
           <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} title="Delete the selected annotation (Delete)"><Trash2 size={16} /> Delete</button>
           {allAnnotations.length > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Objects ({allAnnotations.length})</button>}

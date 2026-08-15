@@ -42,6 +42,14 @@ interface PerfStats {
   currentBalance: number;
 }
 
+interface TradeAccountOption {
+  accountKey: string;
+  accountName: string;
+  accountType: string;
+  label: string;
+  count: number;
+}
+
 function fmt(n: number, digits = 2) {
   const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return n < 0 ? `-$${abs}` : `$${abs}`;
@@ -111,25 +119,40 @@ export default function PerformancePage() {
   const [stats, setStats] = useState<PerfStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [groupBySetup, setGroupBySetup] = useState(false);
+  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
+  const [mixedAccounts, setMixedAccounts] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : Promise.reject(new Error('Could not load trading accounts')))
+      .then(body => setTradeAccounts(body.accounts || []))
+      .catch(e => console.error(e));
+  }, []);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) { router.push('/login'); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${API}/performance?range=${range}&groupBySetup=${groupBySetup}`, {
+      const params = new URLSearchParams({ range, groupBySetup: String(groupBySetup) });
+      if (accountKeyFilter) params.set('accountKey', accountKeyFilter);
+      const res = await fetch(`${API}/performance?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) { localStorage.removeItem('token'); router.push('/login'); return; }
       const data = await res.json();
       setCurve(data.equityCurve || []);
       setStats(data.stats || null);
+      setMixedAccounts(Boolean(data.mixedAccounts));
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [range, groupBySetup, router]);
+  }, [range, groupBySetup, accountKeyFilter, router]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -170,6 +193,27 @@ export default function PerformancePage() {
               </select>
             </div>
 
+            {tradeAccounts.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>Account:</span>
+                <select
+                  value={accountKeyFilter}
+                  onChange={e => setAccountKeyFilter(e.target.value)}
+                  style={{
+                    border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                    color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
+                  }}
+                >
+                  <option value="">All accounts</option>
+                  {tradeAccounts.map(account => (
+                    <option key={account.accountKey} value={account.accountKey}>
+                      {account.label} ({account.accountType || 'unknown'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Range pills */}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {RANGES.map(r => (
@@ -204,6 +248,21 @@ export default function PerformancePage() {
         </div>
       ) : (
         <>
+          {mixedAccounts && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: 'var(--amber-bg, rgba(245,158,11,0.12))', border: '1px solid var(--amber, #f59e0b)',
+              borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 16, fontSize: 13,
+            }}>
+              <AlertTriangle size={16} style={{ flexShrink: 0, color: 'var(--amber, #f59e0b)' }} />
+              <span>
+                This view blends trades from more than one broker account. runningBalance, equity curve, and
+                drawdown are per-account, so these numbers are not a real balance history — pick a single
+                account above for accurate figures.
+              </span>
+            </div>
+          )}
+
           {/* ── Hero KPI Row ──────────────────────────────────────── */}
           <div style={{
             display: 'grid',

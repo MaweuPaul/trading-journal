@@ -19,7 +19,23 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   }),
 );
-app.use(cors({ origin: true, credentials: true }));
+
+// Reflecting every origin (origin: true) lets any website that a browser tab
+// happens to have open call this API with the user's stored bearer token.
+// Pin to an explicit allowlist instead; ALLOWED_ORIGINS is a comma-separated
+// list of exact origins (e.g. "http://localhost:3000,https://myjournal.app").
+const allowedOrigins = String(process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    // Same-origin requests, curl, and server-to-server calls send no Origin header.
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Origin not allowed by CORS policy'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '25mb' }));
 
 app.use(morgan('dev'));

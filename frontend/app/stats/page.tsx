@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from 'recharts';
-import { Clock, BarChart2, Smile, Award, Activity, CheckSquare, Calendar } from 'lucide-react';
+import { Clock, BarChart2, Smile, Award, Activity, CheckSquare, Calendar, AlertTriangle } from 'lucide-react';
 
 const API = '/api';
 
@@ -21,6 +21,16 @@ interface Stats {
   byEmotion: { emotion: string; pnl: number; trades: number; wins: number; winRate: number }[];
   byGrade: { grade: string; pnl: number; trades: number; wins: number; winRate: number }[];
   globalComplianceRate: number;
+  mixedAccounts?: boolean;
+  accountKeys?: string[];
+}
+
+interface TradeAccountOption {
+  accountKey: string;
+  accountName: string;
+  accountType: string;
+  label: string;
+  count: number;
 }
 
 const DAY_SHORT: Record<string, string> = {
@@ -96,6 +106,17 @@ export default function StatsPage() {
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
   const [groupBySetup, setGroupBySetup] = useState(false);
+  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load trading accounts')))
+      .then(body => setTradeAccounts(body.accounts || []))
+      .catch(console.error);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -106,7 +127,9 @@ export default function StatsPage() {
     setHasToken(true);
 
     setLoading(true);
-    fetch(`${API}/stats?range=${range}&groupBySetup=${groupBySetup}`, {
+    const params = new URLSearchParams({ range, groupBySetup: String(groupBySetup) });
+    if (accountKeyFilter) params.set('accountKey', accountKeyFilter);
+    fetch(`${API}/stats?${params}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(r => {
@@ -120,7 +143,7 @@ export default function StatsPage() {
       .then(setStats)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [range, groupBySetup, router]);
+  }, [range, groupBySetup, accountKeyFilter, router]);
 
   if (loading) return <div className="loading-wrap"><div className="spinner" /></div>;
   if (!hasToken) return null;
@@ -173,6 +196,26 @@ export default function StatsPage() {
                 <option value="true">🔁 Setups (Grouped Re-Entries)</option>
               </select>
             </div>
+            {tradeAccounts.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>Account:</span>
+                <select
+                  value={accountKeyFilter}
+                  onChange={e => { setAccountKeyFilter(e.target.value); setLoading(true); }}
+                  style={{
+                    border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                    color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
+                  }}
+                >
+                  <option value="">All accounts</option>
+                  {tradeAccounts.map(account => (
+                    <option key={account.accountKey} value={account.accountKey}>
+                      {account.label} ({account.accountType || 'unknown'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
               <select
@@ -199,6 +242,17 @@ export default function StatsPage() {
           </div>
         </div>
       </div>
+
+      {stats.mixedAccounts && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--amber-bg, rgba(245,158,11,0.12))', border: '1px solid var(--amber, #f59e0b)',
+          borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 16, fontSize: 13,
+        }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, color: 'var(--amber, #f59e0b)' }} />
+          <span>This view blends trades from more than one broker account. Pick a single account above for accurate per-account figures.</span>
+        </div>
+      )}
 
       {/* Summary row */}
       <div className="stat-grid" style={{ marginBottom: 20 }}>

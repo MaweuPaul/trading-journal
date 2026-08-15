@@ -32,9 +32,10 @@ interface CoachData {
   totalTrades: number;
   earlyExits: {
     count: number;
+    withRiskData?: number;
     totalMissedRR: number;
     estimatedMissedUSD: number;
-    trades: { _id: string; symbol: string; direction: string; pnlUSD: number; plannedRR: number; exitReason: string; missedRR: number; estimatedMissedUSD: number; closeTime: string }[];
+    trades: { _id: string; symbol: string; direction: string; pnlUSD: number; plannedRR: number; exitReason: string; missedRR: number | null; estimatedMissedUSD: number | null; hasRiskData?: boolean; closeTime: string }[];
   };
   gradeGap: {
     avgAnalysisGrade: string | null;
@@ -48,7 +49,7 @@ interface CoachData {
   exitReasonBreakdown: { reason: string; count: number; wins: number; winRate: number }[];
   confidenceVsWinRate: { confidence: number; count: number; wins: number; winRate: number }[];
   planAdherence: { score: number | null; tradesAssessed: number; totalRules: number; compliedRules: number };
-  manualIntervention: { interventionCount: number; cleanCount: number; untaggedCount: number; interventionWinRate: number; cleanWinRate: number; interventionAvgPnL: number; cleanAvgPnL: number };
+  manualIntervention: { interventionCount: number; cleanCount: number; untaggedCount: number; interventionWinRate: number; cleanWinRate: number; interventionAvgPnL: number; cleanAvgPnL: number; interventionAvgRR: number | null; cleanAvgRR: number | null };
   demoVsLive: {
     live: { tradeCount: number; winRate: number; avgPnL: number; profitFactor: number; planAdherence: number | null } | null;
     demo: { tradeCount: number; winRate: number; avgPnL: number; profitFactor: number; planAdherence: number | null } | null;
@@ -267,8 +268,18 @@ export default function CoachPage() {
                   <p style={{ fontSize: 12.5, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
                     No early exits recorded yet. Set <strong>Planned R:R</strong> and <strong>Exit Reason</strong> on trades to track this.
                   </p>
+                ) : (data!.earlyExits.withRiskData ?? 0) === 0 ? (
+                  <p style={{ fontSize: 12.5, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
+                    {data!.earlyExits.count} early {data!.earlyExits.count === 1 ? 'exit' : 'exits'} found, but none have a stop-loss
+                    on record yet. Missed-profit needs the actual risk MT5 had on the order — re-run the sync agent to backfill it.
+                  </p>
                 ) : (
                   <>
+                    {(data!.earlyExits.withRiskData ?? 0) < data!.earlyExits.count && (
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+                        Based on {data!.earlyExits.withRiskData} of {data!.earlyExits.count} early exits with a recorded stop-loss.
+                      </p>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
                       <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: '12px 14px' }}>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Missed R total</div>
@@ -306,8 +317,10 @@ export default function CoachPage() {
                               <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>{t.exitReason}</span>
                             </div>
                             <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontSize: 11.5, color: '#ef4444', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
-                                −{t.missedRR.toFixed(1)}R / ~${t.estimatedMissedUSD.toFixed(2)}
+                              <div style={{ fontSize: 11.5, color: t.hasRiskData ? '#ef4444' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                                {t.hasRiskData && t.missedRR != null && t.estimatedMissedUSD != null
+                                  ? `−${t.missedRR.toFixed(1)}R / ~$${t.estimatedMissedUSD.toFixed(2)}`
+                                  : 'No stop-loss on record'}
                               </div>
                               <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
                                 Planned {t.plannedRR}R · Got ${t.pnlUSD.toFixed(2)}
@@ -435,6 +448,7 @@ export default function CoachPage() {
                       label: '🤚 Intervened', count: data!.manualIntervention.interventionCount,
                       winRate: data!.manualIntervention.interventionWinRate,
                       avgPnL: data!.manualIntervention.interventionAvgPnL,
+                      avgRR: data!.manualIntervention.interventionAvgRR,
                       color: '#ef4444',
                       desc: 'Modified SL/TP or closed manually'
                     },
@@ -442,6 +456,7 @@ export default function CoachPage() {
                       label: '✋ Untouched', count: data!.manualIntervention.cleanCount,
                       winRate: data!.manualIntervention.cleanWinRate,
                       avgPnL: data!.manualIntervention.cleanAvgPnL,
+                      avgRR: data!.manualIntervention.cleanAvgRR,
                       color: '#10b981',
                       desc: 'Trade ran to SL or TP without interference'
                     },
@@ -452,7 +467,7 @@ export default function CoachPage() {
                     }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: col.color, marginBottom: 4 }}>{col.label}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>{col.desc}</div>
-                      <div style={{ display: 'flex', gap: 16 }}>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                         <div>
                           <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Win Rate</div>
                           <div style={{ fontSize: 18, fontWeight: 800, color: col.color, fontFamily: 'var(--font-mono)' }}>
@@ -463,6 +478,12 @@ export default function CoachPage() {
                           <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Avg P&L</div>
                           <div style={{ fontSize: 18, fontWeight: 800, color: col.avgPnL >= 0 ? '#10b981' : '#ef4444', fontFamily: 'var(--font-mono)' }}>
                             {col.count > 0 ? `$${col.avgPnL.toFixed(2)}` : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Avg R</div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+                            {col.avgRR != null ? `${col.avgRR}R` : '—'}
                           </div>
                         </div>
                         <div>

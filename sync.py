@@ -164,6 +164,17 @@ def history_deals_get_with_retry(*args, **kwargs):
         return deals
 
 
+def history_orders_get_with_retry(*args, **kwargs):
+    """Read order history (for the sl/tp set on the entry order) with the same retry behavior."""
+    with MT5_LOCK:
+        orders = mt5.history_orders_get(*args, **kwargs)
+        if orders is None and mt5_ipc_failed():
+            error = mt5.last_error()
+            if reconnect_mt5(f"history_orders_get failure {error}"):
+                orders = mt5.history_orders_get(*args, **kwargs)
+        return orders
+
+
 def configured_symbol_aliases():
     """Parse XAUUSD:XAUUSDm,USTEC:USTECm style explicit broker mappings."""
     aliases = {}
@@ -392,6 +403,35 @@ def mark_resync_complete():
         log.warning("[SYNC] Could not mark resync complete: %s", e)
 
 
+def _balance_deal_delta(deal):
+    """
+    Return the signed balance impact of a deal if it's a deposit/withdrawal/
+    credit/correction/bonus/charge (a "balance operation"), or None if it's a
+    normal trade deal. MT5 already signs `profit` correctly for these (positive
+    for money in, negative for money out), so the raw value is the delta.
+    """
+    balance_types = {
+        getattr(mt5, "DEAL_TYPE_BALANCE", None),
+        getattr(mt5, "DEAL_TYPE_CREDIT", None),
+        getattr(mt5, "DEAL_TYPE_CORRECTION", None),
+        getattr(mt5, "DEAL_TYPE_BONUS", None),
+        getattr(mt5, "DEAL_TYPE_CHARGE", None),
+    }
+    balance_types.discard(None)
+
+    amount = float(getattr(deal, "profit", 0.0) or 0.0)
+    if amount == 0:
+        return None
+    symbol = (getattr(deal, "symbol", "") or "").strip()
+    volume = float(getattr(deal, "volume", 0.0) or 0.0)
+    position_id = int(getattr(deal, "position_id", 0) or 0)
+    is_known_balance_type = deal.type in balance_types
+    is_balance_like_row = volume == 0 and position_id == 0 and symbol.lower() in {"", "balance", "credit", "withdrawal", "deposit"}
+    if not is_known_balance_type and not is_balance_like_row:
+        return None
+    return amount
+
+
 def fetch_deals(from_date=None):
     """
     Fetch closed deals from MT5 history starting from from_date.
@@ -414,24 +454,60 @@ def fetch_deals(from_date=None):
     current_balance = get_account_balance()
     account_identity = get_account_identity()
 
-    # Sort chronologically so we can compute a rolling balance per trade.
-    # The running balance after trade N = starting_balance + sum(pnl[0..N])
-    # We derive starting_balance by subtracting all profits from current balance.
-    closed_sorted = sorted(closed, key=lambda d: d.time)
-    total_profit_in_window = sum(
-        float(d.profit) + float(d.commission) + float(d.swap)
-        for d in closed_sorted
-    )
-    # Balance before the first deal in this window
-    balance_before_window = current_balance - total_profit_in_window
+    # Deposits/withdrawals/credits inside this window also move the balance.
+    # Reconstructing running balance from trade P&L alone (ignoring these)
+    # offsets every historical balance by however much cash moved in between.
+    balance_deals = [d for d in deals if _balance_deal_delta(d) is not None]
 
-    # Build a running balance as we walk through deals chronologically
+    # Sort chronologically so we can compute a rolling balance per trade.
+    # The running balance after entry N = starting_balance + sum(delta[0..N])
+    # across BOTH trade closes and cash-flow events. We derive starting_balance
+    # by subtracting the total net effect of everything in this window from
+    # the current live balance.
+    timeline = (
+        [{"time": d.time, "ticket": d.ticket, "delta": float(d.profit) + float(d.commission) + float(d.swap)} for d in closed]
+        + [{"time": d.time, "ticket": None, "delta": _balance_deal_delta(d)} for d in balance_deals]
+    )
+    timeline.sort(key=lambda entry: entry["time"])
+    total_net_in_window = sum(entry["delta"] for entry in timeline)
+    # Balance before the first entry in this window
+    balance_before_window = current_balance - total_net_in_window
+
+    # Walk the combined timeline chronologically, tracking running balance
+    # after each entry and recording it for trade tickets specifically.
     running_bal = balance_before_window
-    # Map ticket -> running balance after that deal closes
     ticket_to_running_bal = {}
-    for d in closed_sorted:
-        running_bal += float(d.profit) + float(d.commission) + float(d.swap)
-        ticket_to_running_bal[d.ticket] = running_bal
+    for entry in timeline:
+        running_bal += entry["delta"]
+        if entry["ticket"] is not None:
+            ticket_to_running_bal[entry["ticket"]] = running_bal
+
+    # DEAL_REASON tells us objectively how the trade actually closed (hit its
+    # stop, hit its target, closed manually, an EA closed it, or a stop-out) —
+    # independent of whatever the trader later types into exitReason. Comparing
+    # the two is how a journal catches "I said ManualClose but it was really a
+    # stop-out" instead of just trusting self-reporting.
+    EXIT_TRIGGER_BY_REASON = {
+        getattr(mt5, "DEAL_REASON_SL", None): "SL",
+        getattr(mt5, "DEAL_REASON_TP", None): "TP",
+        getattr(mt5, "DEAL_REASON_SO", None): "StopOut",
+        getattr(mt5, "DEAL_REASON_EXPERT", None): "Expert",
+        getattr(mt5, "DEAL_REASON_CLIENT", None): "Manual",
+        getattr(mt5, "DEAL_REASON_MOBILE", None): "Manual",
+        getattr(mt5, "DEAL_REASON_WEB", None): "Manual",
+    }
+
+    symbol_info_cache = {}
+
+    def symbol_contract_info(symbol):
+        if symbol not in symbol_info_cache:
+            info = mt5.symbol_info(symbol)
+            symbol_info_cache[symbol] = {
+                "contractSize": float(getattr(info, "trade_contract_size", 0) or 0) if info else 0,
+                "tickValue": float(getattr(info, "trade_tick_value", 0) or 0) if info else 0,
+                "tickSize": float(getattr(info, "trade_tick_size", 0) or 0) if info else 0,
+            }
+        return symbol_info_cache[symbol]
 
     result = []
 
@@ -440,6 +516,7 @@ def fetch_deals(from_date=None):
         open_deals = history_deals_get_with_retry(position=deal.position_id)
         entry_price = deal.price   # fallback
         open_time   = deal.time    # fallback (unix ts)
+        entry_order_ticket = None
 
         # Determine trade direction from the opening deal type
         direction = "BUY"
@@ -448,6 +525,7 @@ def fetch_deals(from_date=None):
             if open_deal:
                 entry_price = open_deal.price
                 open_time   = open_deal.time
+                entry_order_ticket = getattr(open_deal, "order", None)
                 direction = "BUY" if open_deal.type == mt5.DEAL_TYPE_BUY else "SELL"
             else:
                 direction = "SELL" if deal.type == mt5.DEAL_TYPE_BUY else "BUY"
@@ -463,6 +541,34 @@ def fetch_deals(from_date=None):
         # Balance just before this trade closed (used for % calculation)
         balance_before_trade = trade_running_balance - float(deal.profit) - float(deal.commission) - float(deal.swap)
         pnl_pct = (deal.profit / balance_before_trade * 100) if balance_before_trade > 0 else 0
+
+        # The stop/target set on the order that opened this position. If the
+        # trader moved the stop after entry, MT5's history API does not expose
+        # that revision, so this reflects the plan at entry — which is exactly
+        # what should be compared against manuallyIntervened / exitTrigger.
+        stop_loss = 0.0
+        take_profit = 0.0
+        if entry_order_ticket:
+            entry_orders = history_orders_get_with_retry(ticket=entry_order_ticket)
+            if entry_orders:
+                stop_loss = float(getattr(entry_orders[0], "sl", 0) or 0)
+                take_profit = float(getattr(entry_orders[0], "tp", 0) or 0)
+
+        # Risk in account currency for the stop distance, computed by MT5's own
+        # calculator (correctly handles contract size, tick value, and any
+        # quote-currency conversion) rather than hand-rolled point math.
+        risk_usd = None
+        if stop_loss > 0:
+            order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+            try:
+                computed_risk = mt5.order_calc_profit(order_type, deal.symbol, float(deal.volume), float(entry_price), stop_loss)
+                if computed_risk is not None:
+                    risk_usd = round(abs(computed_risk), 2)
+            except Exception as exc:
+                log.debug("[MT5] order_calc_profit failed for ticket %s: %s", deal.ticket, exc)
+        risk_percent = round(risk_usd / balance_before_trade * 100, 4) if risk_usd and balance_before_trade > 0 else None
+
+        contract_info = symbol_contract_info(deal.symbol)
 
         result.append({
             "dealId":          str(deal.ticket),
@@ -480,6 +586,14 @@ def fetch_deals(from_date=None):
             "closeTime":       close_dt.isoformat(),
             "durationMinutes": duration,
             "runningBalance":  round(trade_running_balance, 2),
+            "stopLoss":        stop_loss or None,
+            "takeProfit":      take_profit or None,
+            "riskUSD":         risk_usd,
+            "riskPercent":     risk_percent,
+            "exitTrigger":     EXIT_TRIGGER_BY_REASON.get(getattr(deal, "reason", None), ""),
+            "magic":           int(getattr(deal, "magic", 0) or 0),
+            "contractSize":    contract_info["contractSize"] or None,
+            "tickValue":       contract_info["tickValue"] or None,
             **account_identity,
         })
 
@@ -500,39 +614,16 @@ def fetch_account_events(from_date=None):
         log.warning("[MT5] history_deals_get returned None for account events: %s", mt5.last_error())
         return []
 
-    balance_types = {
-        getattr(mt5, "DEAL_TYPE_BALANCE", None),
-        getattr(mt5, "DEAL_TYPE_CREDIT", None),
-        getattr(mt5, "DEAL_TYPE_CORRECTION", None),
-        getattr(mt5, "DEAL_TYPE_BONUS", None),
-        getattr(mt5, "DEAL_TYPE_CHARGE", None),
-    }
-    balance_types.discard(None)
-
     events = []
     account_identity = get_account_identity()
     for deal in deals:
-        amount = float(getattr(deal, "profit", 0.0) or 0.0)
-        if amount == 0:
+        amount = _balance_deal_delta(deal)
+        if amount is None:
             continue
 
-        symbol = (getattr(deal, "symbol", "") or "").strip()
-        volume = float(getattr(deal, "volume", 0.0) or 0.0)
-        position_id = int(getattr(deal, "position_id", 0) or 0)
         comment = getattr(deal, "comment", "") or ""
         external_id = getattr(deal, "external_id", "") or ""
-        is_known_balance_type = deal.type in balance_types
-        is_balance_like_row = volume == 0 and position_id == 0 and symbol.lower() in {"", "balance", "credit", "withdrawal", "deposit"}
-
-        if not is_known_balance_type and not is_balance_like_row:
-            continue
-
-        if amount > 0:
-            event_type = "deposit"
-        elif is_known_balance_type or is_balance_like_row:
-            event_type = "withdrawal"
-        else:
-            event_type = "adjustment"
+        event_type = "deposit" if amount > 0 else "withdrawal"
 
         note = comment or external_id
         occurred_at = datetime.fromtimestamp(deal.time, tz=timezone.utc)

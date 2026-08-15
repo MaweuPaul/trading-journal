@@ -30,6 +30,16 @@ const tradeSchema = new mongoose.Schema({
   exitReason:         { type: String, enum: ['TP', 'SL', 'Fear', 'Revenge', 'News', 'ManualClose', 'FOMO', 'PartialClose', 'Other', ''], default: '' },
   manuallyIntervened: { type: Boolean, default: null }, // did you modify SL/TP or close manually after entry?
 
+  // -- Real risk data, synced from MT5 (broker fact, not self-reported) -----
+  stopLoss:    { type: Number, default: null },  // SL price set on the order that opened this position
+  takeProfit:  { type: Number, default: null },  // TP price set on the order that opened this position
+  riskUSD:     { type: Number, default: null },  // account-currency risk for the stop distance (from MT5's own calculator)
+  riskPercent: { type: Number, default: null },  // riskUSD as % of balance just before this trade
+  exitTrigger: { type: String, enum: ['SL', 'TP', 'StopOut', 'Expert', 'Manual', ''], default: '' }, // objective close reason from MT5 deal.reason — compare against the trader-reported exitReason
+  magic:          { type: Number, default: 0 },        // EA magic number; 0/absent means discretionary
+  contractSize:   { type: Number, default: null },     // symbol contract size at sync time
+  tickValue:      { type: Number, default: null },     // symbol tick value at sync time (account currency)
+
   // -- Edge Coach: Pre-Trade Self-Assessment --------------------------------
   confidenceRating: { type: Number, min: 1, max: 10, default: null }, // 1-10 pre-trade confidence
   accountType:      { type: String, enum: ['live', 'demo', ''], default: '' }, // demo vs live tracking

@@ -2,18 +2,38 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { safeSecretEqual } = require('../lib/credentialEncryption');
 
 const router = express.Router();
 
+// Credential-guessing throttle. This API has no CAPTCHA and CORS alone does
+// not stop a same-origin script from looping, so cap attempts per IP.
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Wait 15 minutes and try again.' },
+});
+
 function ownerEnv() {
   return {
     name: process.env.OWNER_NAME || process.env.ADMIN_NAME || 'Journal Owner',
     email: process.env.OWNER_EMAIL || process.env.ADMIN_EMAIL || '',
     password: process.env.OWNER_PASSWORD || process.env.ADMIN_PASSWORD || '',
+    passwordHash: process.env.OWNER_PASSWORD_HASH || '',
   };
+}
+
+// Prefer a bcrypt hash (OWNER_PASSWORD_HASH) over a plaintext OWNER_PASSWORD when both
+// are configured, so the owner's real password never has to sit in .env in the clear.
+async function offlinePasswordMatches(env, suppliedPassword) {
+  if (env.passwordHash) return bcrypt.compare(suppliedPassword, env.passwordHash);
+  if (env.password) return safeSecretEqual(suppliedPassword, env.password);
+  return false;
 }
 
 function signToken(user) {
@@ -39,7 +59,7 @@ router.get('/setup-status', async (_req, res) => {
         setupRequired: false,
         signupAvailable: false,
         databaseAvailable: false,
-        offlineLoginAvailable: Boolean(env.email && env.password),
+        offlineLoginAvailable: Boolean(env.email && (env.passwordHash || env.password)),
       });
     }
     const ownerExists = Boolean(await User.exists({}));
@@ -55,7 +75,7 @@ router.get('/setup-status', async (_req, res) => {
 });
 
 // POST /api/auth/register — creates the one and only owner account.
-router.post('/register', async (req, res) => {
+router.post('/register', credentialLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: 'MongoDB must be connected to create the owner account.' });
@@ -85,7 +105,7 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', credentialLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   try {
@@ -94,7 +114,8 @@ router.post('/login', async (req, res) => {
 
     if (mongoose.connection.readyState !== 1) {
       const env = ownerEnv();
-      if (env.email && env.password && email === env.email.toLowerCase() && password === env.password) {
+      const hasOfflineCredential = Boolean(env.email && (env.passwordHash || env.password));
+      if (hasOfflineCredential && email === env.email.toLowerCase() && await offlinePasswordMatches(env, password)) {
         const user = { id: 'mocked_admin_user_id', name: `${env.name} (Offline)`, email: env.email };
         return res.json({ token: signToken(user), user });
       }
@@ -113,7 +134,7 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/sync-agent -- exchanges the installation secret for a short-lived agent JWT.
-router.post('/sync-agent', async (req, res) => {
+router.post('/sync-agent', credentialLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB is required for sync-agent authentication.' });
     if (!process.env.SYNC_SECRET) return res.status(503).json({ error: 'SYNC_SECRET is not configured on the API.' });

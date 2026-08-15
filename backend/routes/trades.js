@@ -20,6 +20,7 @@ const {
   tradeMatchesAccountFilter,
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
+const { calculateMissedProfit } = require('../lib/tradeMath');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -27,6 +28,7 @@ const LOCAL_RULES_PATH = path.join(__dirname, '../local_user_rules.json');
 const LOCAL_PLAYBOOKS_PATH = path.join(__dirname, '../local_playbooks.json');
 const LOCAL_REPLAY_JOURNALS_PATH = path.join(__dirname, '../local_replay_journals.json');
 const OFFLINE_SCREENSHOTS_DIR = path.join(__dirname, '../public/screenshots');
+const MAINTENANCE_BACKUPS_DIR = path.join(__dirname, '../backups');
 const CLOUDINARY_READY = Boolean(
   process.env.CLOUDINARY_CLOUD_NAME &&
   process.env.CLOUDINARY_API_KEY &&
@@ -36,6 +38,16 @@ const CLOUDINARY_READY = Boolean(
 // Ensure offline screenshots directory exists
 if (!fs.existsSync(OFFLINE_SCREENSHOTS_DIR)) {
   fs.mkdirSync(OFFLINE_SCREENSHOTS_DIR, { recursive: true });
+}
+
+// Snapshot this user's trades to disk before an irreversible bulk-delete, so a
+// mistaken or malicious wipe can be recovered from the filesystem afterward.
+function backupUserTradesBeforeDelete(userId, trades) {
+  if (!fs.existsSync(MAINTENANCE_BACKUPS_DIR)) fs.mkdirSync(MAINTENANCE_BACKUPS_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filePath = path.join(MAINTENANCE_BACKUPS_DIR, `trades-${userId}-${stamp}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(trades, null, 2), 'utf8');
+  return filePath;
 }
 
 if (CLOUDINARY_READY) {
@@ -64,6 +76,15 @@ const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes; candles are never wri
 
 function syncAgentOnly(req, res, next) {
   if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+  next();
+}
+
+// Defense in depth: the sync-agent token is also meant to be kept off owner
+// journal routes by the URL allowlist in middleware/auth.js. Requiring this
+// here too means a bug or future edit to that allowlist can't alone expose
+// destructive or read-everything routes to a leaked agent token.
+function ownerOnly(req, res, next) {
+  if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
   next();
 }
 try {
@@ -423,7 +444,7 @@ async function savePlaybooks(userId, playbooks) {
   }
 }
 
-router.get('/playbooks', auth, async (req, res) => {
+router.get('/playbooks', auth, ownerOnly, async (req, res) => {
   try {
     res.json({ playbooks: await getPlaybooks(req.user.userId) });
   } catch (err) {
@@ -431,7 +452,7 @@ router.get('/playbooks', auth, async (req, res) => {
   }
 });
 
-router.post('/playbooks/evidence', auth, async (req, res) => {
+router.post('/playbooks/evidence', auth, ownerOnly, async (req, res) => {
   try {
     const { imageData, caption = '', kind = 'reference' } = req.body;
     if (!imageData || typeof imageData !== 'string' || !/^data:image\/(png|jpe?g|webp);base64,/i.test(imageData)) {
@@ -459,7 +480,7 @@ router.post('/playbooks/evidence', auth, async (req, res) => {
   }
 });
 
-router.post('/playbooks', auth, async (req, res) => {
+router.post('/playbooks', auth, ownerOnly, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     if (!name || name.length > 100) return res.status(400).json({ error: 'Strategy name is required' });
@@ -481,7 +502,7 @@ router.post('/playbooks', auth, async (req, res) => {
   }
 });
 
-router.put('/playbooks/:playbookId', auth, async (req, res) => {
+router.put('/playbooks/:playbookId', auth, ownerOnly, async (req, res) => {
   try {
     const playbooks = await getPlaybooks(req.user.userId);
     const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
@@ -508,7 +529,7 @@ router.put('/playbooks/:playbookId', auth, async (req, res) => {
   }
 });
 
-router.patch('/playbooks/:playbookId', auth, async (req, res) => {
+router.patch('/playbooks/:playbookId', auth, ownerOnly, async (req, res) => {
   try {
     const playbooks = await getPlaybooks(req.user.userId);
     const playbook = playbooks.find(item => item.playbookId === req.params.playbookId);
@@ -549,7 +570,7 @@ async function getUserRules(userId) {
   return inMemoryUserRules[String(userId)] || DEFAULT_TRADING_RULES;
 }
 
-router.get('/rules', auth, async (req, res) => {
+router.get('/rules', auth, ownerOnly, async (req, res) => {
   try {
     res.json({ rules: await getUserRules(req.user.userId) });
   } catch (err) {
@@ -557,7 +578,7 @@ router.get('/rules', auth, async (req, res) => {
   }
 });
 
-router.put('/rules', auth, async (req, res) => {
+router.put('/rules', auth, ownerOnly, async (req, res) => {
   try {
     const rules = normalizeRules(req.body.rules);
     if (mongoose.connection.readyState === 1) {
@@ -607,6 +628,19 @@ function isOfflineAccountEventVisibleToUser(event, userId) {
   if (String(userId) === 'mocked_admin_user_id') return true;
   if (!event.user) return true;
   return String(event.user) === String(userId);
+}
+
+// Every analytics/report route below must respect the same accountKey filter
+// as GET /api/trades, or a multi-account owner's demo trades, live trades,
+// and separate broker accounts silently blend into one equity curve, balance
+// and win rate. Mirrors the Trade query fragment used there.
+function applyAccountKeyToMongoQuery(query, accountKey) {
+  if (accountKey === '__unassigned__') {
+    query.$or = [{ accountKey: '' }, { accountKey: null }, { accountKey: { $exists: false } }];
+  } else if (accountKey) {
+    query.accountKey = String(accountKey).toLowerCase();
+  }
+  return query;
 }
 
 function sameTradeOwnerAndDealId(trade, userId, dealId, accountKey = '') {
@@ -973,7 +1007,7 @@ function reconstructTradeFromContext(ctx, userId) {
 }
 
 // POST /api/maintenance/resync-request  ask the local MT5 sync script to run a full sync
-router.post('/maintenance/resync-request', auth, async (req, res) => {
+router.post('/maintenance/resync-request', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id') {
       inMemorySyncRequests[String(req.user.userId)] = {
@@ -1044,27 +1078,46 @@ router.post('/maintenance/resync-complete', auth, syncAgentOnly, async (req, res
 });
 
 // DELETE /api/maintenance/trades  clear this user's trade database
-router.delete('/maintenance/trades', auth, async (req, res) => {
+// Irreversible: requires an explicit confirmation phrase and writes a JSON
+// backup to backend/backups/ before deleting anything.
+router.delete('/maintenance/trades', auth, ownerOnly, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      const before = inMemoryTrades.length;
-      inMemoryTrades = inMemoryTrades.filter(t => !isOfflineTradeVisibleToUser(t, req.user.userId));
-      saveLocalDatabase();
-      return res.json({ deleted: before - inMemoryTrades.length });
+    if (String(req.body?.confirm || '') !== 'DELETE ALL TRADES') {
+      return res.status(400).json({ error: 'This permanently deletes every trade. Resend with { "confirm": "DELETE ALL TRADES" }.' });
     }
 
+    if (mongoose.connection.readyState !== 1) {
+      const toDelete = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      const backupPath = backupUserTradesBeforeDelete(req.user.userId, toDelete);
+      inMemoryTrades = inMemoryTrades.filter(t => !isOfflineTradeVisibleToUser(t, req.user.userId));
+      saveLocalDatabase();
+      return res.json({ deleted: toDelete.length, backupPath });
+    }
+
+    const toDelete = await Trade.find({ user: req.user.userId }).lean();
+    const backupPath = backupUserTradesBeforeDelete(req.user.userId, toDelete);
     const result = await Trade.deleteMany({ user: req.user.userId });
     inMemoryTrades = inMemoryTrades.filter(t => String(t.user) !== String(req.user.userId));
     saveLocalDatabase();
-    res.json({ deleted: result.deletedCount || 0 });
+    res.json({ deleted: result.deletedCount || 0, backupPath });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/maintenance/dedupe-trades  remove repeated deal IDs for this user
-router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
+// Deleted rows may carry their own journal notes/screenshots, so this is
+// irreversible too: require confirmation and back up first.
+router.post('/maintenance/dedupe-trades', auth, ownerOnly, async (req, res) => {
   try {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({ error: 'This permanently removes duplicate trade rows. Resend with { "confirm": true }.' });
+    }
+    const currentTrades = mongoose.connection.readyState === 1
+      ? await Trade.find({ user: req.user.userId }).lean()
+      : inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+    const backupPath = backupUserTradesBeforeDelete(req.user.userId, currentTrades);
+
     if (mongoose.connection.readyState !== 1) {
       const seen = new Set();
       const deduped = [];
@@ -1084,7 +1137,7 @@ router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
       }
       inMemoryTrades = deduped;
       if (removed > 0) saveLocalDatabase();
-      return res.json({ removed });
+      return res.json({ removed, backupPath });
     }
 
     const duplicateGroups = await Trade.aggregate([
@@ -1113,7 +1166,7 @@ router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
     });
     if (removed > 0) saveLocalDatabase();
 
-    res.json({ removed });
+    res.json({ removed, backupPath });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1122,34 +1175,64 @@ router.post('/maintenance/dedupe-trades', auth, async (req, res) => {
 // POST /api/maintenance/recalculate-balances
 // Re-derive each trade's runningBalance from the known current balance and P&L history.
 // This fixes incorrect balances stored by old versions of sync.py without losing journal data.
-router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
+// runningBalance is per broker account, and deposits/withdrawals move it too —
+// reconstructing it from trade P&L alone (ignoring AccountEvent cash flow, and
+// merging every account into one anchor balance) silently offsets every
+// historical balance by however much cash moved between trades. Requires an
+// accountKey when more than one account exists, and folds AccountEvent rows
+// into the same chronological walk as the trades.
+router.post('/maintenance/recalculate-balances', auth, ownerOnly, async (req, res) => {
   try {
-    // The current MT5 balance is passed in from the client (or we use the latest stored balance)
     const currentBalance = req.body.currentBalance != null ? Number(req.body.currentBalance) : null;
+    const requestedAccountKey = cleanAccountField(req.body.accountKey, 180).toLowerCase();
 
     if (mongoose.connection.readyState !== 1) {
-      // Offline mode: work on inMemoryTrades
-      let userTrades = inMemoryTrades
-        .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
-        .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime)); // oldest first
+      const ownerTrades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      const distinctAccountKeys = [...new Set(ownerTrades.map(t => String(t.accountKey || '')).filter(Boolean))];
+      if (!requestedAccountKey && distinctAccountKeys.length > 1) {
+        return res.status(400).json({
+          error: 'This owner has more than one trading account. Specify accountKey to recalculate one account at a time.',
+          accountKeys: distinctAccountKeys,
+        });
+      }
+      const accountKey = requestedAccountKey || distinctAccountKeys[0] || '';
+      const userTrades = ownerTrades
+        .filter(t => !accountKey || tradeMatchesAccountFilter(t, accountKey))
+        .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
 
-      if (userTrades.length === 0) return res.json({ updated: 0 });
+      if (userTrades.length === 0) return res.json({ updated: 0, accountKey });
 
-      // Anchor from known current balance if provided, otherwise latest stored balance
+      const events = inMemoryAccountEvents.filter(e => {
+        if (!isOfflineAccountEventVisibleToUser(e, req.user.userId)) return false;
+        // Manual entries aren't tied to a broker account, so include them for
+        // any single-account recalculation too.
+        return !accountKey || !e.accountKey || tradeMatchesAccountFilter(e, accountKey);
+      });
+
       const latestBal = currentBalance != null
         ? currentBalance
         : Number(userTrades[userTrades.length - 1].runningBalance || 0);
 
-      // Walk backward from latest: latestBal is balance AFTER the last trade
-      // So balance BEFORE last trade = latestBal - (pnlUSD + commission + swap) of last trade
-      // Then walk forward to assign each trade's running balance
-      const totalNet = userTrades.reduce((s, t) => s + Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0), 0);
-      let runBal = latestBal - totalNet; // balance before first trade
+      const timeline = [
+        ...userTrades.map(t => ({
+          time: new Date(t.closeTime).getTime(),
+          delta: Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0),
+          tradeId: String(t._id),
+        })),
+        ...events.map(e => ({ time: new Date(e.occurredAt || e.createdAt).getTime(), delta: accountEventNetAmount(e), tradeId: null })),
+      ].sort((a, b) => a.time - b.time);
+
+      const totalNet = timeline.reduce((s, entry) => s + entry.delta, 0);
+      let runBal = latestBal - totalNet;
       let updated = 0;
+      const tradeBalances = new Map();
+      for (const entry of timeline) {
+        runBal += entry.delta;
+        if (entry.tradeId) tradeBalances.set(entry.tradeId, runBal);
+      }
 
       for (const trade of userTrades) {
-        runBal += Number(trade.pnlUSD || 0) + Number(trade.commission || 0) + Number(trade.swap || 0);
-        const newBal = Math.round(runBal * 100) / 100;
+        const newBal = Math.round((tradeBalances.get(String(trade._id)) ?? Number(trade.runningBalance)) * 100) / 100;
         const idx = inMemoryTrades.findIndex(t => String(t._id) === String(trade._id));
         if (idx !== -1 && Math.abs(Number(inMemoryTrades[idx].runningBalance) - newBal) > 0.001) {
           inMemoryTrades[idx].runningBalance = newBal;
@@ -1158,28 +1241,55 @@ router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
       }
 
       if (updated > 0) saveLocalDatabase();
-      return res.json({ updated, latestBalance: latestBal });
+      return res.json({ updated, latestBalance: latestBal, accountKey });
     }
 
     // MongoDB mode
-    const userTrades = await Trade.find({ user: req.user.userId })
+    const distinctAccountKeys = requestedAccountKey ? [] : await Trade.distinct('accountKey', { user: req.user.userId, accountKey: { $nin: ['', null] } });
+    if (!requestedAccountKey && distinctAccountKeys.length > 1) {
+      return res.status(400).json({
+        error: 'This owner has more than one trading account. Specify accountKey to recalculate one account at a time.',
+        accountKeys: distinctAccountKeys,
+      });
+    }
+    const accountKey = requestedAccountKey || distinctAccountKeys[0] || '';
+    const tradeQuery = { user: req.user.userId };
+    if (accountKey) applyAccountKeyToMongoQuery(tradeQuery, accountKey);
+    const userTrades = await Trade.find(tradeQuery)
       .sort({ closeTime: 1 })
-      .select('_id pnlUSD commission swap runningBalance closeTime');
+      .select('_id pnlUSD commission swap runningBalance closeTime accountKey');
 
-    if (userTrades.length === 0) return res.json({ updated: 0 });
+    if (userTrades.length === 0) return res.json({ updated: 0, accountKey });
+
+    const eventQuery = { user: req.user.userId };
+    if (accountKey) eventQuery.$or = [{ accountKey: { $in: ['', null] } }, { accountKey }];
+    const events = await AccountEvent.find(eventQuery).select('occurredAt createdAt type amount').lean();
 
     const latestBal = currentBalance != null
       ? currentBalance
       : Number(userTrades[userTrades.length - 1].runningBalance || 0);
 
-    const totalNet = userTrades.reduce((s, t) => s + Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0), 0);
+    const timeline = [
+      ...userTrades.map(t => ({
+        time: new Date(t.closeTime).getTime(),
+        delta: Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0),
+        tradeId: String(t._id),
+      })),
+      ...events.map(e => ({ time: new Date(e.occurredAt || e.createdAt).getTime(), delta: accountEventNetAmount(e), tradeId: null })),
+    ].sort((a, b) => a.time - b.time);
+
+    const totalNet = timeline.reduce((s, entry) => s + entry.delta, 0);
     let runBal = latestBal - totalNet;
     let updated = 0;
-    const bulkOps = [];
+    const tradeBalances = new Map();
+    for (const entry of timeline) {
+      runBal += entry.delta;
+      if (entry.tradeId) tradeBalances.set(entry.tradeId, runBal);
+    }
 
+    const bulkOps = [];
     for (const trade of userTrades) {
-      runBal += Number(trade.pnlUSD || 0) + Number(trade.commission || 0) + Number(trade.swap || 0);
-      const newBal = Math.round(runBal * 100) / 100;
+      const newBal = Math.round((tradeBalances.get(String(trade._id)) ?? Number(trade.runningBalance)) * 100) / 100;
       if (Math.abs(Number(trade.runningBalance) - newBal) > 0.001) {
         bulkOps.push({ updateOne: { filter: { _id: trade._id }, update: { $set: { runningBalance: newBal } } } });
         updated++;
@@ -1195,7 +1305,7 @@ router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
     }
     if (updated > 0) saveLocalDatabase();
 
-    res.json({ updated, latestBalance: latestBal });
+    res.json({ updated, latestBalance: latestBal, accountKey });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1204,7 +1314,7 @@ router.post('/maintenance/recalculate-balances', auth, async (req, res) => {
 // POST /api/maintenance/recover-screenshots
 // Re-attach Cloudinary screenshots by dealId. If the trade is missing entirely,
 // reconstruct its core MT5 record from the metadata embedded on the image asset.
-router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
+router.post('/maintenance/recover-screenshots', auth, ownerOnly, async (req, res) => {
   if (!CLOUDINARY_READY) {
     return res.status(400).json({ error: 'Cloudinary is not configured on this server.' });
   }
@@ -1316,15 +1426,16 @@ router.post('/maintenance/recover-screenshots', auth, async (req, res) => {
 });
 
 // GET /api/account-events  deposits, withdrawals, and account adjustments
-router.get('/account-events', auth, async (req, res) => {
+router.get('/account-events', auth, ownerOnly, async (req, res) => {
   try {
-    const { range, limit = 25 } = req.query;
+    const { range, limit = 25, accountKey } = req.query;
     const fromDate = getRangeStart(range);
     const max = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
 
     if (mongoose.connection.readyState !== 1) {
       let events = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId));
       if (fromDate) events = events.filter(e => new Date(e.occurredAt) >= fromDate);
+      if (accountKey) events = events.filter(e => tradeMatchesAccountFilter(e, accountKey));
       events.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
       return res.json({
         events: events.slice(0, max),
@@ -1334,6 +1445,7 @@ router.get('/account-events', auth, async (req, res) => {
 
     const query = { user: req.user.userId };
     if (fromDate) query.occurredAt = { $gte: fromDate };
+    if (accountKey) applyAccountKeyToMongoQuery(query, accountKey);
     const events = await AccountEvent.find(query).sort({ occurredAt: -1 }).limit(max).lean();
     const summaryEvents = await AccountEvent.find(query).select('type amount').lean();
 
@@ -1347,7 +1459,7 @@ router.get('/account-events', auth, async (req, res) => {
 });
 
 // POST /api/account-events  manually record a deposit, withdrawal, or adjustment
-router.post('/account-events', auth, async (req, res) => {
+router.post('/account-events', auth, ownerOnly, async (req, res) => {
   try {
     const type = String(req.body.type || '').toLowerCase();
     const amount = Number(req.body.amount);
@@ -1414,7 +1526,7 @@ router.post('/account-events', auth, async (req, res) => {
 });
 
 // DELETE /api/account-events/:id  remove a manual cash-flow entry
-router.delete('/account-events/:id', auth, async (req, res) => {
+router.delete('/account-events/:id', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       const before = inMemoryAccountEvents.length;
@@ -1535,9 +1647,9 @@ router.post('/sync-account-events', auth, syncAgentOnly, async (req, res) => {
 });
 
 //  GET /api/performance  equty curve + full rsk metrics 
-router.get('/performance', auth, async (req, res) => {
+router.get('/performance', auth, ownerOnly, async (req, res) => {
   try {
-    const { range } = req.query;
+    const { range, accountKey } = req.query;
 
     // Buld date filter
     let fromDate = null;
@@ -1552,18 +1664,27 @@ router.get('/performance', auth, async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       const q = { user: req.user.userId };
       if (fromDate) q.closeTime = { $gte: fromDate };
+      if (accountKey) applyAccountKeyToMongoQuery(q, accountKey);
       trades = await Trade.find(q)
         .sort({ closeTime: 1 })
-        .select('closeTime openTime pnlUSD runningBalance symbol direction lotSize commission swap');
+        .select('closeTime openTime pnlUSD runningBalance symbol direction lotSize commission swap accountKey');
     } else {
       trades = inMemoryTrades
         .filter(t => {
-          if (String(t.user) !== String(req.user.userId)) return false;
+          if (!isOfflineTradeVisibleToUser(t, req.user.userId)) return false;
           if (fromDate && new Date(t.closeTime) < fromDate) return false;
+          if (accountKey && !tradeMatchesAccountFilter(t, accountKey)) return false;
           return true;
         })
         .sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
     }
+
+    // runningBalance is per broker account. Without an accountKey filter,
+    // trades from multiple accounts interleave into one equity curve and the
+    // resulting drawdown/balance figures are not meaningful — surface that
+    // instead of silently reporting a blended number as if it were real.
+    const distinctAccountKeys = [...new Set(trades.map(t => String(t.accountKey || '')).filter(Boolean))];
+    const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
 
     // Optional grouping by trade setup
     const groupBySetup = req.query.groupBySetup === 'true';
@@ -1611,10 +1732,10 @@ router.get('/performance', auth, async (req, res) => {
     }
 
     if (trades.length === 0) {
-      return res.json({ equityCurve: [], drawdownCurve: [], stats: null });
+      return res.json({ equityCurve: [], drawdownCurve: [], stats: null, mixedAccounts: false, accountKeys: [] });
     }
 
-    //  Equty curve + drawdown 
+    //  Equity curve + drawdown 
     let peakBalance = -Infinity;
     const equityCurve = [];
 
@@ -1632,12 +1753,16 @@ router.get('/performance', auth, async (req, res) => {
       });
     }
 
-    //  Rsk stats 
-    const wins   = trades.filter(t => Number(t.pnlUSD) > 0);
-    const losses = trades.filter(t => Number(t.pnlUSD) < 0);
+    //  Risk stats
+    // pnlUSD alone excludes commission and swap, which is real money the
+    // broker took — win/loss, profit factor and every total here need to
+    // match runningBalance (which already includes both).
+    const netAmount = t => Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0);
+    const wins   = trades.filter(t => netAmount(t) > 0);
+    const losses = trades.filter(t => netAmount(t) < 0);
 
-    const grossProfit = wins.reduce((s, t)   => s + Number(t.pnlUSD), 0);
-    const grossLoss   = Math.abs(losses.reduce((s, t) => s + Number(t.pnlUSD), 0));
+    const grossProfit = wins.reduce((s, t)   => s + netAmount(t), 0);
+    const grossLoss   = Math.abs(losses.reduce((s, t) => s + netAmount(t), 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0;
 
     const avgWin  = wins.length   > 0 ? grossProfit / wins.length   : 0;
@@ -1659,16 +1784,16 @@ router.get('/performance', auth, async (req, res) => {
     // Max consecutve wins / losses
     let maxConsecW = 0, curW = 0, maxConsecL = 0, curL = 0;
     for (const t of trades) {
-      if (Number(t.pnlUSD) > 0) { curW++; curL = 0; maxConsecW = Math.max(maxConsecW, curW); }
-      else                       { curL++; curW = 0; maxConsecL = Math.max(maxConsecL, curL); }
+      if (netAmount(t) > 0) { curW++; curL = 0; maxConsecW = Math.max(maxConsecW, curW); }
+      else                   { curL++; curW = 0; maxConsecL = Math.max(maxConsecL, curL); }
     }
 
     // Largest single wn / loss
-    const largestWin  = wins.length   > 0 ? Math.max(...wins.map(t => Number(t.pnlUSD))) : 0;
-    const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => Number(t.pnlUSD))) : 0;
+    const largestWin  = wins.length   > 0 ? Math.max(...wins.map(t => netAmount(t))) : 0;
+    const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => netAmount(t))) : 0;
 
     // Net P&L and overall account growth
-    const startBal   = Number(trades[0].runningBalance) - Number(trades[0].pnlUSD);
+    const startBal   = Number(trades[0].runningBalance) - netAmount(trades[0]);
     const currentBal = Number(trades[trades.length - 1].runningBalance);
     const netPnL     = currentBal - startBal;
     const growthPct  = startBal > 0 ? (netPnL / startBal) * 100 : 0;
@@ -1695,6 +1820,8 @@ router.get('/performance', auth, async (req, res) => {
         startBalance:   parseFloat(startBal.toFixed(2)),
         currentBalance: parseFloat(currentBal.toFixed(2)),
       },
+      mixedAccounts,
+      accountKeys: distinctAccountKeys,
     });
   } catch (err) {
     console.error('Performance route error:', err.message);
@@ -1705,7 +1832,7 @@ router.get('/performance', auth, async (req, res) => {
 
 
 // GET /api/trade-accounts  account identities represented in this owner's trades
-router.get('/trade-accounts', auth, async (req, res) => {
+router.get('/trade-accounts', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       const trades = inMemoryTrades.filter(trade => isOfflineTradeVisibleToUser(trade, req.user.userId));
@@ -1758,7 +1885,7 @@ router.get('/trades/latest-close', auth, async (req, res) => {
 });
 
 // GET /api/trades  all trades, newest frst, wth optonal flters
-router.get('/trades', auth, async (req, res) => {
+router.get('/trades', auth, ownerOnly, async (req, res) => {
   try {
     const { symbol, direction, accountType, accountKey, from, to, page = 1, limit = 50 } = req.query;
 
@@ -1939,7 +2066,7 @@ async function findReplayTrade(tradeId, userId) {
 }
 
 // GET /api/trades/:id/replay-journal?interval=15min
-router.get('/trades/:id/replay-journal', auth, async (req, res) => {
+router.get('/trades/:id/replay-journal', auth, ownerOnly, async (req, res) => {
   try {
     const interval = String(req.query.interval || '');
     if (!REPLAY_ANNOTATION_INTERVALS.has(interval)) return res.status(400).json({ error: 'Unsupported Replay annotation timeframe' });
@@ -1966,7 +2093,7 @@ router.get('/trades/:id/replay-journal', auth, async (req, res) => {
 });
 
 // PUT /api/trades/:id/replay-journal/draft saves unfinished journal and playback state.
-router.put('/trades/:id/replay-journal/draft', auth, async (req, res) => {
+router.put('/trades/:id/replay-journal/draft', auth, ownerOnly, async (req, res) => {
   try {
     const draft = normalizeReplayDraft(req.body.draft);
     if (!await findReplayTrade(req.params.id, req.user.userId)) return res.status(404).json({ error: 'Trade not found' });
@@ -1989,7 +2116,7 @@ router.put('/trades/:id/replay-journal/draft', auth, async (req, res) => {
 });
 
 // PUT /api/trades/:id/replay-journal/quick-review saves a draft or completed fast review.
-router.put('/trades/:id/replay-journal/quick-review', auth, async (req, res) => {
+router.put('/trades/:id/replay-journal/quick-review', auth, ownerOnly, async (req, res) => {
   try {
     const quickReview = normalizeQuickReview(req.body.quickReview);
     if (!await findReplayTrade(req.params.id, req.user.userId)) return res.status(404).json({ error: 'Trade not found' });
@@ -2012,7 +2139,7 @@ router.put('/trades/:id/replay-journal/quick-review', auth, async (req, res) => 
 });
 
 // PUT /api/trades/:id/replay-journal/events replaces the ordered event timeline.
-router.put('/trades/:id/replay-journal/events', auth, async (req, res) => {
+router.put('/trades/:id/replay-journal/events', auth, ownerOnly, async (req, res) => {
   try {
     const events = normalizeReplayEvents(req.body.events);
     const trade = await findReplayTrade(req.params.id, req.user.userId);
@@ -2042,7 +2169,7 @@ router.put('/trades/:id/replay-journal/events', auth, async (req, res) => {
 });
 
 // PUT /api/trades/:id/replay-journal/annotations replaces one timeframe only.
-router.put('/trades/:id/replay-journal/annotations', auth, async (req, res) => {
+router.put('/trades/:id/replay-journal/annotations', auth, ownerOnly, async (req, res) => {
   try {
     const interval = String(req.body.interval || '');
     const annotations = normalizeReplayAnnotations(interval, req.body.annotations);
@@ -2074,7 +2201,7 @@ router.put('/trades/:id/replay-journal/annotations', auth, async (req, res) => {
 });
 
 // GET /api/trades/:id/replay  requests MT5 first; ?fallback=twelve uses Twelve Data
-router.get('/trades/:id/replay', auth, async (req, res) => {
+router.get('/trades/:id/replay', auth, ownerOnly, async (req, res) => {
   try {
     // ── Find the trade ──────────────────────────────────────────────────────
     let trade;
@@ -2287,7 +2414,7 @@ router.get('/trades/:id/replay', auth, async (req, res) => {
 });
 
 // PUT /api/trades/:id  update journal data (notes, tags, emotion, grade, checklist + Edge Coach fields)
-router.put('/trades/:id', auth, async (req, res) => {
+router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
   try {
     const {
       notes, tags, emotion, grade, checklist,
@@ -2443,7 +2570,7 @@ router.put('/trades/:id', auth, async (req, res) => {
 });
 
 // POST /api/trades/:id/screenshots  upload a manually captured chart screenshot
-router.post('/trades/:id/screenshots', auth, async (req, res) => {
+router.post('/trades/:id/screenshots', auth, ownerOnly, async (req, res) => {
   try {
     const { imageData, caption = '', playbookRuleId = '', playbookVersionId = '' } = req.body;
     const linkedRuleId = String(playbookRuleId || '').trim().slice(0, 100);
@@ -2591,7 +2718,7 @@ router.post('/trades/:id/screenshots', auth, async (req, res) => {
 });
 
 // PATCH /api/trades/:id/screenshots/:screenshotId  update screenshot caption
-router.patch('/trades/:id/screenshots/:screenshotId', auth, async (req, res) => {
+router.patch('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (req, res) => {
   try {
     const { caption = '' } = req.body;
 
@@ -2619,7 +2746,7 @@ router.patch('/trades/:id/screenshots/:screenshotId', auth, async (req, res) => 
 });
 
 // DELETE /api/trades/:id/screenshots/:screenshotId  remove a screenshot from Cloudinary and the trade
-router.delete('/trades/:id/screenshots/:screenshotId', auth, async (req, res) => {
+router.delete('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Screenshot deletes require MongoDB to be connected.' });
@@ -2687,6 +2814,21 @@ router.post('/sync', auth, syncAgentOnly, async (req, res) => {
       };
     };
 
+    const EXIT_TRIGGERS = new Set(['SL', 'TP', 'StopOut', 'Expert', 'Manual']);
+    // Fields the MT5 sync agent reads directly off the broker (order sl/tp,
+    // deal.reason, magic number, contract/tick info) rather than anything the
+    // trader typed in — these power real R-multiple math.
+    const riskFieldsForTrade = t => ({
+      stopLoss: Number.isFinite(Number(t.stopLoss)) && Number(t.stopLoss) > 0 ? Number(t.stopLoss) : null,
+      takeProfit: Number.isFinite(Number(t.takeProfit)) && Number(t.takeProfit) > 0 ? Number(t.takeProfit) : null,
+      riskUSD: Number.isFinite(Number(t.riskUSD)) ? Number(t.riskUSD) : null,
+      riskPercent: Number.isFinite(Number(t.riskPercent)) ? Number(t.riskPercent) : null,
+      exitTrigger: EXIT_TRIGGERS.has(t.exitTrigger) ? t.exitTrigger : '',
+      magic: Number.isFinite(Number(t.magic)) ? Number(t.magic) : 0,
+      contractSize: Number.isFinite(Number(t.contractSize)) && Number(t.contractSize) > 0 ? Number(t.contractSize) : null,
+      tickValue: Number.isFinite(Number(t.tickValue)) && Number(t.tickValue) > 0 ? Number(t.tickValue) : null,
+    });
+
     let inserted = 0;
     let skipped = 0;
     let accountTypesUpdated = 0;
@@ -2735,6 +2877,7 @@ router.post('/sync', auth, syncAgentOnly, async (req, res) => {
           closeTime: t.closeTime,
           durationMinutes: Number(t.durationMinutes || 0),
           runningBalance: Number(t.runningBalance || 0),
+          ...riskFieldsForTrade(t),
           ...accountIdentity,
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
@@ -2797,6 +2940,7 @@ router.post('/sync', auth, syncAgentOnly, async (req, res) => {
           closeTime: new Date(t.closeTime),
           durationMinutes: t.durationMinutes || 0,
           runningBalance: t.runningBalance || 0,
+          ...riskFieldsForTrade(t),
           ...accountIdentity,
           checklist: checklistSnapshot.map(rule => ({ ...rule })),
           executionChecklist: executionChecklistSnapshot.map(rule => ({ ...rule })),
@@ -2835,14 +2979,15 @@ router.post('/sync', auth, syncAgentOnly, async (req, res) => {
 });
 
 // GET /api/stats  aggregated performance metrics
-router.get('/stats', auth, async (req, res) => {
+router.get('/stats', auth, ownerOnly, async (req, res) => {
   try {
-    const { range } = req.query;
+    const { range, accountKey } = req.query;
     let trades;
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
       if (range && range !== 'all') {
         const now = new Date();
         if (range === 'today') {
@@ -2868,6 +3013,7 @@ router.get('/stats', auth, async (req, res) => {
       trades = filtered;
     } else {
       const query = { user: req.user.userId };
+      if (accountKey) applyAccountKeyToMongoQuery(query, accountKey);
       if (range && range !== 'all') {
         const now = new Date();
         if (range === 'today') {
@@ -2949,17 +3095,44 @@ router.get('/stats', auth, async (req, res) => {
       trades = groupedTrades;
     }
 
-    const wins = trades.filter(t => t.pnlUSD > 0);
-    const losses = trades.filter(t => t.pnlUSD < 0);
-    const grossProfit = wins.reduce((s, t) => s + t.pnlUSD, 0);
-    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnlUSD, 0));
-    const netPnL = trades.reduce((s, t) => s + t.pnlUSD, 0);
+    // Every downstream metric below divides by trades.length; return zeros
+    // instead of NaN (which JSON serializes as null, indistinguishable from
+    // a real "no data" gap) when the selected range has no trades.
+    if (trades.length === 0) {
+      return res.json({
+        totalTrades: 0, winRate: 0, profitFactor: 0, netPnL: 0,
+        biggestWin: 0, biggestLoss: 0, currentDrawdown: 0, maxDrawdownPct: 0,
+        equityCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
+        avgDurationMin: 0, avgWinUSD: 0, avgLossUSD: 0, winLossRatio: 0,
+        expectancyUSD: 0, maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
+        bySession: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0,
+        mixedAccounts: false, accountKeys: [],
+      });
+    }
 
-    // Equty curve (running balance over time)
+    // runningBalance/drawdown are per broker account; flag when trades from
+    // more than one account are blended into this response (see /performance).
+    const distinctAccountKeys = [...new Set(trades.map(t => String(t.accountKey || '')).filter(Boolean))];
+    const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
+
+    // pnlUSD alone is only the trade's raw price P&L. commission and swap are
+    // real money the broker actually took, so runningBalance (and therefore
+    // win/loss, profit factor, and every P&L total below) has to include them
+    // — otherwise this journal's numbers disagree with the account balance.
+    const netAmount = t => Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0);
+
+    const wins = trades.filter(t => netAmount(t) > 0);
+    const losses = trades.filter(t => netAmount(t) < 0);
+    const grossProfit = wins.reduce((s, t) => s + netAmount(t), 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + netAmount(t), 0));
+    const netPnL = trades.reduce((s, t) => s + netAmount(t), 0);
+    const grossPnL = trades.reduce((s, t) => s + Number(t.pnlUSD || 0), 0); // pre-cost, for comparison
+
+    // Equity curve (running balance over time)
     const equityCurve = trades.map(t => ({
       date: t.closeTime,
       balance: t.runningBalance,
-      pnl: t.pnlUSD,
+      pnl: netAmount(t),
     }));
 
     // Drawdown: peak-to-trough on running balance
@@ -2973,35 +3146,38 @@ router.get('/stats', auth, async (req, res) => {
     const lastBalance = trades[trades.length - 1]?.runningBalance || 0;
     const currentDrawdown = peak > 0 ? ((peak - lastBalance) / peak) * 100 : 0;
 
-    // Advanced Metrcs
+    // Advanced Metrics
     const avgWinUSD = wins.length > 0 ? grossProfit / wins.length : 0;
     const avgLossUSD = losses.length > 0 ? grossLoss / losses.length : 0;
-    const winLossRatio = avgLossUSD > 0 ? avgWinUSD / avgLossUSD : avgWinUSD > 0 ? Infinity : 0;
+    // 999 is a "no losses to divide by" sentinel, not a real ratio — JSON has
+    // no Infinity, and Infinity serializes as null (indistinguishable from a
+    // genuine gap in the data). Matches the convention already used in /performance.
+    const winLossRatio = avgLossUSD > 0 ? avgWinUSD / avgLossUSD : avgWinUSD > 0 ? 999 : 0;
     
     const winRate = (wins.length / trades.length) * 100;
     const lossRate = 100 - winRate;
     const expectancyUSD = (winRate / 100 * avgWinUSD) - (lossRate / 100 * avgLossUSD);
 
-    // Wn/Loss Streaks
-    let currentWnStreak = 0;
+    // Win/Loss Streaks
+    let currentWinStreak = 0;
     let currentLossStreak = 0;
     let maxWinStreak = 0;
     let maxLossStreak = 0;
     for (const t of trades) {
-      if (t.pnlUSD > 0) {
-        currentWnStreak++;
+      if (netAmount(t) > 0) {
+        currentWinStreak++;
         currentLossStreak = 0;
-        if (currentWnStreak > maxWinStreak) maxWinStreak = currentWnStreak;
-      } else if (t.pnlUSD < 0) {
+        if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak;
+      } else if (netAmount(t) < 0) {
         currentLossStreak++;
-        currentWnStreak = 0;
+        currentWinStreak = 0;
         if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
       }
     }
 
-    // Sharpe Rato
+    // Sharpe Ratio
     const meanPnL = netPnL / trades.length;
-    const variance = trades.reduce((s, t) => s + Math.pow(t.pnlUSD - meanPnL, 2), 0) / trades.length;
+    const variance = trades.reduce((s, t) => s + Math.pow(netAmount(t) - meanPnL, 2), 0) / trades.length;
     const stdDev = Math.sqrt(variance);
     const sharpeRatio = stdDev > 0 ? meanPnL / stdDev : 0;
 
@@ -3009,9 +3185,9 @@ router.get('/stats', auth, async (req, res) => {
     const symbolMap = {};
     for (const t of trades) {
       if (!symbolMap[t.symbol]) symbolMap[t.symbol] = { symbol: t.symbol, pnl: 0, trades: 0, wins: 0 };
-      symbolMap[t.symbol].pnl += t.pnlUSD;
+      symbolMap[t.symbol].pnl += netAmount(t);
       symbolMap[t.symbol].trades++;
-      if (t.pnlUSD > 0) symbolMap[t.symbol].wins++;
+      if (netAmount(t) > 0) symbolMap[t.symbol].wins++;
     }
     const bySymbol = Object.values(symbolMap).map(s => ({
       ...s,
@@ -3024,7 +3200,7 @@ router.get('/stats', auth, async (req, res) => {
     for (const t of trades) {
       const day = days[new Date(t.closeTime).getDay()];
       if (!dayMap[day]) dayMap[day] = { day, pnl: 0, trades: 0 };
-      dayMap[day].pnl += t.pnlUSD;
+      dayMap[day].pnl += netAmount(t);
       dayMap[day].trades++;
     }
     const byDayOfWeek = days.map(d => dayMap[d] || { day: d, pnl: 0, trades: 0 });
@@ -3035,33 +3211,33 @@ router.get('/stats', auth, async (req, res) => {
       const d = new Date(t.closeTime);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       if (!monthMap[key]) monthMap[key] = { month: key, pnl: 0, trades: 0, wins: 0 };
-      monthMap[key].pnl += t.pnlUSD;
+      monthMap[key].pnl += netAmount(t);
       monthMap[key].trades++;
-      if (t.pnlUSD > 0) monthMap[key].wins++;
+      if (netAmount(t) > 0) monthMap[key].wins++;
     }
     const byMonth = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month));
 
     const avgDurationMin = trades.reduce((s, t) => s + (t.durationMinutes || 0), 0) / trades.length;
 
-    // Sesson Analytcs based on closeTime UTC hour
+    // Session analytics based on closeTime UTC hour
     const bySessionMap = {
-      Tokyo: { session: 'Tokyo (Asan)', pnl: 0, trades: 0, wins: 0 },
-      London: { session: 'London (Eur)', pnl: 0, trades: 0, wins: 0 },
+      Tokyo: { session: 'Tokyo (Asian)', pnl: 0, trades: 0, wins: 0 },
+      London: { session: 'London (Europe)', pnl: 0, trades: 0, wins: 0 },
       Overlap: { session: 'London/NY Overlap', pnl: 0, trades: 0, wins: 0 },
       NewYork: { session: 'New York (US)', pnl: 0, trades: 0, wins: 0 },
-      Pacfc: { session: 'Pacfc/Late NY', pnl: 0, trades: 0, wins: 0 },
+      Pacific: { session: 'Pacific/Late NY', pnl: 0, trades: 0, wins: 0 },
     };
     for (const t of trades) {
       const utcHour = new Date(t.closeTime).getUTCHours();
-      let sess = 'Pacfc';
+      let sess = 'Pacific';
       if (utcHour >= 0 && utcHour < 8) sess = 'Tokyo';
       else if (utcHour >= 8 && utcHour < 13) sess = 'London';
       else if (utcHour >= 13 && utcHour < 16) sess = 'Overlap';
       else if (utcHour >= 16 && utcHour < 21) sess = 'NewYork';
 
-      bySessionMap[sess].pnl += t.pnlUSD;
+      bySessionMap[sess].pnl += netAmount(t);
       bySessionMap[sess].trades++;
-      if (t.pnlUSD > 0) bySessionMap[sess].wins++;
+      if (netAmount(t) > 0) bySessionMap[sess].wins++;
     }
     const bySession = Object.values(bySessionMap).map(s => ({
       ...s,
@@ -3076,9 +3252,9 @@ router.get('/stats', auth, async (req, res) => {
           const trimmed = tag.trim();
           if (!trimmed) continue;
           if (!tagMap[trimmed]) tagMap[trimmed] = { tag: trimmed, pnl: 0, trades: 0, wins: 0 };
-          tagMap[trimmed].pnl += t.pnlUSD;
+          tagMap[trimmed].pnl += netAmount(t);
           tagMap[trimmed].trades++;
-          if (t.pnlUSD > 0) tagMap[trimmed].wins++;
+          if (netAmount(t) > 0) tagMap[trimmed].wins++;
         }
       }
     }
@@ -3093,9 +3269,9 @@ router.get('/stats', auth, async (req, res) => {
       if (t.emotion) {
         const emo = t.emotion;
         if (!emotionMap[emo]) emotionMap[emo] = { emotion: emo, pnl: 0, trades: 0, wins: 0 };
-        emotionMap[emo].pnl += t.pnlUSD;
+        emotionMap[emo].pnl += netAmount(t);
         emotionMap[emo].trades++;
-        if (t.pnlUSD > 0) emotionMap[emo].wins++;
+        if (netAmount(t) > 0) emotionMap[emo].wins++;
       }
     }
     const byEmotion = Object.values(emotionMap).map(em => ({
@@ -3122,9 +3298,9 @@ router.get('/stats', auth, async (req, res) => {
       if (t.grade) {
         const grd = t.grade;
         if (!gradeMap[grd]) gradeMap[grd] = { grade: grd, pnl: 0, trades: 0, wins: 0 };
-        gradeMap[grd].pnl += t.pnlUSD;
+        gradeMap[grd].pnl += netAmount(t);
         gradeMap[grd].trades++;
-        if (t.pnlUSD > 0) gradeMap[grd].wins++;
+        if (netAmount(t) > 0) gradeMap[grd].wins++;
       }
     }
     const byGrade = Object.values(gradeMap).map(g => ({
@@ -3135,10 +3311,11 @@ router.get('/stats', auth, async (req, res) => {
     res.json({
       totalTrades: trades.length,
       winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
-      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
+      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0,
       netPnL,
-      biggestWin: wins.length > 0 ? Math.max(...wins.map(t => t.pnlUSD)) : 0,
-      biggestLoss: losses.length > 0 ? Math.min(...losses.map(t => t.pnlUSD)) : 0,
+      grossPnL, // pre-commission/swap total, for comparison against netPnL
+      biggestWin: wins.length > 0 ? Math.max(...wins.map(t => netAmount(t))) : 0,
+      biggestLoss: losses.length > 0 ? Math.min(...losses.map(t => netAmount(t))) : 0,
       currentDrawdown,
       maxDrawdownPct,
       equityCurve,
@@ -3158,6 +3335,8 @@ router.get('/stats', auth, async (req, res) => {
       byEmotion,
       byGrade,
       globalComplianceRate,
+      mixedAccounts,
+      accountKeys: distinctAccountKeys,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3165,15 +3344,17 @@ router.get('/stats', auth, async (req, res) => {
 });
 
 // GET /api/calendar  aggregate closed trades daly net P&L and stats
-router.get('/calendar', auth, async (req, res) => {
+router.get('/calendar', auth, ownerOnly, async (req, res) => {
   try {
-    const { symbol, grade } = req.query;
+    const { symbol, grade, accountKey } = req.query;
+    const netAmount = t => Number(t.pnlUSD || 0) + Number(t.commission || 0) + Number(t.swap || 0);
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
       if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
       if (grade) filtered = filtered.filter(t => t.grade === grade.toUpperCase());
+      if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
 
       const calendarData = {};
       for (const t of filtered) {
@@ -3186,9 +3367,9 @@ router.get('/calendar', auth, async (req, res) => {
             date: dateStr
           };
         }
-        calendarData[dateStr].pnl += t.pnlUSD;
+        calendarData[dateStr].pnl += netAmount(t);
         calendarData[dateStr].tradesCount++;
-        if (t.pnlUSD > 0) calendarData[dateStr].wins++;
+        if (netAmount(t) > 0) calendarData[dateStr].wins++;
       }
       return res.json(calendarData);
     }
@@ -3196,6 +3377,7 @@ router.get('/calendar', auth, async (req, res) => {
     const query = { user: req.user.userId };
     if (symbol) query.symbol = symbol.toUpperCase();
     if (grade) query.grade = grade.toUpperCase();
+    if (accountKey) applyAccountKeyToMongoQuery(query, accountKey);
 
     const trades = await Trade.find(query).sort({ closeTime: 1 });
     const calendarData = {};
@@ -3210,9 +3392,9 @@ router.get('/calendar', auth, async (req, res) => {
           date: dateStr
         };
       }
-      calendarData[dateStr].pnl += t.pnlUSD;
+      calendarData[dateStr].pnl += netAmount(t);
       calendarData[dateStr].tradesCount++;
-      if (t.pnlUSD > 0) calendarData[dateStr].wins++;
+      if (netAmount(t) > 0) calendarData[dateStr].wins++;
     }
     res.json(calendarData);
   } catch (err) {
@@ -3221,19 +3403,26 @@ router.get('/calendar', auth, async (req, res) => {
 });
 
 // GET /api/balance  latest running balance
-router.get('/balance', auth, async (req, res) => {
+router.get('/balance', auth, ownerOnly, async (req, res) => {
   try {
+    const { accountKey } = req.query;
+
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
-      const sorted = inMemoryTrades
-        .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
-        .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
+      const ownerTrades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      const distinctAccountKeys = [...new Set(ownerTrades.map(t => String(t.accountKey || '')).filter(Boolean))];
+      const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
+      const scoped = accountKey ? ownerTrades.filter(t => tradeMatchesAccountFilter(t, accountKey)) : ownerTrades;
+      const sorted = scoped.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
       const latest = sorted[0];
       const latestBalanceSyncTime = latest?.synced || latest?.updatedAt || latest?.createdAt || latest?.closeTime || null;
       const latestBalanceTime = latestBalanceSyncTime ? new Date(latestBalanceSyncTime) : null;
       const laterEvents = inMemoryAccountEvents.filter(e => {
         if (!isOfflineAccountEventVisibleToUser(e, req.user.userId)) return false;
         if (e.source !== 'manual') return false;
+        // Manual entries aren't tied to a broker account; only exclude ones
+        // explicitly recorded against a different account than the one asked for.
+        if (accountKey && e.accountKey && !tradeMatchesAccountFilter(e, accountKey)) return false;
         if (!latestBalanceTime) return true;
         return new Date(e.createdAt || e.occurredAt) > latestBalanceTime;
       });
@@ -3243,13 +3432,20 @@ router.get('/balance', auth, async (req, res) => {
         balance: (latest?.runningBalance || 0) + eventsNet,
         asOf: latestEvent?.createdAt || latest?.synced || latest?.updatedAt || latest?.closeTime || null,
         tradeAsOf: latest?.closeTime || null,
+        mixedAccounts,
+        accountKeys: distinctAccountKeys,
       });
     }
 
-    const latest = await Trade.findOne({ user: req.user.userId }).sort({ closeTime: -1 }).lean();
+    const distinctAccountKeys = accountKey ? [] : await Trade.distinct('accountKey', { user: req.user.userId, accountKey: { $nin: ['', null] } });
+    const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
+    const tradeQuery = { user: req.user.userId };
+    if (accountKey) applyAccountKeyToMongoQuery(tradeQuery, accountKey);
+    const latest = await Trade.findOne(tradeQuery).sort({ closeTime: -1 }).lean();
     const latestBalanceSyncTime = latest?.synced || latest?.updatedAt || latest?.createdAt || latest?.closeTime || null;
     const eventQuery = { user: req.user.userId, source: 'manual' };
     if (latestBalanceSyncTime) eventQuery.createdAt = { $gt: latestBalanceSyncTime };
+    if (accountKey) eventQuery.$or = [{ accountKey: { $in: ['', null] } }, { accountKey: String(accountKey).toLowerCase() }];
     const laterEvents = await AccountEvent.find(eventQuery).sort({ createdAt: -1 }).lean();
     const eventsNet = laterEvents.reduce((sum, e) => sum + accountEventNetAmount(e), 0);
     const latestEvent = laterEvents[0];
@@ -3257,6 +3453,8 @@ router.get('/balance', auth, async (req, res) => {
       balance: (latest?.runningBalance || 0) + eventsNet,
       asOf: latestEvent?.createdAt || latest?.synced || latest?.updatedAt || latest?.closeTime || null,
       tradeAsOf: latest?.closeTime || null,
+      mixedAccounts,
+      accountKeys: distinctAccountKeys,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3266,19 +3464,33 @@ router.get('/balance', auth, async (req, res) => {
 // ── EXPORT ROUTES ─────────────────────────────────────────────────────────
 
 // GET /api/export/json  Full backup download: trades, account events, and Replay annotations
-router.get('/export/json', auth, async (req, res) => {
+// accountKey is intentionally optional here and defaults to everything: this
+// endpoint is the disaster-recovery backup, and a backup that silently drops
+// other accounts by default would be worse than one that isn't filterable.
+router.get('/export/json', auth, ownerOnly, async (req, res) => {
   try {
+    const { accountKey } = req.query;
     let trades, events, replayJournals;
 
     if (mongoose.connection.readyState === 1) {
+      const tradeQuery = { user: req.user.userId };
+      const eventQuery = { user: req.user.userId };
+      if (accountKey) {
+        applyAccountKeyToMongoQuery(tradeQuery, accountKey);
+        applyAccountKeyToMongoQuery(eventQuery, accountKey);
+      }
       [trades, events, replayJournals] = await Promise.all([
-        Trade.find({ user: req.user.userId }).sort({ closeTime: -1 }).lean(),
-        AccountEvent.find({ user: req.user.userId }).sort({ occurredAt: -1 }).lean(),
+        Trade.find(tradeQuery).sort({ closeTime: -1 }).lean(),
+        AccountEvent.find(eventQuery).sort({ occurredAt: -1 }).lean(),
         ReplayJournal.find({ user: req.user.userId }).lean(),
       ]);
     } else {
       trades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
       events = inMemoryAccountEvents.filter(e => isOfflineAccountEventVisibleToUser(e, req.user.userId));
+      if (accountKey) {
+        trades = trades.filter(t => tradeMatchesAccountFilter(t, accountKey));
+        events = events.filter(e => tradeMatchesAccountFilter(e, accountKey));
+      }
       replayJournals = Object.values(inMemoryReplayJournals).filter(journal => String(journal.user) === String(req.user.userId));
     }
 
@@ -3317,25 +3529,37 @@ router.get('/export/json', auth, async (req, res) => {
 });
 
 // GET /api/export/csv  All trades as a flat CSV
-router.get('/export/csv', auth, async (req, res) => {
+router.get('/export/csv', auth, ownerOnly, async (req, res) => {
   try {
+    const { accountKey } = req.query;
     let trades;
 
     if (mongoose.connection.readyState === 1) {
-      trades = await Trade.find({ user: req.user.userId }).sort({ closeTime: -1 }).lean();
+      const query = { user: req.user.userId };
+      if (accountKey) applyAccountKeyToMongoQuery(query, accountKey);
+      trades = await Trade.find(query).sort({ closeTime: -1 }).lean();
     } else {
       trades = inMemoryTrades
         .filter(t => isOfflineTradeVisibleToUser(t, req.user.userId))
+        .filter(t => !accountKey || tradeMatchesAccountFilter(t, accountKey))
         .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
     }
 
+    // Broker fields alone are replaceable — they can be re-downloaded from MT5
+    // any time. The journal fields below (playbook, grades, notes, risk data)
+    // exist nowhere else, so a CSV that drops them exports the disposable half.
     const CSV_HEADERS = [
       'dealId', 'positionId', 'symbol', 'direction',
       'entryPrice', 'exitPrice', 'lotSize',
       'pnlUSD', 'pnlPct', 'commission', 'swap',
       'openTime', 'closeTime', 'durationMinutes', 'runningBalance',
-      'accountType', 'accountLogin', 'accountServer', 'accountName',
-      'emotion', 'grade', 'tags', 'notes',
+      'accountKey', 'accountType', 'accountLogin', 'accountServer', 'accountName',
+      'stopLoss', 'takeProfit', 'riskUSD', 'riskPercent', 'exitTrigger', 'magic',
+      'plannedRR', 'exitReason', 'confidenceRating', 'manuallyIntervened',
+      'analysisGrade', 'executionGrade', 'emotion', 'grade',
+      'isReEntry', 'tradeGroup', 'primarySetup', 'setupConfirmations',
+      'playbookId', 'playbookVersionId',
+      'tags', 'notes',
       'screenshotCount', 'screenshotUrls',
     ];
 
@@ -3364,12 +3588,31 @@ router.get('/export/csv', auth, async (req, res) => {
       escapeCsv(t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime),
       escapeCsv(t.durationMinutes || 0),
       escapeCsv(t.runningBalance || 0),
+      escapeCsv(t.accountKey || ''),
       escapeCsv(t.accountType || ''),
       escapeCsv(t.accountLogin || ''),
       escapeCsv(t.accountServer || ''),
       escapeCsv(t.accountName || ''),
+      escapeCsv(t.stopLoss ?? ''),
+      escapeCsv(t.takeProfit ?? ''),
+      escapeCsv(t.riskUSD ?? ''),
+      escapeCsv(t.riskPercent ?? ''),
+      escapeCsv(t.exitTrigger || ''),
+      escapeCsv(t.magic || ''),
+      escapeCsv(t.plannedRR ?? ''),
+      escapeCsv(t.exitReason || ''),
+      escapeCsv(t.confidenceRating ?? ''),
+      escapeCsv(t.manuallyIntervened == null ? '' : t.manuallyIntervened),
+      escapeCsv(t.analysisGrade || ''),
+      escapeCsv(t.executionGrade || ''),
       escapeCsv(t.emotion || ''),
       escapeCsv(t.grade || ''),
+      escapeCsv(t.isReEntry ? 'true' : 'false'),
+      escapeCsv(t.tradeGroup || ''),
+      escapeCsv(t.primarySetup || ''),
+      escapeCsv((t.setupConfirmations || []).join('; ')),
+      escapeCsv(t.playbookId || ''),
+      escapeCsv(t.playbookVersionId || ''),
       escapeCsv((t.tags || []).join('; ')),
       escapeCsv(t.notes || ''),
       escapeCsv((t.screenshots || []).length),
@@ -3387,7 +3630,7 @@ router.get('/export/csv', auth, async (req, res) => {
 });
 
 // GET /api/export/status  Export/backup status metadata
-router.get('/export/status', auth, async (req, res) => {
+router.get('/export/status', auth, ownerOnly, async (req, res) => {
   try {
     let tradeCount = 0;
     let eventCount = 0;
@@ -3461,21 +3704,23 @@ router.get('/export/status', auth, async (req, res) => {
 // ── EDGE COACH ROUTE ─────────────────────────────────────────────────────────
 // GET /api/coach  behavioral analytics: missed profit, grade gap, exit reasons,
 //                confidence vs win rate, plan adherence, manual intervention, demo vs live
-router.get('/coach', auth, async (req, res) => {
+router.get('/coach', auth, ownerOnly, async (req, res) => {
   try {
-    const { range } = req.query;
+    const { range, accountKey } = req.query;
     const fromDate = getRangeStart(range);
     let trades;
 
     if (mongoose.connection.readyState === 1) {
       const q = { user: req.user.userId };
       if (fromDate) q.closeTime = { $gte: fromDate };
+      if (accountKey) applyAccountKeyToMongoQuery(q, accountKey);
       trades = await Trade.find(q).sort({ closeTime: -1 }).lean();
     } else {
       trades = inMemoryTrades
         .filter(t => {
           if (!isOfflineTradeVisibleToUser(t, req.user.userId)) return false;
           if (fromDate && new Date(t.closeTime) < fromDate) return false;
+          if (accountKey && !tradeMatchesAccountFilter(t, accountKey)) return false;
           return true;
         })
         .sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
@@ -3483,7 +3728,7 @@ router.get('/coach', auth, async (req, res) => {
 
     if (trades.length === 0) {
       return res.json({
-        earlyExits: { count: 0, totalMissedRR: 0, estimatedMissedUSD: 0, trades: [] },
+        earlyExits: { count: 0, withRiskData: 0, totalMissedRR: 0, estimatedMissedUSD: 0, trades: [] },
         gradeGap: { avgAnalysisGrade: null, avgExecutionGrade: null, gapScore: 0 },
         exitReasonBreakdown: [],
         confidenceVsWinRate: [],
@@ -3517,40 +3762,15 @@ router.get('/coach', auth, async (req, res) => {
     }
 
     // ── 1. Early Exits / Missed Profit ───────────────────────────────────────
-    const earlyExitTrades = trades.filter(t =>
-      t.plannedRR != null &&
-      !['TP', 'SL', ''].includes(t.exitReason || '') &&
-      t.exitReason
-    );
-    // Calculate actual RR from pnlPct (pnlPct is % of balance)
-    // Missed RR = plannedRR - actualRR (estimated from pnlPct / avg risk %)
-    // We estimate actualRR from pnlPct. For USD missed we use (missedRR / actualRR) * actualPnL
-    let totalMissedRR = 0;
-    let estimatedMissedUSD = 0;
-    const earlyExitDetails = earlyExitTrades.map(t => {
-      // Estimate actual RR: if trade is profitable, actual RR = pnlUSD / (pnlUSD / pnlPct * risk%) - rough estimate
-      // Better: compare pnlPct to planned RR to estimate the % achieved
-      const actualRR = t.pnlUSD > 0 && t.plannedRR > 0
-        ? parseFloat((t.pnlPct > 0 ? (t.pnlPct / (Math.abs(t.pnlPct) / t.plannedRR || 1)) : 0).toFixed(2))
-        : null;
-      const missedRR = t.plannedRR - (actualRR || 0);
-      // Estimate missed USD: missedRR / plannedRR * plannedUSD (if we had hit target)
-      const estimatedTargetUSD = t.pnlUSD > 0 ? (t.pnlUSD / (actualRR || t.plannedRR)) * t.plannedRR : 0;
-      const missedUSD = Math.max(0, estimatedTargetUSD - t.pnlUSD);
-      totalMissedRR += missedRR > 0 ? missedRR : 0;
-      estimatedMissedUSD += missedUSD;
-      return {
-        _id: String(t._id),
-        symbol: t.symbol,
-        direction: t.direction,
-        closeTime: t.closeTime,
-        pnlUSD: t.pnlUSD,
-        plannedRR: t.plannedRR,
-        exitReason: t.exitReason,
-        missedRR: parseFloat(Math.max(0, missedRR).toFixed(2)),
-        estimatedMissedUSD: parseFloat(missedUSD.toFixed(2)),
-      };
-    });
+    // Realized R needs real risk (riskUSD, from the stop MT5 had on the order
+    // at entry — see sync.py). See lib/tradeMath.js (and its test suite) for
+    // why this can't be estimated from pnlPct: that approach algebraically
+    // collapses to "missed profit is always $0.00" (BUG-2).
+    const missedProfit = calculateMissedProfit(trades);
+    const earlyExitDetails = missedProfit.trades;
+    const totalMissedRR = missedProfit.totalMissedRR;
+    const estimatedMissedUSD = missedProfit.estimatedMissedUSD;
+    const earlyExitsWithRiskData = missedProfit.withRiskData;
 
     // ── 2. Grade Gap ─────────────────────────────────────────────────────────
     const analysisGrades = trades.map(t => t.analysisGrade).filter(Boolean);
@@ -3601,10 +3821,12 @@ router.get('/coach', auth, async (req, res) => {
     const intervened = trades.filter(t => t.manuallyIntervened === true);
     const clean      = trades.filter(t => t.manuallyIntervened === false);
     const avgPnL = arr => arr.length > 0 ? parseFloat((arr.reduce((s, t) => s + t.pnlUSD, 0) / arr.length).toFixed(2)) : 0;
+    // Realized R = pnlUSD / riskUSD, using the actual stop distance MT5 had
+    // recorded at entry. Only meaningful for trades with real risk data.
     const avgRROf = arr => {
-      const valid = arr.filter(t => t.plannedRR != null && t.plannedRR > 0);
+      const valid = arr.filter(t => Number.isFinite(Number(t.riskUSD)) && Number(t.riskUSD) > 0);
       return valid.length > 0
-        ? parseFloat((valid.reduce((s, t) => s + (t.pnlPct / (t.pnlPct / t.plannedRR || 1)), 0) / valid.length).toFixed(2))
+        ? parseFloat((valid.reduce((s, t) => s + (Number(t.pnlUSD) / Number(t.riskUSD)), 0) / valid.length).toFixed(2))
         : null;
     };
     const winRateOf = arr => arr.length > 0 ? parseFloat(((arr.filter(t => t.pnlUSD > 0).length / arr.length) * 100).toFixed(1)) : 0;
@@ -3765,6 +3987,7 @@ router.get('/coach', auth, async (req, res) => {
       totalTrades: trades.length,
       earlyExits: {
         count: earlyExitDetails.length,
+        withRiskData: earlyExitsWithRiskData,
         totalMissedRR: parseFloat(totalMissedRR.toFixed(2)),
         estimatedMissedUSD: parseFloat(estimatedMissedUSD.toFixed(2)),
         trades: earlyExitDetails.slice(0, 10), // last 10 early exits
@@ -3794,6 +4017,8 @@ router.get('/coach', auth, async (req, res) => {
         cleanWinRate: winRateOf(clean),
         interventionAvgPnL: avgPnL(intervened),
         cleanAvgPnL: avgPnL(clean),
+        interventionAvgRR: avgRROf(intervened),
+        cleanAvgRR: avgRROf(clean),
       },
       demoVsLive: {
         live: buildAccountStats(liveArr),

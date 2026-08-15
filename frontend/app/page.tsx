@@ -8,7 +8,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, Activity,
   Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
-  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X, Image
+  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
 } from 'lucide-react';
 
 const API = '/api';
@@ -494,10 +494,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-actions">
-            <button className="btn btn-ghost" onClick={() => callMaintenance('recoverscreenshots')} disabled={Boolean(maintenanceBusy)} title="Re-link Cloudinary screenshots to trades after a database clear">
-              <Image size={14} />
-              {maintenanceBusy === 'recoverscreenshots' ? 'Scanning...' : 'Recover Screenshots'}
-            </button>
+            {/* 'Recover Screenshots' and 'Clear database' are intentionally not
+               exposed as buttons — rarely needed day-to-day and, in the case
+               of Clear database, the most destructive action on this page.
+               Both callMaintenance('recoverscreenshots'/'clear') handlers and
+               their backend routes are still fully intact if needed again. */}
             <button className="btn btn-ghost" onClick={() => callMaintenance('dedupe')} disabled={Boolean(maintenanceBusy)}>
               <Database size={14} />
               {maintenanceBusy === 'dedupe' ? 'Cleaning...' : 'Remove duplicates'}
@@ -509,10 +510,6 @@ export default function DashboardPage() {
             <button className="btn btn-primary" onClick={() => callMaintenance('resync')} disabled={Boolean(maintenanceBusy)}>
               <RefreshCw size={14} />
               {maintenanceBusy === 'resync' ? 'Requesting...' : 'Resync'}
-            </button>
-            <button className="btn btn-danger" onClick={() => callMaintenance('clear')} disabled={Boolean(maintenanceBusy)}>
-              <Trash2 size={14} />
-              {maintenanceBusy === 'clear' ? 'Clearing...' : 'Clear database'}
             </button>
 
             {tradeAccounts.length > 0 && (

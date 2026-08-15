@@ -31,6 +31,8 @@ interface Stats {
   maxLossStreak: number;
   sharpeRatio: number;
   maxDrawdownPct?: number;
+  avgR?: number | null;
+  tradesWithRiskData?: number;
   mixedAccounts?: boolean;
   accountKeys?: string[];
 }
@@ -446,11 +448,15 @@ export default function DashboardPage() {
       cardCls: s.expectancyUSD >= 0 ? 'green-card' : 'red-card',
     },
     {
-      label: 'Sharpe Ratio', icon: ShieldAlert, iconCls: s.sharpeRatio >= 1.5 ? 'green' : s.sharpeRatio >= 0 ? 'blue' : 'red',
-      value: isFinite(s.sharpeRatio) ? (s.sharpeRatio || 0).toFixed(2) : '0.00',
-      cls: s.sharpeRatio >= 1.5 ? 'green' : s.sharpeRatio >= 0 ? 'blue' : 'red',
-      sub: 'Risk-adjusted return ratio',
-      cardCls: s.sharpeRatio >= 1.5 ? 'green-card' : '',
+      // Sharpe on per-trade $ P&L isn't a meaningful risk-adjusted metric for
+      // a discretionary journal (yours reads ~0.01) — Avg R is the number
+      // that slot was standing in for. Needs the stop-based riskUSD MT5
+      // records at entry, so it's only available for trades synced with it.
+      label: 'Avg R', icon: ShieldAlert, iconCls: (s.avgR ?? 0) >= 0 ? 'green' : 'red',
+      value: s.avgR == null ? '—' : `${s.avgR >= 0 ? '+' : ''}${s.avgR.toFixed(2)}R`,
+      cls: (s.avgR ?? 0) >= 0 ? 'green' : 'red',
+      sub: s.tradesWithRiskData ? `${s.tradesWithRiskData} of ${s.totalTrades} trades have a recorded stop` : 'No trades with a recorded stop yet',
+      cardCls: (s.avgR ?? 0) >= 0 ? 'green-card' : '',
     },
     {
       label: 'Win / Loss Streaks', icon: Award, iconCls: 'blue',
@@ -589,7 +595,7 @@ export default function DashboardPage() {
         }}>
           <AlertTriangle size={16} style={{ flexShrink: 0, color: 'var(--amber, #f59e0b)' }} />
           <span>
-            This dashboard blends trades from more than one broker account. Balance, drawdown, and Sharpe ratio
+            This dashboard blends trades from more than one broker account. Balance and drawdown
             are per-account and not meaningful when merged — pick a single account above for accurate figures.
           </span>
         </div>

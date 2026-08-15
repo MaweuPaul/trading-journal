@@ -54,6 +54,8 @@ interface Trade {
   executionGrade?: string;
   plannedRR?: number | null;
   exitReason?: string;
+  riskUSD?: number | null;
+  stopLoss?: number | null;
   manuallyIntervened?: boolean | null;
   confidenceRating?: number | null;
   accountType?: string;
@@ -853,6 +855,7 @@ function TradesPageContent() {
                     <th className="hide-sm">Lots</th>
                     <th>P&L (USD)</th>
                     <th className="hide-sm">P&L (%)</th>
+                    <th className="hide-sm" title="Realized R-multiple: P&L ÷ the stop-based risk MT5 recorded on the order at entry. Only available for trades synced with a stop loss.">R</th>
                     <th className="hide-md">Comm.</th>
                     <th className="hide-md">Swap</th>
                     <th className="hide-md">Opened</th>
@@ -929,6 +932,9 @@ function TradesPageContent() {
                         </td>
                         <td className={`pnl ${isProfit ? 'positive' : 'negative'} hide-sm`}>
                           {t.pnlPct >= 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                        </td>
+                        <td className={`hide-sm ${t.riskUSD ? `pnl ${isProfit ? 'positive' : 'negative'}` : ''}`}>
+                          {t.riskUSD ? `${isProfit ? '+' : '-'}${Math.abs(t.pnlUSD / t.riskUSD).toFixed(2)}R` : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
                         </td>
                         <td className="hide-md" style={{ color: 'var(--text-muted)' }}>{t.commission.toFixed(2)}</td>
                         <td className="hide-md" style={{ color: 'var(--text-muted)' }}>{t.swap.toFixed(2)}</td>

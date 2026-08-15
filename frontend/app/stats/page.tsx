@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from 'recharts';
-import { Clock, BarChart2, Smile, Award, Activity, CheckSquare, Calendar, AlertTriangle } from 'lucide-react';
+import { Clock, BarChart2, Smile, Award, Activity, CheckSquare, Calendar, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 
 const API = '/api';
 
@@ -23,6 +23,10 @@ interface Stats {
   globalComplianceRate: number;
   mixedAccounts?: boolean;
   accountKeys?: string[];
+  avgR?: number | null;
+  avgWinR?: number | null;
+  avgLossR?: number | null;
+  tradesWithRiskData?: number;
 }
 
 interface TradeAccountOption {
@@ -279,6 +283,36 @@ export default function StatsPage() {
           <div className="stat-label">Best Month</div>
           <div className="stat-value green">{bestMonth || '—'}</div>
           <div className="stat-sub">Highest P&L month</div>
+        </div>
+      </div>
+
+      {/* Realized R — replaces "Sharpe on $ P&L", which isn't a meaningful
+         risk-adjusted metric per-trade. R needs the stop-based riskUSD MT5
+         records at entry, so only trades synced with that field count. */}
+      <div className="stat-grid" style={{ marginBottom: 20 }}>
+        <div className={`stat-card ${(stats.avgR ?? 0) >= 0 ? 'green-card' : 'red-card'}`}>
+          <div className={`stat-icon ${(stats.avgR ?? 0) >= 0 ? 'green' : 'red'}`}><TrendingUp size={14} /></div>
+          <div className="stat-label">Avg R</div>
+          <div className={`stat-value ${(stats.avgR ?? 0) >= 0 ? 'green' : 'red'}`}>
+            {stats.avgR == null ? '—' : `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`}
+          </div>
+          <div className="stat-sub">
+            {stats.tradesWithRiskData
+              ? `From ${stats.tradesWithRiskData} of ${stats.totalTrades} trades with a recorded stop`
+              : 'No trades with a recorded stop yet'}
+          </div>
+        </div>
+        <div className="stat-card green-card">
+          <div className="stat-icon green"><TrendingUp size={14} /></div>
+          <div className="stat-label">Avg Win</div>
+          <div className="stat-value green">{stats.avgWinR == null ? '—' : `+${stats.avgWinR.toFixed(2)}R`}</div>
+          <div className="stat-sub">Average R on winning trades</div>
+        </div>
+        <div className="stat-card red-card">
+          <div className="stat-icon red"><TrendingDown size={14} /></div>
+          <div className="stat-label">Avg Loss</div>
+          <div className="stat-value red">{stats.avgLossR == null ? '—' : `${stats.avgLossR.toFixed(2)}R`}</div>
+          <div className="stat-sub">Average R on losing trades</div>
         </div>
       </div>
 

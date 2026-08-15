@@ -6,6 +6,7 @@ const {
   calculateDrawdown,
   realizedRMultiple,
   calculateMissedProfit,
+  summarizeRMultiples,
 } = require('../lib/tradeMath');
 
 test('netTradeAmount includes commission and swap, not just pnlUSD', () => {
@@ -110,4 +111,29 @@ test('calculateMissedProfit excludes clean TP/SL exits and trades without a plan
   ];
   const result = calculateMissedProfit(trades);
   assert.equal(result.count, 0);
+});
+
+test('summarizeRMultiples matches a hand-computed fixture and excludes trades with no risk data', () => {
+  const trades = [
+    { pnlUSD: 150, riskUSD: 50 },   // +3R
+    { pnlUSD: -50, riskUSD: 50 },   // -1R
+    { pnlUSD: 75, riskUSD: 25 },    // +3R
+    { pnlUSD: -40, riskUSD: 20 },   // -2R
+    { pnlUSD: 999 },                // no riskUSD — must be excluded, not treated as 0R
+  ];
+  const r = summarizeRMultiples(trades);
+  assert.equal(r.totalTrades, 5);
+  assert.equal(r.tradesWithRiskData, 4);
+  assert.equal(r.avgR, (3 + -1 + 3 + -2) / 4); // 0.75
+  assert.equal(r.avgWinR, (3 + 3) / 2); // 3
+  assert.equal(r.avgLossR, (-1 + -2) / 2); // -1.5
+});
+
+test('summarizeRMultiples returns nulls (not zero) when no trades have risk data', () => {
+  const r = summarizeRMultiples([{ pnlUSD: 100 }, { pnlUSD: -50 }]);
+  assert.equal(r.totalTrades, 2);
+  assert.equal(r.tradesWithRiskData, 0);
+  assert.equal(r.avgR, null);
+  assert.equal(r.avgWinR, null);
+  assert.equal(r.avgLossR, null);
 });

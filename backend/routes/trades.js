@@ -19,7 +19,7 @@ const {
   tradeMatchesAccountFilter,
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
-const { calculateMissedProfit } = require('../lib/tradeMath');
+const { calculateMissedProfit, summarizeRMultiples } = require('../lib/tradeMath');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
@@ -2803,6 +2803,7 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
         expectancyUSD: 0, maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
         bySession: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0,
         mixedAccounts: false, accountKeys: [],
+        avgR: null, avgWinR: null, avgLossR: null, tradesWithRiskData: 0,
       });
     }
 
@@ -3004,6 +3005,8 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       winRate: g.trades > 0 ? (g.wins / g.trades) * 100 : 0
     })).sort((a, b) => a.grade.localeCompare(b.grade));
 
+    const rStats = summarizeRMultiples(trades);
+
     res.json({
       totalTrades: trades.length,
       winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
@@ -3033,6 +3036,10 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       globalComplianceRate,
       mixedAccounts,
       accountKeys: distinctAccountKeys,
+      avgR: rStats.avgR,
+      avgWinR: rStats.avgWinR,
+      avgLossR: rStats.avgLossR,
+      tradesWithRiskData: rStats.tradesWithRiskData,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

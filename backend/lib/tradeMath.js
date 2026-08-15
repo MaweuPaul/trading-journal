@@ -120,10 +120,35 @@ function calculateMissedProfit(trades) {
   };
 }
 
+// Average realized R across a set of trades — the metric a $-based Sharpe
+// ratio on per-trade P&L is usually standing in for, badly. Only trades with
+// real stop-based risk (riskUSD, from sync.py) contribute; trades without it
+// are counted but excluded from the average rather than silently treated as
+// 0R, which would understate real performance.
+function summarizeRMultiples(trades) {
+  const withRisk = [];
+  for (const t of trades) {
+    const r = realizedRMultiple(t);
+    if (r !== null) withRisk.push(r);
+  }
+  const wins = withRisk.filter(r => r > 0);
+  const losses = withRisk.filter(r => r < 0);
+  const avg = arr => arr.length > 0 ? arr.reduce((s, r) => s + r, 0) / arr.length : null;
+
+  return {
+    totalTrades: trades.length,
+    tradesWithRiskData: withRisk.length,
+    avgR: avg(withRisk),
+    avgWinR: avg(wins),
+    avgLossR: avg(losses),
+  };
+}
+
 module.exports = {
   netTradeAmount,
   summarizeTradeResults,
   calculateDrawdown,
   realizedRMultiple,
   calculateMissedProfit,
+  summarizeRMultiples,
 };

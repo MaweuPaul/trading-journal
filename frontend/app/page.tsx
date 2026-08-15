@@ -31,9 +31,19 @@ interface Stats {
   maxLossStreak: number;
   sharpeRatio: number;
   maxDrawdownPct?: number;
+  mixedAccounts?: boolean;
+  accountKeys?: string[];
 }
 
-interface BalanceData { balance: number; asOf: string | null }
+interface BalanceData { balance: number; asOf: string | null; mixedAccounts?: boolean }
+
+interface TradeAccountOption {
+  accountKey: string;
+  accountName: string;
+  accountType: string;
+  label: string;
+  count: number;
+}
 
 interface AccountEvent {
   _id: string;
@@ -103,15 +113,27 @@ export default function DashboardPage() {
   const [eventBusy, setEventBusy] = useState(false);
   const [eventMessage, setEventMessage] = useState('');
   const [groupBySetup, setGroupBySetup] = useState(false);
+  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load trading accounts')))
+      .then(body => setTradeAccounts(body.accounts || []))
+      .catch(e => console.error(e));
+  }, []);
 
   const loadDashboard = useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
       const headers = { 'Authorization': `Bearer ${token}` };
+      const acct = accountKeyFilter ? `&accountKey=${encodeURIComponent(accountKeyFilter)}` : '';
 
       const [s, b, c] = await Promise.all([
-        fetch(`${API}/stats?range=${range}&groupBySetup=${groupBySetup}`, { headers }).then(r => {
+        fetch(`${API}/stats?range=${range}&groupBySetup=${groupBySetup}${acct}`, { headers }).then(r => {
           if (r.status === 401) {
             localStorage.removeItem('token');
             router.push('/login');
@@ -119,7 +141,7 @@ export default function DashboardPage() {
           }
           return r.json();
         }),
-        fetch(`${API}/balance`, { headers }).then(r => {
+        fetch(`${API}/balance${accountKeyFilter ? `?accountKey=${encodeURIComponent(accountKeyFilter)}` : ''}`, { headers }).then(r => {
           if (r.status === 401) {
             localStorage.removeItem('token');
             router.push('/login');
@@ -127,7 +149,7 @@ export default function DashboardPage() {
           }
           return r.json();
         }),
-        fetch(`${API}/account-events?range=${range}`, { headers }).then(r => {
+        fetch(`${API}/account-events?range=${range}${acct}`, { headers }).then(r => {
           if (r.status === 401) {
             localStorage.removeItem('token');
             router.push('/login');
@@ -144,7 +166,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, groupBySetup, router]);
+  }, [range, groupBySetup, accountKeyFilter, router]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -195,6 +217,13 @@ export default function DashboardPage() {
     }
 
     if (action === 'fixbalances') {
+      // runningBalance is per broker account — recalculating it needs to know
+      // which account, once there's more than one. Require the dashboard's
+      // own account filter to be set first rather than guessing.
+      if (tradeAccounts.length > 1 && !accountKeyFilter) {
+        setMaintenanceMessage('Select a single trading account above (View filter) before fixing balances — running balance is per account.');
+        return;
+      }
       const input = window.prompt(
         'Enter your CURRENT MT5 account balance (e.g. 627.94).\nThis is used to back-calculate each trade\'s correct running balance.\n\nLeave blank to use the latest stored balance as the anchor.'
       );
@@ -210,7 +239,7 @@ export default function DashboardPage() {
         const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
         const res = await fetch(`${API}/maintenance/recalculate-balances`, {
           method: 'POST', headers,
-          body: JSON.stringify({ currentBalance: parsed }),
+          body: JSON.stringify({ currentBalance: parsed, accountKey: accountKeyFilter || undefined }),
         });
         if (res.status === 401) { localStorage.removeItem('token'); router.push('/login'); return; }
         const data = await res.json();
@@ -225,18 +254,25 @@ export default function DashboardPage() {
       return;
     }
 
+    if (action === 'dedupe') {
+      const confirmed = window.confirm(
+        'Remove duplicate trade rows? A backup of your current trades is written to disk first, but removed rows are gone from the live database.'
+      );
+      if (!confirmed) return;
+    }
+
     setMaintenanceBusy(action);
     setMaintenanceMessage('');
     try {
-      const headers = { 'Authorization': `Bearer ${token}` };
+      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
       let res: Response;
 
       if (action === 'dedupe') {
-        res = await fetch(`${API}/maintenance/dedupe-trades`, { method: 'POST', headers });
+        res = await fetch(`${API}/maintenance/dedupe-trades`, { method: 'POST', headers, body: JSON.stringify({ confirm: true }) });
       } else if (action === 'resync') {
         res = await fetch(`${API}/maintenance/resync-request`, { method: 'POST', headers });
       } else {
-        res = await fetch(`${API}/maintenance/trades`, { method: 'DELETE', headers });
+        res = await fetch(`${API}/maintenance/trades`, { method: 'DELETE', headers, body: JSON.stringify({ confirm: 'DELETE ALL TRADES' }) });
       }
 
       if (res.status === 401) {
@@ -479,6 +515,27 @@ export default function DashboardPage() {
               {maintenanceBusy === 'clear' ? 'Clearing...' : 'Clear database'}
             </button>
 
+            {tradeAccounts.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>Account:</span>
+                <select
+                  value={accountKeyFilter}
+                  onChange={e => { setAccountKeyFilter(e.target.value); setLoading(true); }}
+                  style={{
+                    border: 'none', background: 'transparent', fontSize: 12, fontWeight: 600,
+                    color: 'var(--text-secondary)', outline: 'none', cursor: 'pointer'
+                  }}
+                >
+                  <option value="">All accounts</option>
+                  {tradeAccounts.map(account => (
+                    <option key={account.accountKey} value={account.accountKey}>
+                      {account.label} ({account.accountType || 'unknown'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Time Range Selector Tool */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>View:</span>
@@ -526,6 +583,20 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {(stats.mixedAccounts || bal?.mixedAccounts) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--amber-bg, rgba(245,158,11,0.12))', border: '1px solid var(--amber, #f59e0b)',
+          borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 16, fontSize: 13,
+        }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, color: 'var(--amber, #f59e0b)' }} />
+          <span>
+            This dashboard blends trades from more than one broker account. Balance, drawdown, and Sharpe ratio
+            are per-account and not meaningful when merged — pick a single account above for accurate figures.
+          </span>
+        </div>
+      )}
 
       <div className="stat-grid">
         {statCards.map(c => (

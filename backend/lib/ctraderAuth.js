@@ -15,7 +15,11 @@ function requireEnv(name) {
 function buildAuthorizationUrl() {
   const clientId = requireEnv('CTRADER_CLIENT_ID');
   const redirectUri = requireEnv('CTRADER_REDIRECT_URI');
-  const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope: 'trading' });
+  // 'accounts' is cTrader's view-only scope — "Your application will be able
+  // to access account information and statistics; performing trading
+  // operations will be impossible." This app only ever reads symbols and
+  // trendbars, so it never needs the 'trading' scope's order/position access.
+  const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope: 'accounts', product: 'web' });
   return `${AUTHORIZE_URL}?${params}`;
 }
 

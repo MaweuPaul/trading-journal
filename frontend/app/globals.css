@@ -624,7 +624,16 @@ tbody td.text {
 /* ══════════════════════════════
    BUTTONS
 ══════════════════════════════ */
-.btn {
+/* .btn-primary/.btn-ghost/.btn-danger only set color/background — several
+   call sites across the app apply the variant class alone, without the
+   base .btn class, which left them with the browser's native <button>
+   border (a visible white outset edge) since nothing had reset it. Apply
+   the shared reset whenever any variant class is present so callers don't
+   need both class names to render correctly. */
+.btn,
+.btn-primary,
+.btn-ghost,
+.btn-danger {
   display: inline-flex;
   align-items: center;
   gap: 6px;

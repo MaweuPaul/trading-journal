@@ -1097,7 +1097,11 @@ router.post('/maintenance/dedupe-trades', auth, ownerOnly, async (req, res) => {
           deduped.push(trade);
           continue;
         }
-        const key = `${String(trade.user || req.user.userId)}:${String(trade.dealId)}`;
+        // MT5 deal tickets are only unique inside one broker account — two
+        // different accounts can (and, in practice, do) reuse the same
+        // ticket number. Keying on dealId alone would treat two genuinely
+        // different trades as duplicates and delete one of them.
+        const key = `${String(trade.user || req.user.userId)}:${cleanAccountField(trade.accountKey, 180).toLowerCase()}:${String(trade.dealId)}`;
         if (seen.has(key)) {
           removed++;
           continue;
@@ -1115,7 +1119,10 @@ router.post('/maintenance/dedupe-trades', auth, ownerOnly, async (req, res) => {
       { $sort: { createdAt: 1, _id: 1 } },
       {
         $group: {
-          _id: '$dealId',
+          // Same reasoning as above: group by account + dealId, not dealId
+          // alone, or trades from different accounts sharing a ticket
+          // number get merged and one is permanently deleted.
+          _id: { accountKey: { $ifNull: ['$accountKey', ''] }, dealId: '$dealId' },
           ids: { $push: '$_id' },
           count: { $sum: 1 },
         },

@@ -2,9 +2,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   X, Play, Pause, SkipBack, SkipForward,
-  Square, Minus, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
-  BookOpenText, Brain, Award, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
-  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronDown,
+  Square, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
+  BookOpenText, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
+  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -44,7 +44,7 @@ type ShapeDrawingTool = Extract<DrawingTool, 'rect' | 'line' | 'horizontal' | 'a
 interface AnnotationHistory { rects: DrawnRect[]; lines: DrawnLine[]; horizontals: DrawnHorizontal[]; arrows: DrawnArrow[]; texts: DrawnText[]; images: DrawnImage[]; }
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
-  visibilityScope?: 'timeframe' | 'all';
+  visibilityScope?: 'timeframe' | 'all'; order?: number;
   eventType: string; customType: string; title: string; note: string; emotion: string;
   severity: 'minor' | 'important' | 'critical'; playbookRuleId: string; playbookVersionId: string;
   screenshotIds: string[]; createdAt: string; updatedAt?: string;
@@ -65,6 +65,9 @@ interface Props {
   onJournalPhaseChange?: (phase: 'plan' | 'manage' | 'review') => void;
   onClose: () => void;
   onSaved: (updates: { notes: string; emotion: string; grade: string; tags: string[] }) => void;
+  onNavigate?: (direction: 'prev' | 'next') => void;
+  canNavigatePrev?: boolean;
+  canNavigateNext?: boolean;
 }
 
 const EMOTIONS = [
@@ -80,7 +83,7 @@ const DRAWING_COLORS = [
 ] as const;
 const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
 const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  select: { label: 'Select', instruction: 'Click an annotation to select it, then use Delete or the Delete key.' },
+  select: { label: 'Select', instruction: 'Click an annotation to select it, drag to move it, or use Delete/Backspace to remove it.' },
   rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area. The tool turns off after one zone.' },
   line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
   horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
@@ -119,7 +122,7 @@ const fmtDur = (mins: number) => {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 };
 
-export default function TradeReplayModal({ tradeId, tradeSummary, initialInterval, initialJournalPhase, onIntervalChange, onJournalPhaseChange, onClose, onSaved }: Props) {
+export default function TradeReplayModal({ tradeId, tradeSummary, initialInterval, initialJournalPhase, onIntervalChange, onJournalPhaseChange, onClose, onSaved, onNavigate, canNavigatePrev, canNavigateNext }: Props) {
   const { resolvedTheme } = useTheme();
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,6 +171,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [eventDraft, setEventDraft] = useState<ReplayEventDraft>(EMPTY_EVENT_DRAFT);
   const [eventLocation, setEventLocation] = useState<{ time: number; price: number } | null>(null);
   const [editingEventId, setEditingEventId] = useState('');
+  const [draggedEventId, setDraggedEventId] = useState('');
   const eventBaselineRef = useRef('');
   const eventsLoadedTradeRef = useRef('');
   const eventSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -187,6 +191,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const replayJournalInitializedRef = useRef(false);
   const drawStart = useRef<{ x: number; y: number } | null>(null);
+  const movingAnnotationRef = useRef<{ annotation: ReplayAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -695,7 +700,19 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (drawingTool === 'none') return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (drawingTool === 'select') { setSelectedAnnotationId(findAnnotationAt(x, y)?.id || ''); return; }
+    if (drawingTool === 'select') {
+      const hit = findAnnotationAt(x, y);
+      setSelectedAnnotationId(hit?.id || '');
+      const chart = chartRef.current, series = seriesRef.current;
+      if (hit && chart && series) {
+        const originTime = chart.timeScale().coordinateToTime(x);
+        const originPrice = series.coordinateToPrice(y);
+        if (originTime != null && originPrice != null) {
+          movingAnnotationRef.current = { annotation: hit, startX: x, startY: y, originTime: Number(originTime), originPrice, moved: false };
+        }
+      }
+      return;
+    }
     if (drawingTool === 'event') {
       const chart = chartRef.current, series = seriesRef.current;
       if (!chart || !series) return;
@@ -736,13 +753,42 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     }
     drawStart.current = { x, y };
   };
+  const applyAnnotationDelta = (original: ReplayAnnotation, deltaTime: number, deltaPrice: number) => {
+    const id = original.id;
+    if (original.type === 'rect' || original.type === 'line' || original.type === 'arrow') {
+      const updated = { ...original, time1: original.time1 + deltaTime, time2: original.time2 + deltaTime, price1: original.price1 + deltaPrice, price2: original.price2 + deltaPrice };
+      if (original.type === 'rect') setDrawnRects(cur => cur.map(item => item.id === id ? updated as DrawnRect : item));
+      if (original.type === 'line') setDrawnLines(cur => cur.map(item => item.id === id ? updated as DrawnLine : item));
+      if (original.type === 'arrow') setDrawnArrows(cur => cur.map(item => item.id === id ? updated as DrawnArrow : item));
+    } else {
+      const updated = { ...original, time: original.time + deltaTime, price: original.price + deltaPrice };
+      if (original.type === 'horizontal') setDrawnHorizontals(cur => cur.map(item => item.id === id ? updated as DrawnHorizontal : item));
+      if (original.type === 'text') setDrawnTexts(cur => cur.map(item => item.id === id ? updated as DrawnText : item));
+      if (original.type === 'image') setDrawnImages(cur => cur.map(item => item.id === id ? updated as DrawnImage : item));
+    }
+  };
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (drawingTool === 'select' && movingAnnotationRef.current) {
+      const move = movingAnnotationRef.current;
+      const chart = chartRef.current, series = seriesRef.current;
+      if (!chart || !series) return;
+      const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      if (!move.moved && Math.hypot(x - move.startX, y - move.startY) < 3) return;
+      if (!move.moved) { move.moved = true; pushAnnotationHistory(); }
+      const time = chart.timeScale().coordinateToTime(x);
+      const price = series.coordinateToPrice(y);
+      if (time == null || price == null) return;
+      applyAnnotationDelta(move.annotation, Number(time) - move.originTime, price - move.originPrice);
+      return;
+    }
     if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
     redrawCanvas();
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (movingAnnotationRef.current) { movingAnnotationRef.current = null; return; }
     if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
@@ -766,9 +812,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
   };
 
-  const handleReplayImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]; event.target.value = '';
-    if (!file) return;
+  const uploadReplayImage = async (file: File) => {
     if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
     if (file.size > 8 * 1024 * 1024) { alert('Please keep chart images under 8MB.'); return; }
     const token = localStorage.getItem('token'); if (!token) return;
@@ -791,6 +835,21 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     } catch (uploadError) {
       alert(uploadError instanceof Error ? uploadError.message : 'Could not upload chart image'); setDrawingTool('none');
     } finally { setUploadingImage(false); }
+  };
+  const handleReplayImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; event.target.value = '';
+    if (file) uploadReplayImage(file);
+  };
+  const [isDraggingFileOverChart, setIsDraggingFileOverChart] = useState(false);
+  const handleChartDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); setIsDraggingFileOverChart(true);
+  };
+  const handleChartDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); setIsDraggingFileOverChart(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) uploadReplayImage(file);
   };
 
   const handleSave = async () => {
@@ -848,7 +907,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const activePhase = JOURNAL_PHASES.find(phase => phase.id === journalPhase) || JOURNAL_PHASES[0];
   const phaseBlocks = playbook?.blocks.filter(block => activePhase.categories.includes(block.category as never)) || [];
   const allPlaybookRules = playbook?.blocks.flatMap(block => block.rules) || [];
-  const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval || event.visibilityScope === 'all').sort((a, b) => a.candleTime - b.candleTime);
+  const visibleTimelineEvents = timelineEvents.filter(event => event.timeframe === selectedInterval || event.visibilityScope === 'all').sort((a, b) => (a.order ?? a.candleTime) - (b.order ?? b.candleTime));
   const timelineProgressMarkers = replayData ? visibleTimelineEvents.map(event => {
     const index = replayData.candles.findIndex(candle => Number(candle.time) >= event.candleTime);
     return { event, index, progress: index >= 0 ? ((index + 1) / totalCandles) * 100 : 0 };
@@ -929,8 +988,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       severity: eventDraft.severity, playbookRuleId: eventDraft.playbookRuleId,
       playbookVersionId: eventDraft.playbookRuleId ? replayData?.playbookSnapshot?.versionId || '' : '',
       screenshotIds: existing?.screenshotIds || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
+      order: existing?.order ?? eventLocation.time,
     };
-    setTimelineEvents(current => [...current.filter(item => item.eventId !== event.eventId), event].sort((a, b) => a.candleTime - b.candleTime));
+    setTimelineEvents(current => [...current.filter(item => item.eventId !== event.eventId), event].sort((a, b) => (a.order ?? a.candleTime) - (b.order ?? b.candleTime)));
     setEventLocation(null); setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setDrawingTool('none');
   };
   const editTimelineEvent = (event: ReplayTimelineEvent) => {
@@ -938,6 +998,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     setEventDraft({ eventType: event.eventType, customType: event.customType || '', title: event.title, note: event.note || '', emotion: event.emotion || '', severity: event.severity, playbookRuleId: event.playbookRuleId || '', visibilityScope: event.visibilityScope === 'all' ? 'all' : 'timeframe' });
   };
   const deleteTimelineEvent = (eventId: string) => setTimelineEvents(current => current.filter(event => event.eventId !== eventId));
+  const reorderTimelineEvents = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const visibleIds = visibleTimelineEvents.map(event => event.eventId);
+    const fromIndex = visibleIds.indexOf(draggedId), toIndex = visibleIds.indexOf(targetId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const reordered = [...visibleIds];
+    reordered.splice(fromIndex, 1); reordered.splice(toIndex, 0, draggedId);
+    const orderById = new Map(reordered.map((id, idx) => [id, idx]));
+    setTimelineEvents(current => current.map(event => orderById.has(event.eventId) ? { ...event, order: orderById.get(event.eventId)!, updatedAt: new Date().toISOString() } : event));
+  };
   const navigateToTimelineEvent = (event: ReplayTimelineEvent) => {
     if (!replayData) { pendingTimelineNavigationRef.current = event.eventId; return; }
     if (event.visibilityScope !== 'all' && event.timeframe !== selectedInterval) {
@@ -1009,6 +1079,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
           <span className={`replay-topbar-pnl ${isProfit ? 'positive' : 'negative'}`}>{isProfit ? '+' : ''}{tradeSummary.pnlUSD.toFixed(2)} USD ({isProfit ? '+' : ''}{tradeSummary.pnlPct.toFixed(2)}%)</span>
           <span className="replay-topbar-meta">{tradeSummary.entryPrice.toFixed(5)} → {tradeSummary.exitPrice.toFixed(5)} · {fmtDur(tradeSummary.durationMinutes)} · {tradeSummary.lotSize.toFixed(2)} lots</span>
         </div>
+        {onNavigate && (
+          <div className="replay-topbar-nav" role="group" aria-label="Navigate between trades">
+            <button type="button" className="replay-topbar-nav-btn" disabled={!canNavigatePrev} onClick={() => onNavigate('prev')} title="Previous trade"><ChevronLeft size={15} /> Prev trade</button>
+            <button type="button" className="replay-topbar-nav-btn" disabled={!canNavigateNext} onClick={() => onNavigate('next')} title="Next trade">Next trade <ChevronRight size={15} /></button>
+          </div>
+        )}
         <button ref={closeButtonRef} className="replay-close-btn" onClick={onClose} title="Close Replay (Esc)" aria-label="Close Replay"><X size={16} /> Close</button>
       </div>
 
@@ -1042,8 +1118,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <div id="replay-drawing-tray" className="replay-drawing-tray" aria-label="Drawing tools">
           <div className="replay-tool-group">
             <span className="replay-tool-group-label">Drawing</span>
-            <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => activateDrawingTool('rect')}><Square size={16} /> Zone</button>
-            <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => activateDrawingTool('line')}><Minus size={16} /> Trend line</button>
             <button type="button" aria-pressed={drawingTool === 'horizontal'} className={`replay-tool-btn${drawingTool === 'horizontal' ? ' active' : ''}`} onClick={() => activateDrawingTool('horizontal')}><MoveHorizontal size={16} /> Price level</button>
             <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => activateDrawingTool('arrow')}><ArrowUpRight size={16} /> Arrow</button>
           </div>
@@ -1067,8 +1141,11 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       )}
 
       <div className="replay-body">
-        <div className="replay-chart-wrap">
+        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop}>
           <div ref={chartContainerRef} className="replay-chart-container" />
+          {isDraggingFileOverChart && (
+            <div className="replay-chart-drop-hint" role="status"><ImagePlus size={20} /> Drop image to pin as chart evidence</div>
+          )}
           {drawingTool === 'text' && (
             <div className="replay-chart-text-editor" role="group" aria-label="Write on chart">
               <TypeIcon size={15} />
@@ -1132,7 +1209,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}`}
             aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={() => { if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
+            onMouseLeave={() => { movingAnnotationRef.current = null; if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
           {pausedMarker && <div className="replay-marker-pause" role="status"><PauseCircle size={18} /><div><strong>Paused at {pausedMarker}</strong><span>Review what you knew and what you decided here.</span></div></div>}
           {showShortcutHelp && (
             <div className="replay-shortcut-help" role="dialog" aria-label="Replay keyboard shortcuts">
@@ -1180,7 +1257,16 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             {visibleTimelineEvents.length === 0 ? (
               <button type="button" className="replay-timeline-empty" onClick={() => activateDrawingTool('event')}><MapPin size={14} /> Add a timeline moment, then click the candle where it happened.</button>
             ) : visibleTimelineEvents.map(event => (
-              <article className="replay-timeline-event" key={event.eventId} onClick={() => navigateToTimelineEvent(event)}>
+              <article
+                className={`replay-timeline-event${draggedEventId === event.eventId ? ' dragging' : ''}`}
+                key={event.eventId} draggable
+                onClick={() => navigateToTimelineEvent(event)}
+                onDragStart={() => setDraggedEventId(event.eventId)}
+                onDragOver={dragEvent => dragEvent.preventDefault()}
+                onDrop={dragEvent => { dragEvent.preventDefault(); if (draggedEventId) reorderTimelineEvents(draggedEventId, event.eventId); setDraggedEventId(''); }}
+                onDragEnd={() => setDraggedEventId('')}
+              >
+                <span className="replay-timeline-grip" aria-hidden="true" title="Drag to reorder"><GripVertical size={13} /></span>
                 <i className={event.severity} />
                 <div><span>{new Date(event.candleTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {REPLAY_EVENT_TYPES.find(([value]) => value === event.eventType)?.[1] || event.customType} <em>{event.visibilityScope === 'all' ? 'All charts' : event.timeframe}</em></span><strong>{event.title}</strong>{event.note && <p>{event.note}</p>}</div>
                 <div className="replay-timeline-actions"><button type="button" onClick={click => { click.stopPropagation(); editTimelineEvent(event); }}>Edit</button><button type="button" onClick={click => { click.stopPropagation(); if (window.confirm('Delete this timeline event?')) deleteTimelineEvent(event.eventId); }}><Trash2 size={12} /></button></div>
@@ -1253,33 +1339,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               <div className="replay-rule-field"><label>Manually intervened?</label><div className="replay-rule-options">{[{ label: 'Yes', value: true }, { label: 'No', value: false }, { label: 'Unknown', value: null }].map(item => <button type="button" key={item.label} className={manuallyIntervened === item.value ? 'selected' : ''} onClick={() => setManuallyIntervened(item.value)}>{item.label}</button>)}</div></div>
             </section>
           )}
+          </>}
           <div className="replay-panel-section">
             <div className="replay-panel-label"><BookOpenText size={13} /> Journal Notes</div>
             <textarea className="replay-panel-textarea"
               placeholder="What was the setup? What did you do well or poorly? What would you do differently?"
               value={notes} onChange={e => setNotes(e.target.value)} />
           </div>
-          <div className="replay-panel-section">
-            <div className="replay-panel-label"><Brain size={13} /> Emotion</div>
-            <div className="replay-emotion-grid">
-              {EMOTIONS.map(em => (
-                <button key={em.name} className={`replay-emotion-btn${emotion === em.name ? ' selected' : ''}`}
-                  onClick={() => setEmotion(emotion === em.name ? '' : em.name)}>
-                  <span className="emoji">{em.emoji}</span><span>{em.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="replay-panel-section">
-            <div className="replay-panel-label"><Award size={13} /> Trade Grade</div>
-            <div className="replay-grade-row">
-              {GRADES.map(g => (
-                <button key={g} className={`replay-grade-btn ${g}${grade === g ? ' selected' : ''}`}
-                  onClick={() => setGrade(grade === g ? '' : g)}>{g}</button>
-              ))}
-            </div>
-          </div>
-          </>}
           <div className="replay-panel-section">
             <div className="replay-panel-label"><Tags size={13} /> Tags</div>
             <div className="replay-tags-row">

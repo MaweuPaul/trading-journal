@@ -1696,6 +1696,7 @@ function TradesPageContent() {
         </>
       )}
       {replayTradeId && selectedTrade && <TradeReplayModal
+        key={replayTradeId}
         tradeId={replayTradeId}
         tradeSummary={{
           symbol: selectedTrade.symbol,
@@ -1724,6 +1725,16 @@ function TradesPageContent() {
           setReplayTradeId(null);
           updateQuery({ replay: null, tf: null, phase: null });
         }}
+        onNavigate={direction => {
+          const index = trades.findIndex(trade => trade._id === replayTradeId);
+          if (index < 0) return;
+          const target = trades[direction === 'prev' ? index - 1 : index + 1];
+          if (!target) return;
+          setSelectedTrade(target); setReplayTradeId(target._id);
+          updateQuery({ trade: target._id, replay: target._id, tf: null, phase: null });
+        }}
+        canNavigatePrev={trades.findIndex(trade => trade._id === replayTradeId) > 0}
+        canNavigateNext={(() => { const i = trades.findIndex(trade => trade._id === replayTradeId); return i >= 0 && i < trades.length - 1; })()}
       />}
     </div>
   );

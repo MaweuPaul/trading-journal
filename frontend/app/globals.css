@@ -2761,7 +2761,7 @@ body.replay-open .main-content {
 .replay-event-visibility legend { margin-bottom: 5px; color: #8e9ab7; font-size: 10px; }
 .replay-event-visibility > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .replay-event-visibility label { position: relative; cursor: pointer; }
-.replay-event-visibility input { position: absolute; opacity: 0; pointer-events: none; }
+.replay-event-visibility input { position: absolute; inset: 0; opacity: 0; margin: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; }
 .replay-event-visibility label > span { min-height: 46px; display: grid; align-content: center; gap: 1px; padding: 7px 9px; border: 1px solid #303b55; border-radius: 8px; background: #111722; color: #aeb9d2; font-size: 10.5px; font-weight: 700; }
 .replay-event-visibility label small { color: #65708d; font-size: 8.5px; font-weight: 500; }
 .replay-event-visibility input:checked + span { border-color: #f59e0b; background: #f59e0b14; color: #fcd88d; }

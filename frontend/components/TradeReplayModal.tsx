@@ -192,6 +192,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const replayJournalInitializedRef = useRef(false);
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const movingAnnotationRef = useRef<{ annotation: ReplayAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
+  const autoSelectModeRef = useRef(false);
+  const [hoveredAnnotationId, setHoveredAnnotationId] = useState('');
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -696,23 +698,34 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     return null;
   };
 
+  const beginAnnotationInteraction = (x: number, y: number) => {
+    const hit = findAnnotationAt(x, y);
+    setSelectedAnnotationId(hit?.id || '');
+    const chart = chartRef.current, series = seriesRef.current;
+    if (hit && chart && series) {
+      const originTime = chart.timeScale().coordinateToTime(x);
+      const originPrice = series.coordinateToPrice(y);
+      if (originTime != null && originPrice != null) {
+        movingAnnotationRef.current = { annotation: hit, startX: x, startY: y, originTime: Number(originTime), originPrice, moved: false };
+      }
+    }
+    return hit;
+  };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (drawingTool === 'none') return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (drawingTool === 'select') {
-      const hit = findAnnotationAt(x, y);
-      setSelectedAnnotationId(hit?.id || '');
-      const chart = chartRef.current, series = seriesRef.current;
-      if (hit && chart && series) {
-        const originTime = chart.timeScale().coordinateToTime(x);
-        const originPrice = series.coordinateToPrice(y);
-        if (originTime != null && originPrice != null) {
-          movingAnnotationRef.current = { annotation: hit, startX: x, startY: y, originTime: Number(originTime), originPrice, moved: false };
-        }
-      }
+    if (drawingTool === 'none') {
+      // Idle state: the canvas only receives pointer events here when the cursor is
+      // already hovering a hit annotation (see handleChartWrapHoverMove), so a plain
+      // click/drag on an object works without pressing the Select tool first. Borrow
+      // 'select' as the interaction mode for the duration of this gesture so the
+      // in-progress drag keeps receiving events even after the cursor leaves the
+      // object's hit box, then revert to idle on mouseup.
+      const hit = beginAnnotationInteraction(x, y);
+      if (hit) { autoSelectModeRef.current = true; setDrawingTool('select'); }
       return;
     }
+    if (drawingTool === 'select') { beginAnnotationInteraction(x, y); return; }
     if (drawingTool === 'event') {
       const chart = chartRef.current, series = seriesRef.current;
       if (!chart || !series) return;
@@ -787,11 +800,18 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
     redrawCanvas();
   };
+  const endAutoSelectMode = () => {
+    if (!autoSelectModeRef.current) return;
+    autoSelectModeRef.current = false;
+    setDrawingTool('none');
+    setHoveredAnnotationId('');
+  };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (movingAnnotationRef.current) {
       const move = movingAnnotationRef.current;
       movingAnnotationRef.current = null;
       if (!move.moved) deleteAnnotation(move.annotation);
+      endAutoSelectMode();
       return;
     }
     if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
@@ -816,6 +836,21 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     drawStart.current = null; currentPreview.current = null; redrawCanvas();
     if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
   };
+  // Idle-state (no tool active) hover detection. The canvas overlay stays
+  // pointer-events:none by default so the chart underneath can still be
+  // panned/scrolled; this listener lives on the wrapping div (which always
+  // receives bubbled mouse events regardless of the canvas's pointer-events)
+  // and flips the canvas interactive only while hovering an existing
+  // annotation, so it can be dragged or clicked-to-delete without pressing
+  // the Select tool first.
+  const handleChartWrapHoverMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (drawingTool !== 'none' || movingAnnotationRef.current) return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const r = canvas.getBoundingClientRect();
+    const hit = findAnnotationAt(e.clientX - r.left, e.clientY - r.top);
+    setHoveredAnnotationId(hit?.id || '');
+  };
+  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); };
 
   const uploadReplayImage = async (file: File) => {
     if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
@@ -1146,7 +1181,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       )}
 
       <div className="replay-body">
-        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop}>
+        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop} onMouseMove={handleChartWrapHoverMove} onMouseLeave={handleChartWrapMouseLeave}>
           <div ref={chartContainerRef} className="replay-chart-container" />
           {isDraggingFileOverChart && (
             <div className="replay-chart-drop-hint" role="status"><ImagePlus size={20} /> Drop image to pin as chart evidence</div>
@@ -1211,10 +1246,10 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
             </div>
           )}
           <canvas ref={canvasRef}
-            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}`}
+            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId ? ' idle-hover' : ''}`}
             aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
             onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={() => { movingAnnotationRef.current = null; if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
+            onMouseLeave={() => { movingAnnotationRef.current = null; endAutoSelectMode(); if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
           {pausedMarker && <div className="replay-marker-pause" role="status"><PauseCircle size={18} /><div><strong>Paused at {pausedMarker}</strong><span>Review what you knew and what you decided here.</span></div></div>}
           {showShortcutHelp && (
             <div className="replay-shortcut-help" role="dialog" aria-label="Replay keyboard shortcuts">

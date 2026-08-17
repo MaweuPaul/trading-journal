@@ -2853,6 +2853,7 @@ body.replay-open .main-content {
 }
 .replay-canvas-overlay.drawing-active { pointer-events: all; cursor: crosshair; }
 .replay-canvas-overlay.drawing-active.selecting { cursor: default; }
+.replay-canvas-overlay.idle-hover { pointer-events: all; cursor: grab; }
 
 .replay-chart-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;

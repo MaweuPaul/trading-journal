@@ -44,6 +44,15 @@ test('normalizes Replay timeline events and their visibility scope', () => {
   assert.equal(globalEvent.visibilityScope, 'all');
 });
 
+test('preserves a supplied order for drag-reordered timeline events, falling back to candleTime', () => {
+  const [reordered, untouched] = normalizeReplayEvents([
+    { eventId: 'event-1', timeframe: '5min', candleTime: 500, price: 1, eventType: 'mistake', title: 'Moved to the front', order: 0 },
+    { eventId: 'event-2', timeframe: '5min', candleTime: 100, price: 1, eventType: 'lesson', title: 'No explicit order yet' },
+  ]);
+  assert.equal(reordered.order, 0);
+  assert.equal(untouched.order, 100); // falls back to candleTime when order is absent
+});
+
 test('rejects invalid Replay timeline events', () => {
   assert.throws(() => normalizeReplayEvents([{ eventId: 'event-1', timeframe: '2h', candleTime: 1, price: 1, eventType: 'mistake', title: 'Bad timeframe' }]), /unsupported timeframe/);
   assert.throws(() => normalizeReplayEvents([{ eventId: 'event-1', timeframe: '5min', candleTime: 1, price: 1, eventType: 'unknown', title: 'Bad type' }]), /unsupported type/);

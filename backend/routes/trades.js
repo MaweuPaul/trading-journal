@@ -19,7 +19,7 @@ const {
   tradeMatchesAccountFilter,
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
-const { calculateMissedProfit, summarizeRMultiples } = require('../lib/tradeMath');
+const { calculateMissedProfit, summarizeRMultiples, realizedRMultiple } = require('../lib/tradeMath');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
@@ -3073,12 +3073,20 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
             pnl: 0,
             tradesCount: 0,
             wins: 0,
-            date: dateStr
+            date: dateStr,
+            _rSum: 0, _rCount: 0,
           };
         }
         calendarData[dateStr].pnl += netAmount(t);
         calendarData[dateStr].tradesCount++;
         if (netAmount(t) > 0) calendarData[dateStr].wins++;
+        const r = realizedRMultiple(t);
+        if (r !== null) { calendarData[dateStr]._rSum += r; calendarData[dateStr]._rCount++; }
+      }
+      for (const day of Object.values(calendarData)) {
+        day.avgR = day._rCount > 0 ? day._rSum / day._rCount : null;
+        day.winRate = day.tradesCount > 0 ? (day.wins / day.tradesCount) * 100 : 0;
+        delete day._rSum; delete day._rCount;
       }
       return res.json(calendarData);
     }
@@ -3098,12 +3106,20 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
           pnl: 0,
           tradesCount: 0,
           wins: 0,
-          date: dateStr
+          date: dateStr,
+          _rSum: 0, _rCount: 0,
         };
       }
       calendarData[dateStr].pnl += netAmount(t);
       calendarData[dateStr].tradesCount++;
       if (netAmount(t) > 0) calendarData[dateStr].wins++;
+      const r = realizedRMultiple(t);
+      if (r !== null) { calendarData[dateStr]._rSum += r; calendarData[dateStr]._rCount++; }
+    }
+    for (const day of Object.values(calendarData)) {
+      day.avgR = day._rCount > 0 ? day._rSum / day._rCount : null;
+      day.winRate = day.tradesCount > 0 ? (day.wins / day.tradesCount) * 100 : 0;
+      delete day._rSum; delete day._rCount;
     }
     res.json(calendarData);
   } catch (err) {

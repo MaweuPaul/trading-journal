@@ -13,6 +13,8 @@ interface DailyStats {
   tradesCount: number;
   wins: number;
   date: string;
+  avgR: number | null;
+  winRate: number;
 }
 
 interface Trade {
@@ -241,6 +243,19 @@ export default function CalendarPage() {
     cells.push({ isEmpty: false, day, dateStr });
   }
 
+  // Weekly P&L rollup: each row of the grid (7 cells) is one calendar week.
+  const weeklyRollup: { pnl: number; days: number }[] = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    const week = cells.slice(i, i + 7);
+    let pnl = 0, days = 0;
+    for (const cell of week) {
+      if (cell.isEmpty) continue;
+      const stats = calendarStats[cell.dateStr];
+      if (stats && stats.tradesCount > 0) { pnl += stats.pnl; days++; }
+    }
+    weeklyRollup.push({ pnl, days });
+  }
+
   // Calculate Monthly Summary Stats dynamically for the selected month
   const monthlyStats = Object.values(calendarStats).filter(s => {
     const d = new Date(s.date);
@@ -413,11 +428,31 @@ export default function CalendarPage() {
                       <span className="day-pnl">
                         {stats.pnl >= 0 ? '+' : ''}${Math.abs(stats.pnl).toFixed(0)}
                       </span>
+                      <span className="day-sub-metric">
+                        {stats.avgR !== null
+                          ? `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`
+                          : `${stats.winRate.toFixed(1)}%`}
+                      </span>
                     </div>
                   )}
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Weekly P&L Rollup Strip */}
+        {!loading && (
+          <div className="calendar-weekly-rollup">
+            {weeklyRollup.map((week, idx) => (
+              <div className="calendar-weekly-cell" key={idx}>
+                <span className="calendar-weekly-label">Week {idx + 1}</span>
+                <span className={`calendar-weekly-pnl ${week.days === 0 ? 'muted' : week.pnl >= 0 ? 'positive' : 'negative'}`}>
+                  {week.days === 0 ? '—' : `${week.pnl >= 0 ? '+' : ''}$${Math.abs(week.pnl).toFixed(1)}`}
+                </span>
+                <span className="calendar-weekly-days">{week.days} day{week.days === 1 ? '' : 's'}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>

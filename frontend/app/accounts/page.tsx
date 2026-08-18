@@ -203,6 +203,9 @@ export default function TradingAccountsPage() {
       const summary = `${body.inserted} new trade${body.inserted === 1 ? '' : 's'}${body.skipped ? ` (${body.skipped} already synced)` : ''} · ${body.cashFlowInserted} new deposit/withdrawal${body.cashFlowInserted === 1 ? '' : 's'}`;
       setCtraderLastSync(current => ({ ...current, [ctidTraderAccountId]: { at: new Date().toISOString(), summary } }));
       setCtraderNotice(`Synced: ${summary}.`);
+      // A first sync creates this account's row (and its Trades count) in
+      // "Your accounts" -- refresh so it shows up without a manual reload.
+      void loadAccounts();
     } catch (caught) {
       setCtraderError(caught instanceof Error ? caught.message : 'Could not sync cTrader trades.');
     } finally {
@@ -414,7 +417,13 @@ export default function TradingAccountsPage() {
         <div className="account-card-grid">
           {ctraderConnections.map(connection => {
             const syncing = ctraderSyncingId === connection.ctidTraderAccountId;
-            const lastSync = ctraderLastSync[connection.ctidTraderAccountId];
+            const sessionSync = ctraderLastSync[connection.ctidTraderAccountId];
+            // The matching TradingAccount row is the durable record of when
+            // this account last synced -- ctraderLastSync only knows about a
+            // sync that happened in this browser tab since the page loaded.
+            const matchingAccount = accounts.find(a => a.accountKey === `ctrader:${connection.ctidTraderAccountId}`);
+            const lastSyncAt = sessionSync?.at || matchingAccount?.lastSyncAt || null;
+            const tradeCount = matchingAccount?.tradeCount ?? 0;
             return (
               <article className="account-card" key={connection.ctidTraderAccountId}>
                 <div className="account-card-top">
@@ -424,10 +433,13 @@ export default function TradingAccountsPage() {
                 </div>
                 <dl className="account-metrics">
                   <div><dt>Login</dt><dd>{connection.traderLogin || '—'}</dd></div>
-                  <div><dt>Connected</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
-                  <div><dt>Last trade sync</dt><dd>{lastSync ? formatDate(lastSync.at) : 'Not yet'}</dd></div>
+                  <div><dt>Trades</dt><dd>{matchingAccount ? tradeCount : '—'}</dd></div>
+                  <div><dt>Last trade sync</dt><dd>{formatDate(lastSyncAt)}</dd></div>
                 </dl>
-                {lastSync && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>{lastSync.summary}</p>}
+                {sessionSync && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>{sessionSync.summary}</p>}
+                {matchingAccount && tradeCount === 0 && !syncing && (
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>Synced, but this account has no closed trades yet — it won&apos;t appear in the Account filter until it does.</p>
+                )}
                 <div className="account-card-foot">
                   <button className="btn-ghost" onClick={() => syncCtrader(connection.ctidTraderAccountId)} disabled={syncing} title="Pull new trades and deposits/withdrawals from cTrader into the journal">
                     {syncing ? <Loader2 size={15} className="spin" /> : <DownloadCloud size={15} />}

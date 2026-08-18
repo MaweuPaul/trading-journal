@@ -8,6 +8,7 @@ import {
   X, Smile, Award, Tag, CheckSquare, Save, Info,
   Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play
 } from 'lucide-react';
+import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 const PAGE_SIZE = 50;
@@ -254,7 +255,7 @@ function TradesPageContent() {
   const [symbol, setSymbol]       = useState(() => searchParams.get('symbol') || '');
   const [direction, setDirection] = useState(() => searchParams.get('direction') || '');
   const [accountTypeFilter, setAccountTypeFilter] = useState(() => searchParams.get('account') || '');
-  const [accountKeyFilter, setAccountKeyFilter] = useState(() => searchParams.get('accountKey') || '');
+  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter(searchParams.get('accountKey') || undefined);
   const [from, setFrom]           = useState(() => searchParams.get('from') || '');
   const [to, setTo]               = useState(() => searchParams.get('to') || '');
   const [symbols, setSymbols]     = useState<string[]>([]);

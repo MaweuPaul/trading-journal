@@ -10,6 +10,7 @@ import {
   Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
   Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
 } from 'lucide-react';
+import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 
@@ -115,7 +116,7 @@ export default function DashboardPage() {
   const [eventBusy, setEventBusy] = useState(false);
   const [eventMessage, setEventMessage] = useState('');
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
 
   useEffect(() => {

@@ -9,6 +9,7 @@ import {
   TrendingUp, TrendingDown, Target, Zap, Shield,
   Award, AlertTriangle, Activity, DollarSign, Calendar
 } from 'lucide-react';
+import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 
@@ -119,7 +120,7 @@ export default function PerformancePage() {
   const [stats, setStats] = useState<PerfStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
   const [mixedAccounts, setMixedAccounts] = useState(false);
 

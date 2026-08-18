@@ -6,6 +6,7 @@ import {
   ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from 'recharts';
 import { Clock, BarChart2, Smile, Award, Activity, CheckSquare, Calendar, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
+import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 
@@ -110,7 +111,7 @@ export default function StatsPage() {
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useState('');
+  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
 
   useEffect(() => {

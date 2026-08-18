@@ -3060,7 +3060,10 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
 
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
-      let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      const ownerTrades = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
+      const distinctAccountKeys = [...new Set(ownerTrades.map(t => String(t.accountKey || '')).filter(Boolean))];
+      const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
+      let filtered = ownerTrades;
       if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
       if (grade) filtered = filtered.filter(t => t.grade === grade.toUpperCase());
       if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
@@ -3088,8 +3091,11 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
         day.winRate = day.tradesCount > 0 ? (day.wins / day.tradesCount) * 100 : 0;
         delete day._rSum; delete day._rCount;
       }
-      return res.json(calendarData);
+      return res.json({ days: calendarData, mixedAccounts, accountKeys: distinctAccountKeys });
     }
+
+    const distinctAccountKeys = accountKey ? [] : await Trade.distinct('accountKey', { user: req.user.userId, accountKey: { $nin: ['', null] } });
+    const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
 
     const query = { user: req.user.userId };
     if (symbol) query.symbol = symbol.toUpperCase();
@@ -3121,7 +3127,7 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
       day.winRate = day.tradesCount > 0 ? (day.wins / day.tradesCount) * 100 : 0;
       delete day._rSum; delete day._rCount;
     }
-    res.json(calendarData);
+    res.json({ days: calendarData, mixedAccounts, accountKeys: distinctAccountKeys });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

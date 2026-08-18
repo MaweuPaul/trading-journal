@@ -1,10 +1,11 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
+import {
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Info,
-  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity 
+  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity, AlertTriangle,
 } from 'lucide-react';
+import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 
@@ -15,6 +16,14 @@ interface DailyStats {
   date: string;
   avgR: number | null;
   winRate: number;
+}
+
+interface TradeAccountOption {
+  accountKey: string;
+  accountName: string;
+  accountType: string;
+  label: string;
+  count: number;
 }
 
 interface Trade {
@@ -60,6 +69,9 @@ export default function CalendarPage() {
   const [filterSymbol, setFilterSymbol] = useState('');
   const [filterGrade, setFilterGrade] = useState('');
   const [symbols, setSymbols] = useState<string[]>([]);
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
+  const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
+  const [mixedAccounts, setMixedAccounts] = useState(false);
 
   // Daily trades list modal/drawer state
   const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
@@ -75,6 +87,16 @@ export default function CalendarPage() {
     }
     setHasToken(true);
   }, [router]);
+
+  // Load the account filter's options once
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load trading accounts')))
+      .then(body => setTradeAccounts(body.accounts || []))
+      .catch(console.error);
+  }, []);
 
   // Load active symbols dynamically from stats endpoint
   useEffect(() => {
@@ -103,10 +125,12 @@ export default function CalendarPage() {
   const loadCalendar = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) return;
+    if (!accountFilterReady) return;
     setLoading(true);
     const params = new URLSearchParams({
       ...(filterSymbol && { symbol: filterSymbol }),
       ...(filterGrade && { grade: filterGrade }),
+      ...(accountKeyFilter && { accountKey: accountKeyFilter }),
     });
     try {
       const res = await fetch(`${API}/calendar?${params}`, {
@@ -118,13 +142,14 @@ export default function CalendarPage() {
         return;
       }
       const data = await res.json();
-      setCalendarStats(data || {});
+      setCalendarStats(data?.days || {});
+      setMixedAccounts(Boolean(data?.mixedAccounts));
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [filterSymbol, filterGrade, router]);
+  }, [filterSymbol, filterGrade, accountKeyFilter, accountFilterReady, router]);
 
   useEffect(() => { loadCalendar(); }, [loadCalendar]);
 
@@ -146,6 +171,7 @@ export default function CalendarPage() {
         limit: '100',
         ...(filterSymbol && { symbol: filterSymbol }),
         ...(filterGrade && { grade: filterGrade }),
+        ...(accountKeyFilter && { accountKey: accountKeyFilter }),
       });
       const res = await fetch(`${API}/trades?${params}`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -190,6 +216,7 @@ export default function CalendarPage() {
       limit: '100',
       ...(filterSymbol && { symbol: filterSymbol }),
       ...(filterGrade && { grade: filterGrade }),
+      ...(accountKeyFilter && { accountKey: accountKeyFilter }),
     });
 
     fetch(`${API}/trades?${params}`, {
@@ -213,6 +240,7 @@ export default function CalendarPage() {
   const resetFilters = () => {
     setFilterSymbol('');
     setFilterGrade('');
+    setAccountKeyFilter('');
   };
 
   // Nav Month shifts
@@ -349,11 +377,36 @@ export default function CalendarPage() {
             <option value="F">Grade F (Boredom) Setups</option>
           </select>
         </div>
+        {tradeAccounts.length > 0 && (
+          <div className="filter-group">
+            <label>Trading Account</label>
+            <select value={accountKeyFilter} onChange={e => setAccountKeyFilter(e.target.value)}>
+              <option value="">All trading accounts</option>
+              {tradeAccounts.map(account => (
+                <option key={account.accountKey} value={account.accountKey}>{account.label} ({account.accountType}, {account.count})</option>
+              ))}
+            </select>
+          </div>
+        )}
         <button className="btn btn-ghost" onClick={resetFilters} style={{ alignSelf: 'flex-end', flexShrink: 0 }}>
           <SlidersHorizontal size={13} />
           Reset Filters
         </button>
       </div>
+
+      {mixedAccounts && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--amber-bg, rgba(245,158,11,0.12))', border: '1px solid var(--amber, #f59e0b)',
+          borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 16, fontSize: 13,
+        }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, color: 'var(--amber, #f59e0b)' }} />
+          <span>
+            This calendar blends trades from more than one broker account. Daily P&amp;L and R-multiples
+            are per-account and not meaningful when merged — pick a single account above for accurate figures.
+          </span>
+        </div>
+      )}
 
       {/* Monthly Grid Card */}
       <div className="calendar-card">

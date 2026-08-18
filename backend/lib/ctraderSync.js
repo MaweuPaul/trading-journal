@@ -161,14 +161,16 @@ async function getOrCreateTradingAccount(userId, connectionInfo, trader) {
       $set: {
         provider: 'ctrader',
         label,
-        enabled: true,
         archivedAt: null,
         actualAccountType: connectionInfo.isLive ? 'live' : 'demo',
         lastStatus: 'connected',
         lastConnectedAt: new Date(),
         lastBalance: trader ? scale(trader.balance, trader.moneyDigits) : null,
       },
-      $setOnInsert: { user: userId, accountKey },
+      // Only set enabled on first creation — otherwise a manual Sync Now
+      // click would silently flip the "Sync enabled" toggle back on every
+      // time, making it a no-op control.
+      $setOnInsert: { user: userId, accountKey, enabled: true },
     },
     { upsert: true, new: true },
   );
@@ -236,6 +238,12 @@ async function syncCTraderTrades(userId) {
   const client = await getAuthenticatedClient(connectionInfo);
   const trader = await fetchTrader(client, connectionInfo.ctidTraderAccountId);
   const tradingAccount = await getOrCreateTradingAccount(userId, connectionInfo, trader);
+
+  if (!tradingAccount.enabled) {
+    const err = new Error('Syncing is disabled for this cTrader account. Enable it on the Accounts page first.');
+    err.code = 'DISABLED';
+    throw err;
+  }
 
   const accountIdentity = {
     accountKey: tradingAccount.accountKey,

@@ -149,7 +149,7 @@ router.post('/ctrader/sync', auth, ownerOnly, async (req, res) => {
     const result = await syncCTraderTrades(req.user.userId);
     res.json(result);
   } catch (error) {
-    const status = error.code === 'NOT_CONNECTED' ? 400 : 500;
+    const status = ['NOT_CONNECTED', 'DISABLED'].includes(error.code) ? 400 : 500;
     res.status(status).json({ error: error.message });
   }
 });

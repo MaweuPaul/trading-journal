@@ -12,6 +12,7 @@ type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
 interface TradingAccount {
   id: string;
   accountKey: string;
+  provider: 'mt5' | 'ctrader';
   label: string;
   enabled: boolean;
   requireRealAccount: boolean;
@@ -339,11 +340,20 @@ export default function TradingAccountsPage() {
         <div className="account-card-grid">
           {accounts.map(account => {
             const status = statusCopy(account); const StatusIcon = status.icon;
+            const isCtrader = account.provider === 'ctrader';
             return <article className="account-card" key={account.id}>
-              <div className="account-card-top"><div className="account-provider-icon"><Landmark size={19} /></div><div className="account-card-name"><h3>{account.label}</h3><span>MetaTrader 5 · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
+              <div className="account-card-top"><div className="account-provider-icon">{isCtrader ? <Video size={19} /> : <Landmark size={19} />}</div><div className="account-card-name"><h3>{account.label}</h3><span>{isCtrader ? 'cTrader Open API · OAuth' : 'MetaTrader 5'} · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
               {account.lastError && <div className="account-card-error"><AlertCircle size={14} />{account.lastError}</div>}
-              <dl className="account-metrics"><div><dt>Trades</dt><dd>{account.tradeCount}</dd></div><div><dt>Balance</dt><dd>{account.lastBalance == null ? '—' : `$${account.lastBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}</dd></div><div><dt>Last sync</dt><dd>{formatDate(account.lastSyncAt)}</dd></div><div><dt>Agent seen</dt><dd>{formatDate(account.lastAgentSeenAt)}</dd></div></dl>
-              <div className="account-card-foot"><label className="account-switch"><input type="checkbox" checked={account.enabled} onChange={() => toggleAccount(account)} /><span />{account.enabled ? 'Sync enabled' : 'Sync disabled'}</label><div><button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button><button className="danger" onClick={() => archiveAccount(account)} aria-label={`Archive ${account.label}`}><Trash2 size={15} /> Archive</button></div></div>
+              <dl className="account-metrics"><div><dt>Trades</dt><dd>{account.tradeCount}</dd></div><div><dt>Balance</dt><dd>{account.lastBalance == null ? '—' : `$${account.lastBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}</dd></div><div><dt>Last sync</dt><dd>{formatDate(account.lastSyncAt)}</dd></div>{!isCtrader && <div><dt>Agent seen</dt><dd>{formatDate(account.lastAgentSeenAt)}</dd></div>}</dl>
+              <div className="account-card-foot">
+                <label className="account-switch"><input type="checkbox" checked={account.enabled} onChange={() => toggleAccount(account)} /><span />{account.enabled ? 'Sync enabled' : 'Sync disabled'}</label>
+                <div>
+                  {isCtrader
+                    ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="This account is authorized via OAuth in the cTrader section below — there's no login to edit.">Managed via cTrader connection below</span>
+                    : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
+                  <button className="danger" onClick={() => archiveAccount(account)} aria-label={`Archive ${account.label}`}><Trash2 size={15} /> Archive</button>
+                </div>
+              </div>
             </article>;
           })}
         </div>

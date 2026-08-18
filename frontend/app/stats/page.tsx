@@ -111,7 +111,7 @@ export default function StatsPage() {
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
 
   useEffect(() => {
@@ -130,6 +130,7 @@ export default function StatsPage() {
       return;
     }
     setHasToken(true);
+    if (!accountFilterReady) return;
 
     setLoading(true);
     const params = new URLSearchParams({ range, groupBySetup: String(groupBySetup) });
@@ -148,7 +149,7 @@ export default function StatsPage() {
       .then(setStats)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [range, groupBySetup, accountKeyFilter, router]);
+  }, [range, groupBySetup, accountKeyFilter, accountFilterReady, router]);
 
   if (loading) return <div className="loading-wrap"><div className="spinner" /></div>;
   if (!hasToken) return null;

@@ -116,7 +116,7 @@ export default function DashboardPage() {
   const [eventBusy, setEventBusy] = useState(false);
   const [eventMessage, setEventMessage] = useState('');
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
 
   useEffect(() => {
@@ -129,6 +129,7 @@ export default function DashboardPage() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    if (!accountFilterReady) return;
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
@@ -169,7 +170,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [range, groupBySetup, accountKeyFilter, router]);
+  }, [range, groupBySetup, accountKeyFilter, accountFilterReady, router]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

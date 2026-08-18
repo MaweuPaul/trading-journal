@@ -120,7 +120,7 @@ export default function PerformancePage() {
   const [stats, setStats] = useState<PerfStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
   const [mixedAccounts, setMixedAccounts] = useState(false);
 
@@ -136,6 +136,7 @@ export default function PerformancePage() {
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) { router.push('/login'); return; }
+    if (!accountFilterReady) return;
     setLoading(true);
     try {
       const params = new URLSearchParams({ range, groupBySetup: String(groupBySetup) });
@@ -153,7 +154,7 @@ export default function PerformancePage() {
     } finally {
       setLoading(false);
     }
-  }, [range, groupBySetup, accountKeyFilter, router]);
+  }, [range, groupBySetup, accountKeyFilter, accountFilterReady, router]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -255,7 +255,7 @@ function TradesPageContent() {
   const [symbol, setSymbol]       = useState(() => searchParams.get('symbol') || '');
   const [direction, setDirection] = useState(() => searchParams.get('direction') || '');
   const [accountTypeFilter, setAccountTypeFilter] = useState(() => searchParams.get('account') || '');
-  const [accountKeyFilter, setAccountKeyFilter] = useAccountKeyFilter(searchParams.get('accountKey') || undefined);
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter(searchParams.get('accountKey') || undefined);
   const [from, setFrom]           = useState(() => searchParams.get('from') || '');
   const [to, setTo]               = useState(() => searchParams.get('to') || '');
   const [symbols, setSymbols]     = useState<string[]>([]);
@@ -311,6 +311,7 @@ function TradesPageContent() {
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) return;
+    if (!accountFilterReady) return;
     setLoading(true);
     const params = new URLSearchParams({
       page: String(page),
@@ -345,7 +346,7 @@ function TradesPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [page, symbol, direction, accountTypeFilter, accountKeyFilter, from, to, router]);
+  }, [page, symbol, direction, accountTypeFilter, accountKeyFilter, accountFilterReady, from, to, router]);
 
   useEffect(() => { load(); }, [load]);
 

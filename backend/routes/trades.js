@@ -2088,6 +2088,12 @@ router.get('/trades/:id/replay', auth, ownerOnly, async (req, res) => {
         periodLabel: window.interval,
         fromMs: new Date(window.start).getTime(),
         toMs: new Date(window.end).getTime(),
+        // Prefer the connection matching where this trade actually came from
+        // (its symbol universe/host are consistent with it), falling back to
+        // any connected account for MT5 trades or trades with no accountKey.
+        preferredCtidTraderAccountId: String(trade.accountKey || '').startsWith('ctrader:')
+          ? trade.accountKey.slice('ctrader:'.length)
+          : undefined,
       });
     } catch (err) {
       const setupCodes = new Set(['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED']);

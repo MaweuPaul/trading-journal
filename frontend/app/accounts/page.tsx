@@ -42,15 +42,12 @@ const emptyForm: AccountForm = {
   requireRealAccount: false, symbolAliases: '',
 };
 
-interface CTraderStatus {
-  connected: boolean;
-  databaseAvailable?: boolean;
-  ctidTraderAccountId?: string;
-  isLive?: boolean;
-  brokerTitle?: string;
-  traderLogin?: string;
-  connectedAt?: string;
-  hasSelectedAccount?: boolean;
+interface CTraderConnectionInfo {
+  ctidTraderAccountId: string;
+  isLive: boolean;
+  brokerTitle: string;
+  traderLogin: string;
+  connectedAt: string;
 }
 
 interface CTraderAccountOption {
@@ -58,6 +55,7 @@ interface CTraderAccountOption {
   isLive: boolean;
   brokerTitle: string;
   traderLogin: string;
+  alreadyConnected: boolean;
 }
 
 function formatDate(value: string | null) {
@@ -85,15 +83,19 @@ export default function TradingAccountsPage() {
 
   const token = () => localStorage.getItem('token');
 
-  // ── cTrader connection (Trade Replay candle source) ─────────────────────
-  const [ctraderStatus, setCtraderStatus] = useState<CTraderStatus | null>(null);
+  // ── cTrader connections (candle source for Trade Replay + trade sync) ───
+  // An owner can hold several cTrader connections at once, even under
+  // different cTrader logins (e.g. one under their own name, another under a
+  // partner's), so this is a list rather than a single status object.
+  const [ctraderConnections, setCtraderConnections] = useState<CTraderConnectionInfo[]>([]);
   const [ctraderLoading, setCtraderLoading] = useState(true);
   const [ctraderError, setCtraderError] = useState('');
   const [ctraderNotice, setCtraderNotice] = useState('');
   const [ctraderAccountOptions, setCtraderAccountOptions] = useState<CTraderAccountOption[]>([]);
+  const [ctraderSelectedOptionIds, setCtraderSelectedOptionIds] = useState<string[]>([]);
   const [ctraderConnecting, setCtraderConnecting] = useState(false);
-  const [ctraderSyncing, setCtraderSyncing] = useState(false);
-  const [ctraderLastSync, setCtraderLastSync] = useState<{ at: string; summary: string } | null>(null);
+  const [ctraderSyncingId, setCtraderSyncingId] = useState<string | null>(null);
+  const [ctraderLastSync, setCtraderLastSync] = useState<Record<string, { at: string; summary: string }>>({});
 
   const loadCtraderStatus = useCallback(async () => {
     setCtraderLoading(true);
@@ -101,7 +103,7 @@ export default function TradingAccountsPage() {
       const response = await fetch('/api/ctrader/status', { headers: { Authorization: `Bearer ${token()}` } });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Could not load cTrader connection status.');
-      setCtraderStatus(body);
+      setCtraderConnections(body.connections || []);
     } catch (caught) {
       setCtraderError(caught instanceof Error ? caught.message : 'Could not load cTrader connection status.');
     } finally {
@@ -129,12 +131,9 @@ export default function TradingAccountsPage() {
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Could not complete the cTrader authorization.');
-        setCtraderStatus(body.connection);
-        if (body.accounts?.length > 1 && !body.connection?.hasSelectedAccount) {
-          setCtraderAccountOptions(body.accounts);
-        } else {
-          setCtraderNotice('cTrader connected. Trade Replay will now pull candles from it.');
-        }
+        const options: CTraderAccountOption[] = body.accounts || [];
+        setCtraderAccountOptions(options);
+        setCtraderSelectedOptionIds(options.filter(o => !o.alreadyConnected).map(o => o.ctidTraderAccountId));
       } catch (caught) {
         setCtraderError(caught instanceof Error ? caught.message : 'Could not complete the cTrader authorization.');
       } finally {
@@ -155,51 +154,59 @@ export default function TradingAccountsPage() {
     }
   }
 
-  async function selectCtraderAccount(option: CTraderAccountOption) {
+  function toggleCtraderOption(id: string) {
+    setCtraderSelectedOptionIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
+  }
+
+  async function confirmCtraderAccounts() {
+    if (ctraderSelectedOptionIds.length === 0) return;
     setCtraderError('');
     try {
-      const response = await fetch('/api/ctrader/select-account', {
+      const response = await fetch('/api/ctrader/select-accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-        body: JSON.stringify(option),
+        body: JSON.stringify({ ctidTraderAccountIds: ctraderSelectedOptionIds }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not select the cTrader account.');
-      setCtraderStatus(body.connection);
+      if (!response.ok) throw new Error(body.error || 'Could not connect the selected cTrader accounts.');
+      setCtraderConnections(body.connections || []);
       setCtraderAccountOptions([]);
-      setCtraderNotice('cTrader account selected. Trade Replay will now pull candles from it.');
+      setCtraderSelectedOptionIds([]);
+      setCtraderNotice(`Connected ${ctraderSelectedOptionIds.length} cTrader account${ctraderSelectedOptionIds.length === 1 ? '' : 's'}.`);
     } catch (caught) {
-      setCtraderError(caught instanceof Error ? caught.message : 'Could not select the cTrader account.');
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not connect the selected cTrader accounts.');
     }
   }
 
-  async function disconnectCtrader() {
-    if (!confirm('Disconnect cTrader? Trade Replay will stop working until you reconnect.')) return;
+  async function disconnectCtrader(connection: CTraderConnectionInfo) {
+    if (!confirm(`Disconnect ${connection.brokerTitle || 'this cTrader account'} (login ${connection.traderLogin})? Its already-synced trades stay in the journal, but Replay and new syncing stop until you reconnect.`)) return;
     setCtraderError('');
     try {
-      const response = await fetch('/api/ctrader/connection', { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
+      const response = await fetch(`/api/ctrader/connection/${encodeURIComponent(connection.ctidTraderAccountId)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Could not disconnect cTrader.');
-      setCtraderStatus({ connected: false });
-      setCtraderNotice('cTrader disconnected.');
+      setCtraderConnections(current => current.filter(c => c.ctidTraderAccountId !== connection.ctidTraderAccountId));
+      setCtraderNotice('cTrader account disconnected.');
     } catch (caught) {
       setCtraderError(caught instanceof Error ? caught.message : 'Could not disconnect cTrader.');
     }
   }
 
-  async function syncCtrader() {
-    setCtraderError(''); setCtraderNotice(''); setCtraderSyncing(true);
+  async function syncCtrader(ctidTraderAccountId: string) {
+    setCtraderError(''); setCtraderNotice(''); setCtraderSyncingId(ctidTraderAccountId);
     try {
-      const response = await fetch('/api/ctrader/sync', { method: 'POST', headers: { Authorization: `Bearer ${token()}` } });
+      const response = await fetch(`/api/ctrader/sync/${encodeURIComponent(ctidTraderAccountId)}`, { method: 'POST', headers: { Authorization: `Bearer ${token()}` } });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Could not sync cTrader trades.');
+      const account = body.accounts?.[0];
+      if (account?.error) throw new Error(account.error);
       const summary = `${body.inserted} new trade${body.inserted === 1 ? '' : 's'}${body.skipped ? ` (${body.skipped} already synced)` : ''} · ${body.cashFlowInserted} new deposit/withdrawal${body.cashFlowInserted === 1 ? '' : 's'}`;
-      setCtraderLastSync({ at: new Date().toISOString(), summary });
+      setCtraderLastSync(current => ({ ...current, [ctidTraderAccountId]: { at: new Date().toISOString(), summary } }));
       setCtraderNotice(`Synced: ${summary}.`);
     } catch (caught) {
       setCtraderError(caught instanceof Error ? caught.message : 'Could not sync cTrader trades.');
     } finally {
-      setCtraderSyncing(false);
+      setCtraderSyncingId(null);
     }
   }
 
@@ -372,57 +379,82 @@ export default function TradingAccountsPage() {
       {ctraderAccountOptions.length > 0 ? (
         <div className="account-empty">
           <PlugZap size={28} />
-          <strong>Choose which cTrader account to use for Replay</strong>
-          <p>This access token can reach more than one account. Pick the one whose candles you want in Trade Replay.</p>
+          <strong>Choose which cTrader account(s) to connect</strong>
+          <p>This authorization can reach more than one account. Pick every one you want candles and trade sync for — already-connected accounts are shown but locked in.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 420 }}>
             {ctraderAccountOptions.map(option => (
-              <button
+              <label
                 key={option.ctidTraderAccountId}
                 className="btn-ghost"
-                style={{ justifyContent: 'space-between', display: 'flex', width: '100%' }}
-                onClick={() => selectCtraderAccount(option)}
+                style={{ justifyContent: 'space-between', display: 'flex', width: '100%', cursor: option.alreadyConnected ? 'default' : 'pointer', opacity: option.alreadyConnected ? 0.6 : 1 }}
               >
-                <span>{option.brokerTitle || 'cTrader account'} · login {option.traderLogin}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={option.alreadyConnected || ctraderSelectedOptionIds.includes(option.ctidTraderAccountId)}
+                    disabled={option.alreadyConnected}
+                    onChange={() => toggleCtraderOption(option.ctidTraderAccountId)}
+                  />
+                  {option.brokerTitle || 'cTrader account'} · login {option.traderLogin}{option.alreadyConnected ? ' · already connected' : ''}
+                </span>
                 <span>{option.isLive ? 'Live' : 'Demo'}</span>
-              </button>
+              </label>
             ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn-ghost" onClick={() => { setCtraderAccountOptions([]); setCtraderSelectedOptionIds([]); }}>Cancel</button>
+            <button className="btn-primary" onClick={confirmCtraderAccounts} disabled={ctraderSelectedOptionIds.length === 0}>
+              Connect {ctraderSelectedOptionIds.length || ''} account{ctraderSelectedOptionIds.length === 1 ? '' : 's'}
+            </button>
           </div>
         </div>
       ) : ctraderLoading ? (
         <div className="account-empty"><Loader2 className="spin" /><strong>Checking cTrader connection…</strong></div>
-      ) : ctraderStatus?.connected ? (
+      ) : ctraderConnections.length > 0 ? (
         <div className="account-card-grid">
-          <article className="account-card">
-            <div className="account-card-top">
-              <div className="account-provider-icon"><Video size={19} /></div>
-              <div className="account-card-name"><h3>{ctraderStatus.brokerTitle || 'cTrader'}</h3><span>cTrader Open API · {ctraderStatus.isLive ? 'Live' : 'Demo'}</span></div>
-              <span className="account-status connected"><CheckCircle2 size={13} />Connected</span>
-            </div>
-            <dl className="account-metrics">
-              <div><dt>Login</dt><dd>{ctraderStatus.traderLogin || '—'}</dd></div>
-              <div><dt>Connected</dt><dd>{formatDate(ctraderStatus.connectedAt || null)}</dd></div>
-              <div><dt>Last trade sync</dt><dd>{ctraderLastSync ? formatDate(ctraderLastSync.at) : 'Not yet'}</dd></div>
-            </dl>
-            {ctraderLastSync && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>{ctraderLastSync.summary}</p>}
-            <div className="account-card-foot">
-              <button className="btn-ghost" onClick={syncCtrader} disabled={ctraderSyncing} title="Pull new trades and deposits/withdrawals from cTrader into the journal">
-                {ctraderSyncing ? <Loader2 size={15} className="spin" /> : <DownloadCloud size={15} />}
-                {ctraderSyncing ? 'Syncing…' : 'Sync Now'}
-              </button>
-              <div><button className="danger" onClick={disconnectCtrader}><Unlink size={15} /> Disconnect</button></div>
-            </div>
-          </article>
+          {ctraderConnections.map(connection => {
+            const syncing = ctraderSyncingId === connection.ctidTraderAccountId;
+            const lastSync = ctraderLastSync[connection.ctidTraderAccountId];
+            return (
+              <article className="account-card" key={connection.ctidTraderAccountId}>
+                <div className="account-card-top">
+                  <div className="account-provider-icon"><Video size={19} /></div>
+                  <div className="account-card-name"><h3>{connection.brokerTitle || 'cTrader'}</h3><span>cTrader Open API · {connection.isLive ? 'Live' : 'Demo'}</span></div>
+                  <span className="account-status connected"><CheckCircle2 size={13} />Connected</span>
+                </div>
+                <dl className="account-metrics">
+                  <div><dt>Login</dt><dd>{connection.traderLogin || '—'}</dd></div>
+                  <div><dt>Connected</dt><dd>{formatDate(connection.connectedAt)}</dd></div>
+                  <div><dt>Last trade sync</dt><dd>{lastSync ? formatDate(lastSync.at) : 'Not yet'}</dd></div>
+                </dl>
+                {lastSync && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>{lastSync.summary}</p>}
+                <div className="account-card-foot">
+                  <button className="btn-ghost" onClick={() => syncCtrader(connection.ctidTraderAccountId)} disabled={syncing} title="Pull new trades and deposits/withdrawals from cTrader into the journal">
+                    {syncing ? <Loader2 size={15} className="spin" /> : <DownloadCloud size={15} />}
+                    {syncing ? 'Syncing…' : 'Sync Now'}
+                  </button>
+                  <div><button className="danger" onClick={() => disconnectCtrader(connection)}><Unlink size={15} /> Disconnect</button></div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="account-empty">
           <Video size={32} />
           <strong>cTrader is not connected</strong>
-          <p>Connect a cTrader Open API app to power Trade Replay's chart data. Register one at openapi.ctrader.com if you haven't already.</p>
+          <p>Connect a cTrader Open API app to power Trade Replay's chart data and sync trade history. Register one at openapi.ctrader.com if you haven't already.</p>
           <button className="btn-primary" onClick={connectCtrader} disabled={ctraderConnecting}>
             {ctraderConnecting ? <Loader2 size={17} className="spin" /> : <PlugZap size={17} />}
             {ctraderConnecting ? 'Connecting…' : 'Connect cTrader'}
           </button>
         </div>
+      )}
+      {!ctraderLoading && ctraderConnections.length > 0 && ctraderAccountOptions.length === 0 && (
+        <button className="btn-ghost" style={{ marginTop: 12 }} onClick={connectCtrader} disabled={ctraderConnecting}>
+          {ctraderConnecting ? <Loader2 size={15} className="spin" /> : <PlugZap size={15} />}
+          {ctraderConnecting ? 'Connecting…' : 'Connect another cTrader account'}
+        </button>
       )}
     </main>
   );

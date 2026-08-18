@@ -68,26 +68,8 @@ async function fetchAccountList(accessToken) {
   }
 }
 
-async function loadConnection(userId) {
-  // CTraderConnection is Mongo-only (encrypted OAuth tokens need a durable
-  // store), and the offline-login sentinel ID isn't a valid ObjectId — both
-  // would otherwise surface as a raw Mongoose CastError instead of a clear
-  // "cTrader needs MongoDB" message.
-  if (mongoose.connection.readyState !== 1) {
-    const err = new Error('cTrader requires MongoDB to be connected. Replay is unavailable in offline mode.');
-    err.code = 'NOT_CONNECTED';
-    throw err;
-  }
-  const connection = await CTraderConnection.findOne({ user: userId });
-  if (!connection) return null;
-  if (!connection.ctidTraderAccountId) {
-    const err = new Error('cTrader is connected but no trading account has been selected yet. Finish setup on the Accounts page.');
-    err.code = 'NO_ACCOUNT_SELECTED';
-    throw err;
-  }
-
+async function refreshConnectionIfNeeded(connection, userId) {
   let accessToken = decryptCredential(connection.accessToken, tokenContext(String(userId), 'accessToken'));
-
   // Refresh proactively if the token is expired or close to it.
   if (connection.expiresAt.getTime() - Date.now() < 5 * 60 * 1000) {
     const refreshToken = decryptCredential(connection.refreshToken, tokenContext(String(userId), 'refreshToken'));
@@ -98,8 +80,45 @@ async function loadConnection(userId) {
     connection.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
     await connection.save();
   }
-
   return { accessToken, ctidTraderAccountId: connection.ctidTraderAccountId, isLive: connection.isLive };
+}
+
+// An owner can have several cTrader connections (different accounts, even
+// different cTrader logins). `preferredCtidTraderAccountId` lets a caller
+// that knows which account a trade actually belongs to ask for that specific
+// connection; otherwise this falls back to the earliest-connected one, which
+// keeps single-connection callers (most of Replay, today) working unchanged.
+async function loadConnection(userId, preferredCtidTraderAccountId) {
+  // CTraderConnection is Mongo-only (encrypted OAuth tokens need a durable
+  // store), and the offline-login sentinel ID isn't a valid ObjectId — both
+  // would otherwise surface as a raw Mongoose CastError instead of a clear
+  // "cTrader needs MongoDB" message.
+  if (mongoose.connection.readyState !== 1) {
+    const err = new Error('cTrader requires MongoDB to be connected. Replay is unavailable in offline mode.');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+  let connection = null;
+  if (preferredCtidTraderAccountId) {
+    connection = await CTraderConnection.findOne({ user: userId, ctidTraderAccountId: String(preferredCtidTraderAccountId) });
+  }
+  if (!connection) {
+    connection = await CTraderConnection.findOne({ user: userId, ctidTraderAccountId: { $ne: '' } }).sort({ connectedAt: 1 });
+  }
+  if (!connection) return null;
+
+  return refreshConnectionIfNeeded(connection, userId);
+}
+
+// All of the owner's finalized (account-selected) connections — used to
+// sync every connected cTrader account, and to power the Accounts page list.
+async function listConnections(userId) {
+  if (mongoose.connection.readyState !== 1) {
+    const err = new Error('cTrader requires MongoDB to be connected.');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+  return CTraderConnection.find({ user: userId, ctidTraderAccountId: { $ne: '' } }).sort({ connectedAt: 1 });
 }
 
 async function getAuthenticatedClient({ accessToken, ctidTraderAccountId, isLive }) {
@@ -202,11 +221,11 @@ function normalizeSymbolForCTrader(raw) {
 
 // The core Replay data call: historical candles for one symbol/window from
 // the owner's connected cTrader account.
-async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs }) {
+async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferredCtidTraderAccountId }) {
   const period = PERIOD_BY_LABEL[periodLabel];
   if (!period) throw new Error(`Unsupported replay interval: ${periodLabel}`);
 
-  const connectionInfo = await loadConnection(userId);
+  const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
   if (!connectionInfo) {
     const err = new Error('cTrader is not connected. Connect it on the Accounts page to use Trade Replay.');
     err.code = 'NOT_CONNECTED';
@@ -248,4 +267,4 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs }) {
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };
 }
 
-module.exports = { fetchAccountList, getTrendbars, loadConnection, getAuthenticatedClient };
+module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient };

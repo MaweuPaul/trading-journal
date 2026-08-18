@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const Trade = require('../models/Trade');
 const AccountEvent = require('../models/AccountEvent');
 const TradingAccount = require('../models/TradingAccount');
-const { loadConnection, getAuthenticatedClient } = require('./ctraderReplay');
+const { loadConnection, listConnections, getAuthenticatedClient } = require('./ctraderReplay');
 const { PAYLOAD_TYPE } = require('./ctraderClient');
 
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -222,19 +222,7 @@ async function upsertAccountEvents(userId, events) {
 // The whole point of a manual "Sync Now" click: pull new deals + cash flow
 // from cTrader's cloud API and fold them into the journal exactly like an
 // MT5 sync would, without needing a local agent process.
-async function syncCTraderTrades(userId) {
-  if (mongoose.connection.readyState !== 1) {
-    const err = new Error('cTrader sync requires MongoDB to be connected.');
-    err.code = 'NOT_CONNECTED';
-    throw err;
-  }
-  const connectionInfo = await loadConnection(userId);
-  if (!connectionInfo) {
-    const err = new Error('cTrader is not connected. Connect it on the Accounts page first.');
-    err.code = 'NOT_CONNECTED';
-    throw err;
-  }
-
+async function syncOneConnection(userId, connectionInfo) {
   const client = await getAuthenticatedClient(connectionInfo);
   const trader = await fetchTrader(client, connectionInfo.ctidTraderAccountId);
   const tradingAccount = await getOrCreateTradingAccount(userId, connectionInfo, trader);
@@ -274,9 +262,58 @@ async function syncCTraderTrades(userId) {
   await TradingAccount.updateOne({ _id: tradingAccount._id }, { $set: { lastSyncAt: new Date() } });
 
   return {
+    ctidTraderAccountId: connectionInfo.ctidTraderAccountId,
+    accountKey: tradingAccount.accountKey,
+    label: tradingAccount.label,
     inserted: tradeResult.inserted, skipped: tradeResult.skipped, total: trades.length,
     cashFlowInserted: eventResult.inserted, cashFlowSkipped: eventResult.skipped, cashFlowTotal: accountEvents.length,
-    accountKey: tradingAccount.accountKey,
+  };
+}
+
+// Syncs a specific connection when `ctidTraderAccountId` is given, otherwise
+// every connected cTrader account for this owner. One account's failure
+// (e.g. a revoked token) doesn't abort the others — it's reported inline.
+async function syncCTraderTrades(userId, ctidTraderAccountId) {
+  if (mongoose.connection.readyState !== 1) {
+    const err = new Error('cTrader sync requires MongoDB to be connected.');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+
+  let connections;
+  if (ctidTraderAccountId) {
+    const connectionInfo = await loadConnection(userId, ctidTraderAccountId);
+    if (!connectionInfo) {
+      const err = new Error('That cTrader account is not connected.');
+      err.code = 'NOT_CONNECTED';
+      throw err;
+    }
+    connections = [connectionInfo];
+  } else {
+    const docs = await listConnections(userId);
+    if (docs.length === 0) {
+      const err = new Error('cTrader is not connected. Connect it on the Accounts page first.');
+      err.code = 'NOT_CONNECTED';
+      throw err;
+    }
+    connections = await Promise.all(docs.map(doc => loadConnection(userId, doc.ctidTraderAccountId)));
+  }
+
+  const accounts = [];
+  for (const connectionInfo of connections) {
+    try {
+      accounts.push(await syncOneConnection(userId, connectionInfo));
+    } catch (err) {
+      accounts.push({ ctidTraderAccountId: connectionInfo.ctidTraderAccountId, error: err.message });
+    }
+  }
+
+  return {
+    accounts,
+    inserted: accounts.reduce((sum, a) => sum + (a.inserted || 0), 0),
+    skipped: accounts.reduce((sum, a) => sum + (a.skipped || 0), 0),
+    cashFlowInserted: accounts.reduce((sum, a) => sum + (a.cashFlowInserted || 0), 0),
+    cashFlowSkipped: accounts.reduce((sum, a) => sum + (a.cashFlowSkipped || 0), 0),
   };
 }
 

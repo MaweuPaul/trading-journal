@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
-  ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video,
+  ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video, DownloadCloud,
 } from 'lucide-react';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
@@ -91,6 +91,8 @@ export default function TradingAccountsPage() {
   const [ctraderNotice, setCtraderNotice] = useState('');
   const [ctraderAccountOptions, setCtraderAccountOptions] = useState<CTraderAccountOption[]>([]);
   const [ctraderConnecting, setCtraderConnecting] = useState(false);
+  const [ctraderSyncing, setCtraderSyncing] = useState(false);
+  const [ctraderLastSync, setCtraderLastSync] = useState<{ at: string; summary: string } | null>(null);
 
   const loadCtraderStatus = useCallback(async () => {
     setCtraderLoading(true);
@@ -181,6 +183,22 @@ export default function TradingAccountsPage() {
       setCtraderNotice('cTrader disconnected.');
     } catch (caught) {
       setCtraderError(caught instanceof Error ? caught.message : 'Could not disconnect cTrader.');
+    }
+  }
+
+  async function syncCtrader() {
+    setCtraderError(''); setCtraderNotice(''); setCtraderSyncing(true);
+    try {
+      const response = await fetch('/api/ctrader/sync', { method: 'POST', headers: { Authorization: `Bearer ${token()}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not sync cTrader trades.');
+      const summary = `${body.inserted} new trade${body.inserted === 1 ? '' : 's'}${body.skipped ? ` (${body.skipped} already synced)` : ''} · ${body.cashFlowInserted} new deposit/withdrawal${body.cashFlowInserted === 1 ? '' : 's'}`;
+      setCtraderLastSync({ at: new Date().toISOString(), summary });
+      setCtraderNotice(`Synced: ${summary}.`);
+    } catch (caught) {
+      setCtraderError(caught instanceof Error ? caught.message : 'Could not sync cTrader trades.');
+    } finally {
+      setCtraderSyncing(false);
     }
   }
 
@@ -333,8 +351,8 @@ export default function TradingAccountsPage() {
 
       <section className="account-list-head" style={{ marginTop: 32 }}>
         <div>
-          <div className="account-title-line"><Video size={22} /><h2>Trade Replay Data Source</h2></div>
-          <p>cTrader Open API supplies the exact historical candles shown in Trade Replay.</p>
+          <div className="account-title-line"><Video size={22} /><h2>cTrader</h2></div>
+          <p>Supplies Trade Replay's candles, and can sync your cTrader trade history and cash flow into the journal alongside MT5.</p>
         </div>
       </section>
 
@@ -373,9 +391,14 @@ export default function TradingAccountsPage() {
             <dl className="account-metrics">
               <div><dt>Login</dt><dd>{ctraderStatus.traderLogin || '—'}</dd></div>
               <div><dt>Connected</dt><dd>{formatDate(ctraderStatus.connectedAt || null)}</dd></div>
+              <div><dt>Last trade sync</dt><dd>{ctraderLastSync ? formatDate(ctraderLastSync.at) : 'Not yet'}</dd></div>
             </dl>
+            {ctraderLastSync && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>{ctraderLastSync.summary}</p>}
             <div className="account-card-foot">
-              <span />
+              <button className="btn-ghost" onClick={syncCtrader} disabled={ctraderSyncing} title="Pull new trades and deposits/withdrawals from cTrader into the journal">
+                {ctraderSyncing ? <Loader2 size={15} className="spin" /> : <DownloadCloud size={15} />}
+                {ctraderSyncing ? 'Syncing…' : 'Sync Now'}
+              </button>
               <div><button className="danger" onClick={disconnectCtrader}><Unlink size={15} /> Disconnect</button></div>
             </div>
           </article>

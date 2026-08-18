@@ -248,4 +248,4 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs }) {
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };
 }
 
-module.exports = { fetchAccountList, getTrendbars };
+module.exports = { fetchAccountList, getTrendbars, loadConnection, getAuthenticatedClient };

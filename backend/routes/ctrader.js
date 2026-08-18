@@ -5,6 +5,7 @@ const CTraderConnection = require('../models/CTraderConnection');
 const { encryptCredential } = require('../lib/credentialEncryption');
 const { buildAuthorizationUrl, exchangeCodeForToken, refreshAccessToken } = require('../lib/ctraderAuth');
 const { fetchAccountList } = require('../lib/ctraderReplay');
+const { syncCTraderTrades } = require('../lib/ctraderSync');
 
 const router = express.Router();
 
@@ -136,6 +137,20 @@ router.delete('/ctrader/connection', auth, ownerOnly, async (req, res) => {
     res.json({ disconnected: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/ctrader/sync  -- pulls deal history + cash flow since the last
+// sync and folds it into Trade/AccountEvent, same as an MT5 sync would.
+// Triggered by the owner clicking "Sync Now"; there's no local agent for
+// cTrader since it's a cloud API reachable directly from the backend.
+router.post('/ctrader/sync', auth, ownerOnly, async (req, res) => {
+  try {
+    const result = await syncCTraderTrades(req.user.userId);
+    res.json(result);
+  } catch (error) {
+    const status = error.code === 'NOT_CONNECTED' ? 400 : 500;
+    res.status(status).json({ error: error.message });
   }
 });
 

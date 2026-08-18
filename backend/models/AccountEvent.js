@@ -12,7 +12,7 @@ const accountEventSchema = new mongoose.Schema({
   note: { type: String, default: '' },
   source: {
     type: String,
-    enum: ['manual', 'mt5'],
+    enum: ['manual', 'mt5', 'ctrader'],
     default: 'manual',
   },
   externalId: { type: String, default: '' },
@@ -25,7 +25,7 @@ const accountEventSchema = new mongoose.Schema({
 accountEventSchema.index({ user: 1, occurredAt: -1 });
 accountEventSchema.index(
   { user: 1, accountKey: 1, externalId: 1 },
-  { unique: true, partialFilterExpression: { source: 'mt5' } },
+  { unique: true, partialFilterExpression: { source: { $in: ['mt5', 'ctrader'] } } },
 );
 
 module.exports = mongoose.model('AccountEvent', accountEventSchema);

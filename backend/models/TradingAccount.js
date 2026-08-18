@@ -9,13 +9,15 @@ const encryptedValueSchema = new mongoose.Schema({
 
 const tradingAccountSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  provider: { type: String, enum: ['mt5'], default: 'mt5' },
+  provider: { type: String, enum: ['mt5', 'ctrader'], default: 'mt5' },
   accountKey: { type: String, required: true },
   label: { type: String, required: true, trim: true, maxlength: 80 },
   credentials: {
-    login: { type: encryptedValueSchema, required: true },
-    password: { type: encryptedValueSchema, required: true },
-    server: { type: encryptedValueSchema, required: true },
+    // cTrader accounts authenticate via the OAuth connection in CTraderConnection,
+    // not a login/password/server triplet, so these are only required for MT5.
+    login: { type: encryptedValueSchema, required: function isMt5() { return this.provider === 'mt5'; } },
+    password: { type: encryptedValueSchema, required: function isMt5() { return this.provider === 'mt5'; } },
+    server: { type: encryptedValueSchema, required: function isMt5() { return this.provider === 'mt5'; } },
   },
   enabled: { type: Boolean, default: true },
   archivedAt: { type: Date, default: null },

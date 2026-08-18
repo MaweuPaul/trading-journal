@@ -18,6 +18,7 @@ function normalizeReplayAnnotations(interval, input) {
     if (ids.has(annotationId)) throw new Error(`Annotation ID ${annotationId} is duplicated`);
     ids.add(annotationId);
     const color = /^#[0-9a-fA-F]{6}$/.test(String(annotation.color || '')) ? String(annotation.color) : '#3b82f6';
+    const lineStyle = annotation.lineStyle === 'dashed' ? 'dashed' : annotation.lineStyle === 'solid' ? 'solid' : undefined;
     if (type === 'text') {
       const text = String(annotation.text || '').trim().slice(0, 80);
       if (!text) throw new Error(`Text annotation ${index + 1} cannot be empty`);
@@ -32,10 +33,10 @@ function normalizeReplayAnnotations(interval, input) {
       };
     }
     if (type === 'horizontal') {
-      return { id: annotationId, type, time: number(annotation.time, 'time'), price: number(annotation.price, 'price'), color };
+      return { id: annotationId, type, time: number(annotation.time, 'time'), price: number(annotation.price, 'price'), color, ...(lineStyle && { lineStyle }) };
     }
     return {
-      id: annotationId, type, color,
+      id: annotationId, type, color, ...(lineStyle && { lineStyle }),
       time1: number(annotation.time1, 'time1'), time2: number(annotation.time2, 'time2'),
       price1: number(annotation.price1, 'price1'), price2: number(annotation.price2, 'price2'),
     };

@@ -18,6 +18,19 @@ test('normalizes valid chart documentation annotations', () => {
   assert.equal(annotations.length, 6);
 });
 
+test('preserves a valid lineStyle on line/arrow/horizontal annotations, and drops it if invalid or absent', () => {
+  const annotations = normalizeReplayAnnotations('15min', [
+    { id: 'line-solid', type: 'line', time1: 1, time2: 2, price1: 1, price2: 2, color: '#ef4444', lineStyle: 'solid' },
+    { id: 'arrow-dashed', type: 'arrow', time1: 1, time2: 2, price1: 1, price2: 2, color: '#ef4444', lineStyle: 'dashed' },
+    { id: 'level-no-style', type: 'horizontal', time: 1, price: 1, color: '#ef4444' },
+    { id: 'level-bad-style', type: 'horizontal', time: 1, price: 1, color: '#ef4444', lineStyle: 'zigzag' },
+  ]);
+  assert.equal(annotations[0].lineStyle, 'solid');
+  assert.equal(annotations[1].lineStyle, 'dashed');
+  assert.equal('lineStyle' in annotations[2], false);
+  assert.equal('lineStyle' in annotations[3], false);
+});
+
 test('rejects unsupported timeframes and duplicate IDs', () => {
   assert.throws(() => normalizeReplayAnnotations('2h', []), /Unsupported/);
   assert.throws(() => normalizeReplayAnnotations('5min', [

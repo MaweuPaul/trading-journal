@@ -2771,6 +2771,25 @@ body.replay-open .main-content {
 .replay-event-editor-actions button { min-height: 34px; border: 1px solid #303b55; border-radius: 7px; background: #151b26; color: #aeb9d2; padding: 6px 11px; cursor: pointer; }
 .replay-event-editor-actions button.primary { border-color: #d97706; background: #d97706; color: white; font-weight: 700; }
 .replay-event-editor-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.replay-annotation-editor { position: absolute; z-index: 6; width: 224px; display: grid; gap: 9px; padding: 12px; box-sizing: border-box; border: 1px solid #f59e0b80; border-radius: 12px; background: #0a0e14f7; color: #c9d2e8; box-shadow: 0 14px 36px #000b; pointer-events: auto; }
+.replay-annotation-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.replay-annotation-editor-head strong { font-size: 12px; color: #f8fafc; }
+.replay-annotation-editor-head button { border: 0; background: transparent; color: #8b95b0; cursor: pointer; font-size: 18px; line-height: 1; }
+.replay-annotation-editor label { display: grid; gap: 4px; color: #8e9ab7; font-size: 10px; }
+.replay-annotation-editor input { width: 100%; min-height: 32px; box-sizing: border-box; border: 1px solid #303b55; border-radius: 7px; outline: none; background: #111722; color: #eef3ff; padding: 6px 8px; font: 11px var(--font-sans); }
+.replay-annotation-editor input:focus { border-color: #f59e0b; }
+.replay-annotation-editor-colors { display: flex; flex-wrap: wrap; gap: 6px; }
+.replay-annotation-editor-colors button { width: 26px; height: 26px; flex: none; border: 2px solid #0a0e14; border-radius: 7px; background: var(--replay-swatch); cursor: pointer; box-shadow: 0 0 0 1px #303b55; }
+.replay-annotation-editor-colors button:hover { box-shadow: 0 0 0 2px #7f8aa7; }
+.replay-annotation-editor-colors button.active { box-shadow: 0 0 0 2px #f8fafc; }
+.replay-annotation-editor-linestyle { display: flex; gap: 6px; }
+.replay-annotation-editor-linestyle button { flex: 1; min-height: 30px; border: 1px solid #303b55; border-radius: 7px; background: #151b26; color: #aeb9d2; font-size: 10.5px; font-weight: 600; cursor: pointer; }
+.replay-annotation-editor-linestyle button.active { border-color: #f59e0b; background: #f59e0b14; color: #fcd88d; }
+.replay-annotation-editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.replay-annotation-editor-actions button { min-height: 32px; border: 1px solid #303b55; border-radius: 7px; background: #151b26; color: #aeb9d2; padding: 6px 11px; cursor: pointer; font-size: 11px; }
+.replay-annotation-editor-actions button.primary { border-color: #d97706; background: #d97706; color: white; font-weight: 700; }
+.replay-annotation-editor-delete { display: inline-flex; align-items: center; gap: 5px; }
+.replay-annotation-editor-delete:hover { color: #fb7185; border-color: #ef444480; background: #ef444414; }
 .replay-timeline { display: grid; gap: 7px; padding: 11px; border: 1px solid #27314a; border-radius: 10px; background: #10151d; }
 .replay-timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .replay-timeline-head > div { display: grid; gap: 2px; }
@@ -3142,12 +3161,15 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
 :root[data-theme='light'] .replay-annotation-manager .replay-annotation-select:hover,
 :root[data-theme='light'] .replay-timeline-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
 :root[data-theme='light'] .replay-tool-btn.replay-tool-primary { background: var(--accent-light); border-color: var(--accent-mid); color: #1d4ed8; }
-:root[data-theme='light'] .replay-color-group button { border-color: #f8fafc; }
-:root[data-theme='light'] .replay-color-group button.active { box-shadow: 0 0 0 2px #0f172a; }
+:root[data-theme='light'] .replay-color-group button,
+:root[data-theme='light'] .replay-annotation-editor-colors button { border-color: #f8fafc; }
+:root[data-theme='light'] .replay-color-group button.active,
+:root[data-theme='light'] .replay-annotation-editor-colors button.active { box-shadow: 0 0 0 2px #0f172a; }
 :root[data-theme='light'] .replay-chart-text-editor,
 :root[data-theme='light'] .replay-chart-image-placer,
 :root[data-theme='light'] .replay-annotation-manager,
 :root[data-theme='light'] .replay-event-editor,
+:root[data-theme='light'] .replay-annotation-editor,
 :root[data-theme='light'] .replay-shortcut-help,
 :root[data-theme='light'] .replay-marker-pause { background: #fffffff2; color: var(--text-secondary); border-color: var(--border-light); box-shadow: var(--shadow-lg); }
 :root[data-theme='light'] .replay-chart-text-editor input,
@@ -3156,9 +3178,13 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
 :root[data-theme='light'] .replay-event-editor select,
 :root[data-theme='light'] .replay-event-editor textarea,
 :root[data-theme='light'] .replay-event-visibility label > span,
+:root[data-theme='light'] .replay-annotation-editor input,
+:root[data-theme='light'] .replay-annotation-editor-linestyle button,
+:root[data-theme='light'] .replay-annotation-editor-actions button,
 :root[data-theme='light'] .replay-event-editor-actions button { background: var(--bg-surface); border-color: var(--border); color: var(--text-primary); }
 :root[data-theme='light'] .replay-chart-image-placer strong,
 :root[data-theme='light'] .replay-event-editor-head strong,
+:root[data-theme='light'] .replay-annotation-editor-head strong,
 :root[data-theme='light'] .replay-annotation-manager .replay-annotation-select { color: var(--text-primary); }
 :root[data-theme='light'] .replay-annotation-manager-head,
 :root[data-theme='light'] .replay-annotation-row,

@@ -29,11 +29,12 @@ interface ReplayData {
   playbookSnapshot?: ReplayPlaybookSnapshot | null; playbookResponses?: Record<string, unknown>;
 }
 interface ReplayError { setup?: boolean; error?: string; code?: string; }
+type AnnotationLineStyle = 'solid' | 'dashed';
 interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
-interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
+interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
 interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
-interface DrawnHorizontal { id: string; time: number; price: number; color: string; }
-interface DrawnArrow { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
+interface DrawnHorizontal { id: string; time: number; price: number; color: string; lineStyle?: AnnotationLineStyle; }
+interface DrawnArrow { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
 interface DrawnImage { id: string; time: number; price: number; url: string; caption: string; screenshotId: string; color: string; }
 type ReplayAnnotation =
   | (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' })
@@ -83,7 +84,7 @@ const DRAWING_COLORS = [
 ] as const;
 const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
 const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  select: { label: 'Select', instruction: 'Drag an annotation to move it. Click it (without dragging) to delete it.' },
+  select: { label: 'Select', instruction: 'Drag an annotation to move it. Click it (without dragging) to edit its color, text, or line style.' },
   rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area. The tool turns off after one zone.' },
   line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
   horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
@@ -194,6 +195,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const movingAnnotationRef = useRef<{ annotation: ReplayAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
   const autoSelectModeRef = useRef(false);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState('');
+  const [editingAnnotation, setEditingAnnotation] = useState<{ annotation: ReplayAnnotation; anchorX: number; anchorY: number } | null>(null);
+  const [annotationEditDraft, setAnnotationEditDraft] = useState<{ text: string; caption: string; color: string; lineStyle: AnnotationLineStyle }>({ text: '', caption: '', color: '', lineStyle: 'solid' });
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -599,14 +602,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const x2 = chart.timeScale().timeToCoordinate(line.time2 as UTCTimestamp);
       const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
       if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.setLineDash(line.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
       if (selected(line.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
     }
     for (const level of drawnHorizontals) {
       if (level.time > revealedTime) continue;
       const x = chart.timeScale().timeToCoordinate(level.time as UTCTimestamp); const y = series.priceToCoordinate(level.price);
       if (x == null || y == null) continue;
-      ctx.save(); ctx.strokeStyle = level.color; ctx.lineWidth = 1.5; ctx.setLineDash([7, 4]);
+      ctx.save(); ctx.strokeStyle = level.color; ctx.lineWidth = 1.5; ctx.setLineDash(level.lineStyle === 'solid' ? [] : [7, 4]);
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       ctx.fillStyle = level.color; ctx.font = '700 10px sans-serif'; ctx.fillText(level.price.toFixed(2), x + 6, y - 6); ctx.restore();
       if (selected(level.id)) drawSelection(x, y - 2, Math.max(2, canvas.width - x), 4);
@@ -617,7 +620,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const x2 = chart.timeScale().timeToCoordinate(arrow.time2 as UTCTimestamp);
       const y1 = series.priceToCoordinate(arrow.price1); const y2 = series.priceToCoordinate(arrow.price2);
       if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.setLineDash(arrow.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
       drawArrowHead(x1, y1, x2, y2, arrow.color);
       if (selected(arrow.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
     }
@@ -712,6 +715,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     return hit;
   };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (editingAnnotation) setEditingAnnotation(null);
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     if (drawingTool === 'none') {
@@ -806,11 +810,22 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     setDrawingTool('none');
     setHoveredAnnotationId('');
   };
+  const openAnnotationEditor = (annotation: ReplayAnnotation, anchorX: number, anchorY: number) => {
+    setEditingAnnotation({ annotation, anchorX, anchorY });
+    setAnnotationEditDraft({
+      text: annotation.type === 'text' ? annotation.text : '',
+      caption: annotation.type === 'image' ? annotation.caption : '',
+      color: annotation.color,
+      lineStyle: (annotation.type === 'line' || annotation.type === 'arrow' || annotation.type === 'horizontal')
+        ? (annotation.lineStyle || (annotation.type === 'horizontal' ? 'dashed' : 'solid'))
+        : 'solid',
+    });
+  };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (movingAnnotationRef.current) {
       const move = movingAnnotationRef.current;
       movingAnnotationRef.current = null;
-      if (!move.moved) deleteAnnotation(move.annotation);
+      if (!move.moved) openAnnotationEditor(move.annotation, move.startX, move.startY);
       endAutoSelectMode();
       return;
     }
@@ -922,6 +937,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (showShortcutHelp) { e.preventDefault(); setShowShortcutHelp(false); }
+      else if (editingAnnotation) { e.preventDefault(); closeAnnotationEditor(); }
       else if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
         e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setAnnotationText(''); setShowDrawingTools(false); setDrawingTool('none');
       } else onClose();
@@ -1000,6 +1016,34 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   };
   const deleteSelectedAnnotation = () => {
     const annotation = allAnnotations.find(item => item.id === selectedAnnotationId); if (annotation) deleteAnnotation(annotation);
+  };
+  const closeAnnotationEditor = () => setEditingAnnotation(null);
+  const applyAnnotationEdit = () => {
+    if (!editingAnnotation) return;
+    const { annotation } = editingAnnotation;
+    const id = annotation.id;
+    pushAnnotationHistory();
+    if (annotation.type === 'text') {
+      const text = annotationEditDraft.text.trim().slice(0, 80);
+      if (!text) { deleteAnnotation(annotation); closeAnnotationEditor(); return; }
+      setDrawnTexts(cur => cur.map(item => item.id === id ? { ...item, text, color: annotationEditDraft.color } : item));
+    } else if (annotation.type === 'image') {
+      setDrawnImages(cur => cur.map(item => item.id === id ? { ...item, caption: annotationEditDraft.caption.trim().slice(0, 180), color: annotationEditDraft.color } : item));
+    } else if (annotation.type === 'rect') {
+      setDrawnRects(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color } : item));
+    } else if (annotation.type === 'line') {
+      setDrawnLines(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
+    } else if (annotation.type === 'arrow') {
+      setDrawnArrows(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
+    } else if (annotation.type === 'horizontal') {
+      setDrawnHorizontals(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
+    }
+    closeAnnotationEditor();
+  };
+  const deleteEditingAnnotation = () => {
+    if (!editingAnnotation) return;
+    deleteAnnotation(editingAnnotation.annotation);
+    closeAnnotationEditor();
   };
   useEffect(() => {
     const onDelete = (event: KeyboardEvent) => {
@@ -1147,7 +1191,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
         <div className="replay-tool-group replay-tool-actions">
-          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Drag an annotation to move it, click it to delete it"><MousePointer2 size={16} /> Select</button>
+          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Drag an annotation to move it, click it to edit"><MousePointer2 size={16} /> Select</button>
           <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
           <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} title="Delete the selected annotation (Delete)"><Trash2 size={16} /> Delete</button>
           {allAnnotations.length > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Objects ({allAnnotations.length})</button>}
@@ -1245,6 +1289,44 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               ))}
             </div>
           )}
+          {editingAnnotation && (() => {
+            const canvas = canvasRef.current;
+            const maxLeft = (canvas?.clientWidth ?? 900) - 240;
+            const maxTop = (canvas?.clientHeight ?? 500) - 260;
+            const left = Math.max(8, Math.min(editingAnnotation.anchorX + 10, maxLeft));
+            const top = Math.max(8, Math.min(editingAnnotation.anchorY + 10, maxTop));
+            const a = editingAnnotation.annotation;
+            const typeLabel = a.type === 'text' ? 'Text note' : a.type === 'image' ? 'Chart image' : a.type === 'horizontal' ? 'Price level' : a.type === 'arrow' ? 'Arrow' : a.type === 'line' ? 'Trend line' : 'Zone';
+            return (
+              <div className="replay-annotation-editor" role="dialog" aria-label={`Edit ${typeLabel}`} style={{ left, top }}>
+                <div className="replay-annotation-editor-head"><strong>{typeLabel}</strong><button type="button" onClick={closeAnnotationEditor} aria-label="Close editor">×</button></div>
+                {a.type === 'text' && (
+                  <label>Text<input maxLength={80} value={annotationEditDraft.text} onChange={event => setAnnotationEditDraft(cur => ({ ...cur, text: event.target.value }))} autoFocus /></label>
+                )}
+                {a.type === 'image' && (
+                  <label>Caption<input maxLength={180} value={annotationEditDraft.caption} onChange={event => setAnnotationEditDraft(cur => ({ ...cur, caption: event.target.value }))} autoFocus /></label>
+                )}
+                <div className="replay-annotation-editor-colors" role="group" aria-label="Color">
+                  {DRAWING_COLORS.map(color => (
+                    <button type="button" key={color.value} title={color.label} aria-label={color.label} aria-pressed={annotationEditDraft.color === color.value}
+                      className={annotationEditDraft.color === color.value ? 'active' : ''}
+                      onClick={() => setAnnotationEditDraft(cur => ({ ...cur, color: color.value }))}
+                      style={{ '--replay-swatch': color.value } as React.CSSProperties} />
+                  ))}
+                </div>
+                {(a.type === 'line' || a.type === 'arrow' || a.type === 'horizontal') && (
+                  <div className="replay-annotation-editor-linestyle" role="group" aria-label="Line style">
+                    <button type="button" aria-pressed={annotationEditDraft.lineStyle === 'solid'} className={annotationEditDraft.lineStyle === 'solid' ? 'active' : ''} onClick={() => setAnnotationEditDraft(cur => ({ ...cur, lineStyle: 'solid' }))}>Solid</button>
+                    <button type="button" aria-pressed={annotationEditDraft.lineStyle === 'dashed'} className={annotationEditDraft.lineStyle === 'dashed' ? 'active' : ''} onClick={() => setAnnotationEditDraft(cur => ({ ...cur, lineStyle: 'dashed' }))}>Dashed</button>
+                  </div>
+                )}
+                <div className="replay-annotation-editor-actions">
+                  <button type="button" className="replay-annotation-editor-delete" onClick={deleteEditingAnnotation}><Trash2 size={13} /> Delete</button>
+                  <button type="button" className="primary" onClick={applyAnnotationEdit}>Save</button>
+                </div>
+              </div>
+            );
+          })()}
           <canvas ref={canvasRef}
             className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId ? ' idle-hover' : ''}`}
             aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}

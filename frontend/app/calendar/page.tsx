@@ -3,9 +3,10 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Info,
-  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity, AlertTriangle,
+  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity, AlertTriangle, Play,
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
+import TradeReplayModal from '@/components/TradeReplayModal';
 
 const API = '/api';
 
@@ -77,6 +78,7 @@ export default function CalendarPage() {
   const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
   const [dailyTrades, setDailyTrades] = useState<Trade[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
+  const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
 
   // Auth checking
   useEffect(() => {
@@ -563,13 +565,21 @@ export default function CalendarPage() {
                             </span>
                           </div>
                           
-                          <div className="session-stats-group" style={{ alignItems: 'flex-end', flexDirection: 'column', gap: 2 }}>
+                          <div className="session-stats-group" style={{ alignItems: 'flex-end', flexDirection: 'column', gap: 6 }}>
                             <span className={`pnl ${isProfit ? 'positive' : 'negative'}`} style={{ fontSize: 14, fontWeight: 700 }}>
                               {isProfit ? '+' : ''}${t.pnlUSD.toFixed(2)}
                             </span>
                             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                               {t.durationMinutes} mins duration
                             </span>
+                            <button
+                              className="btn btn-ghost"
+                              style={{ fontSize: 10.5, padding: '3px 8px' }}
+                              onClick={() => setReplayTradeId(t._id)}
+                              title="Open chart replay for this trade"
+                            >
+                              <Play size={11} /> Replay
+                            </button>
                           </div>
                         </div>
                       );
@@ -587,6 +597,41 @@ export default function CalendarPage() {
           </div>
         </>
       )}
+
+      {replayTradeId && (() => {
+        const replayTrade = dailyTrades.find(t => t._id === replayTradeId);
+        if (!replayTrade) return null;
+        const index = dailyTrades.findIndex(t => t._id === replayTradeId);
+        return (
+          <TradeReplayModal
+            key={replayTradeId}
+            tradeId={replayTradeId}
+            tradeSummary={{
+              symbol: replayTrade.symbol,
+              direction: replayTrade.direction,
+              pnlUSD: replayTrade.pnlUSD,
+              pnlPct: replayTrade.pnlPct,
+              entryPrice: replayTrade.entryPrice,
+              exitPrice: replayTrade.exitPrice,
+              openTime: replayTrade.openTime,
+              closeTime: replayTrade.closeTime,
+              durationMinutes: replayTrade.durationMinutes,
+              lotSize: replayTrade.lotSize,
+            }}
+            onClose={() => setReplayTradeId(null)}
+            onSaved={updates => {
+              setDailyTrades(current => current.map(t => t._id === replayTradeId ? { ...t, ...updates } : t));
+              setReplayTradeId(null);
+            }}
+            onNavigate={direction => {
+              const target = dailyTrades[direction === 'prev' ? index - 1 : index + 1];
+              if (target) setReplayTradeId(target._id);
+            }}
+            canNavigatePrev={index > 0}
+            canNavigateNext={index >= 0 && index < dailyTrades.length - 1}
+          />
+        );
+      })()}
     </div>
   );
 }

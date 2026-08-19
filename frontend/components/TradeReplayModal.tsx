@@ -114,7 +114,7 @@ const REPLAY_EVENT_TYPES = [
   ['management', 'Management'], ['exit', 'Exit decision'], ['emotion', 'Emotion'],
   ['mistake', 'Mistake'], ['violation', 'Rule violation'], ['lesson', 'Lesson'], ['custom', 'Custom'],
 ] as const;
-const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '', visibilityScope: 'timeframe' };
+const EMPTY_EVENT_DRAFT: ReplayEventDraft = { eventType: 'observation', customType: '', title: '', note: '', emotion: '', severity: 'important', playbookRuleId: '', visibilityScope: 'all' };
 const EMPTY_QUICK_REVIEW: ReplayQuickReview = { followedPlan: null, primaryEmotion: '', primaryMistake: '', primaryStrength: '', lesson: '', processGrade: '', completedAt: null };
 const fmt = (n: number, dp = 2) => n.toFixed(dp);
 const fmtDur = (mins: number) => {

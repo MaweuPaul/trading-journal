@@ -37,6 +37,14 @@ module.exports = function (req, res, next) {
       ].some(([method, pattern]) => method === req.method && pattern.test(path));
       if (!permitted) return res.status(403).json({ error: 'This sync-agent token cannot access owner journal endpoints.' });
     }
+    if (decoded.role === 'investor') {
+      const path = req.originalUrl.split('?')[0];
+      const permitted = [
+        ['GET', /^\/api\/investor\/summary$/],
+        ['GET', /^\/api\/investor\/trades$/],
+      ].some(([method, pattern]) => method === req.method && pattern.test(path));
+      if (!permitted) return res.status(403).json({ error: 'This investor token cannot access owner journal endpoints.' });
+    }
     req.user = decoded;
     next();
   } catch (err) {

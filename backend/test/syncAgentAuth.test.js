@@ -5,8 +5,10 @@ const jwt = require('jsonwebtoken');
 process.env.JWT_SECRET = 'test-only-jwt-secret-that-is-longer-than-thirty-two-characters';
 const auth = require('../middleware/auth');
 
-function authorize(method, originalUrl) {
-  const token = jwt.sign({ userId: '507f1f77bcf86cd799439011', role: 'sync_agent' }, process.env.JWT_SECRET);
+function authorize(method, originalUrl, role = 'sync_agent') {
+  const payload = { userId: '507f1f77bcf86cd799439011', role };
+  if (role === 'investor') payload.tradingAccountId = '507f1f77bcf86cd799439012';
+  const token = jwt.sign(payload, process.env.JWT_SECRET);
   const req = { method, originalUrl, header: name => name === 'Authorization' ? `Bearer ${token}` : '' };
   let response;
   let nextCalled = false;
@@ -24,4 +26,13 @@ test('sync-agent JWT is limited to worker endpoints', () => {
   // agent no longer has any replay-related endpoints to reach.
   assert.equal(authorize('GET', '/api/replay-requests').response.code, 403);
   assert.equal(authorize('POST', '/api/trades/abc/replay-candles').response.code, 403);
+});
+
+test('investor JWT is limited to the two read-only investor endpoints', () => {
+  assert.equal(authorize('GET', '/api/investor/summary', 'investor').nextCalled, true);
+  assert.equal(authorize('GET', '/api/investor/trades?page=2', 'investor').nextCalled, true);
+  assert.equal(authorize('GET', '/api/trades', 'investor').response.code, 403);
+  assert.equal(authorize('DELETE', '/api/trading-accounts/abc', 'investor').response.code, 403);
+  assert.equal(authorize('GET', '/api/stats', 'investor').response.code, 403);
+  assert.equal(authorize('POST', '/api/investor/login', 'investor').response.code, 403);
 });

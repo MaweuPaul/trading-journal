@@ -1,5 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const auth = require('../middleware/auth');
 const TradingAccount = require('../models/TradingAccount');
 const Trade = require('../models/Trade');
@@ -44,7 +46,22 @@ function publicAccount(account, tradeCount = 0) {
     hasCredentials: true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
+    investor: {
+      enabled: Boolean(account.investor?.enabled),
+      code: account.investor?.enabled ? account.investor.code : null,
+      lastViewedAt: account.investor?.lastViewedAt || null,
+    },
   };
+}
+
+function randomInvestorCode() {
+  // Digits only, styled like a broker account number -- easy to read back
+  // over a phone call the way an MT5 investor login would be.
+  return String(crypto.randomInt(10 ** 7, 10 ** 8));
+}
+
+function randomInvestorPassword() {
+  return crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, c => ({ '+': '8', '/': '9', '=': '' }[c]));
 }
 
 function validateInput(body, creating = false) {
@@ -138,6 +155,47 @@ router.delete('/trading-accounts/:id', auth, ownerOnly, async (req, res) => {
     account.lastStatus = 'disabled';
     await account.save();
     res.json({ archived: true, accountId: String(account._id) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /trading-accounts/:id/investor-access -- turns on read-only investor
+// viewing for this account, or rotates the password if it's already on. The
+// investor's account number (code) stays stable across rotations so a saved
+// bookmark keeps working; only the password changes. The plaintext password
+// is only ever returned here, once -- like an MT5 investor password, it
+// can't be recovered afterward, only rotated again.
+router.post('/trading-accounts/:id/investor-access', auth, ownerOnly, async (req, res) => {
+  try {
+    const account = await TradingAccount.findOne({ _id: req.params.id, user: req.user.userId, archivedAt: null });
+    if (!account) return res.status(404).json({ error: 'Trading account not found.' });
+
+    const password = randomInvestorPassword();
+    account.investor = {
+      enabled: true,
+      code: account.investor?.code || randomInvestorCode(),
+      passwordHash: await bcrypt.hash(password, 10),
+      createdAt: account.investor?.createdAt || new Date(),
+      lastViewedAt: account.investor?.lastViewedAt || null,
+    };
+    await account.save();
+    res.json({ code: account.investor.code, password });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /trading-accounts/:id/investor-access -- revokes it outright. The
+// code is cleared too, not just the password, so a stale bookmarked login
+// page can't even identify the account, let alone get a password prompt.
+router.delete('/trading-accounts/:id/investor-access', auth, ownerOnly, async (req, res) => {
+  try {
+    const account = await TradingAccount.findOne({ _id: req.params.id, user: req.user.userId, archivedAt: null });
+    if (!account) return res.status(404).json({ error: 'Trading account not found.' });
+    account.investor = { enabled: false, code: null, passwordHash: null, createdAt: null, lastViewedAt: null };
+    await account.save();
+    res.json({ revoked: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

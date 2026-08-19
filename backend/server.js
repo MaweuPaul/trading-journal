@@ -10,6 +10,7 @@ const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
 const tradingAccountsRouter = require('./routes/tradingAccounts');
 const ctraderRouter = require('./routes/ctrader');
+const investorRouter = require('./routes/investor');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -48,6 +49,7 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/api/auth', authRouter);
 app.use('/api', tradingAccountsRouter);
 app.use('/api', ctraderRouter);
+app.use('/api', investorRouter);
 app.use('/api', tradesRouter);
 
 // Health check

@@ -5,6 +5,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
   ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video, DownloadCloud,
+  Users, Copy, ShieldOff,
 } from 'lucide-react';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
@@ -25,6 +26,7 @@ interface TradingAccount {
   lastBalance: number | null;
   actualAccountType: 'live' | 'demo' | '';
   tradeCount: number;
+  investor: { enabled: boolean; code: string | null; lastViewedAt: string | null };
 }
 
 interface AccountForm {
@@ -300,6 +302,66 @@ export default function TradingAccountsPage() {
     await loadAccounts();
   }
 
+  // ── Investor access (read-only, no-login view for someone you share
+  // results with) — modeled on MT5's own investor password: one stable
+  // account number (code) plus a password that can only be rotated, never
+  // recovered, and that's shown here exactly once. ────────────────────────
+  const [investorOpenId, setInvestorOpenId] = useState<string | null>(null);
+  const [investorBusyId, setInvestorBusyId] = useState<string | null>(null);
+  const [investorReveal, setInvestorReveal] = useState<{ accountId: string; code: string; password: string } | null>(null);
+  const [investorCopyState, setInvestorCopyState] = useState<'link' | 'password' | null>(null);
+
+  async function enableOrRotateInvestor(account: TradingAccount) {
+    setError(''); setInvestorBusyId(account.id);
+    try {
+      const response = await fetch(`/api/trading-accounts/${account.id}/investor-access`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token()}` },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not enable investor access.');
+      setInvestorReveal({ accountId: account.id, code: body.code, password: body.password });
+      await loadAccounts();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not enable investor access.');
+    } finally {
+      setInvestorBusyId(null);
+    }
+  }
+
+  async function disableInvestor(account: TradingAccount) {
+    if (!confirm(`Revoke investor access for "${account.label}"? Whoever has the link and password will immediately lose view access.`)) return;
+    setError(''); setInvestorBusyId(account.id);
+    try {
+      const response = await fetch(`/api/trading-accounts/${account.id}/investor-access`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not revoke investor access.');
+      if (investorReveal?.accountId === account.id) setInvestorReveal(null);
+      setNotice('Investor access revoked.');
+      await loadAccounts();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not revoke investor access.');
+    } finally {
+      setInvestorBusyId(null);
+    }
+  }
+
+  function investorLoginUrl(code: string) {
+    return `${window.location.origin}/investor/login?code=${code}`;
+  }
+
+  async function copyInvestorText(text: string, kind: 'link' | 'password') {
+    try {
+      await navigator.clipboard.writeText(text);
+      setInvestorCopyState(kind);
+      setTimeout(() => setInvestorCopyState(current => current === kind ? null : current), 1800);
+    } catch {
+      // Clipboard API can be unavailable (e.g. insecure context) -- the
+      // value is still selectable/visible in the field, so this is non-fatal.
+    }
+  }
+
   return (
     <main className="page-content account-page">
       <header className="account-page-head">
@@ -361,9 +423,64 @@ export default function TradingAccountsPage() {
                   {isCtrader
                     ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="This account is authorized via OAuth in the cTrader section below — there's no login to edit.">Managed via cTrader connection below</span>
                     : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
+                  <button onClick={() => setInvestorOpenId(current => current === account.id ? null : account.id)} aria-expanded={investorOpenId === account.id} aria-label={`Investor access for ${account.label}`}>
+                    <Users size={15} /> Investor{account.investor.enabled ? ' · on' : ''}
+                  </button>
                   <button className="danger" onClick={() => archiveAccount(account)} aria-label={`Archive ${account.label}`}><Trash2 size={15} /> Archive</button>
                 </div>
               </div>
+
+              {investorOpenId === account.id && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Read-only view for someone you share results with — no account of theirs, no login on this app. Works like an MT5 investor password: one account number, one password, no edit access, and you can revoke it instantly.
+                  </p>
+
+                  {account.investor.enabled ? (
+                    <>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Account number</span>
+                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px' }}>{account.investor.code}</code>
+                        <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => copyInvestorText(investorLoginUrl(account.investor.code || ''), 'link')}>
+                          <Copy size={12} /> {investorCopyState === 'link' && investorReveal?.accountId !== account.id ? 'Copied!' : 'Copy investor link'}
+                        </button>
+                      </div>
+                      {account.investor.lastViewedAt && (
+                        <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Last viewed {formatDate(account.investor.lastViewedAt)}</span>
+                      )}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn-ghost" style={{ fontSize: 12 }} disabled={investorBusyId === account.id} onClick={() => enableOrRotateInvestor(account)}>
+                          {investorBusyId === account.id ? <Loader2 size={14} className="spin" /> : <KeyRound size={14} />} Rotate password
+                        </button>
+                        <button className="danger" style={{ fontSize: 12 }} disabled={investorBusyId === account.id} onClick={() => disableInvestor(account)}>
+                          <ShieldOff size={14} /> Revoke access
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <button className="btn-primary" style={{ fontSize: 12, alignSelf: 'flex-start' }} disabled={investorBusyId === account.id} onClick={() => enableOrRotateInvestor(account)}>
+                      {investorBusyId === account.id ? <Loader2 size={14} className="spin" /> : <Users size={14} />} Enable investor access
+                    </button>
+                  )}
+
+                  {investorReveal?.accountId === account.id && (
+                    <div style={{ background: 'var(--amber-bg, rgba(212,175,55,0.12))', border: '1px solid var(--gold, #d4af37)', borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <strong style={{ fontSize: 11.5 }}>Save this now — the password won't be shown again</strong>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Password</span>
+                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px' }}>{investorReveal.password}</code>
+                        <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => copyInvestorText(investorReveal.password, 'password')}>
+                          <Copy size={12} /> {investorCopyState === 'password' ? 'Copied!' : 'Copy password'}
+                        </button>
+                      </div>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                        Send the investor this link, then the password separately: {investorLoginUrl(investorReveal.code)}
+                      </span>
+                      <button className="btn-ghost" style={{ fontSize: 11, alignSelf: 'flex-start' }} onClick={() => setInvestorReveal(null)}>I've saved it</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </article>;
           })}
         </div>

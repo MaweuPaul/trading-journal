@@ -118,7 +118,7 @@ export default function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
 
-  if (path === '/login' || path === '/signup') return null;
+  if (path === '/login' || path === '/signup' || path.startsWith('/investor')) return null;
 
   return (
     <>

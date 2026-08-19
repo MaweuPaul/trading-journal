@@ -104,10 +104,10 @@ Share one account's performance with someone who has no login on this app — no
 
 1. On the Accounts page, open **Investor** on the account to share and click **Enable investor access**. This generates a stable account number and a one-time password — the password is shown exactly once and can never be recovered afterward, only rotated.
 2. Send the investor the login link (prefills the account number) and the password through separate channels.
-3. They sign in at `/investor/login` with no account of their own and land on a read-only dashboard: balance, net P&L, win rate, profit factor, drawdown, equity curve, and a trade list limited to financial fields — no notes, emotions, screenshots, or checklists.
+3. They sign in at `/investor/login` with no account of their own and land on a read-only dashboard: balance, net P&L, win rate, profit factor, drawdown, equity curve, and a trade list limited to financial fields — no notes, emotions, screenshots, or checklists. Each trade also has its own **Replay** button, opening the same real historical candles the owner's Trade Replay chart shows (with entry/exit markers) in a stripped-down, view-only chart — no annotations, timeline, or journal panel, since those carry private review content.
 4. **Rotate password** issues a new password without changing the account number a saved link points to. **Revoke access** disables it instantly — even an already-issued, unexpired session is locked out on its very next request, because every investor request re-checks the live database rather than trusting the token alone.
 
-Investor sessions are scoped by JWT to exactly two read-only endpoints and one account; they cannot reach any owner route, regardless of what the token contains.
+Investor sessions are scoped by JWT to exactly three read-only endpoints (summary, trade list, and per-trade replay) and one account; they cannot reach any owner route, regardless of what the token contains.
 
 ## Data Redundancy and Reconstruction
 
@@ -229,7 +229,7 @@ backend/
     auth.js
     tradingAccounts.js      # MT5 account CRUD + investor-access management
     ctrader.js               # cTrader OAuth, account selection, disconnect, sync
-    investor.js               # investor login + the two read-only investor endpoints
+    investor.js               # investor login + the three read-only investor endpoints
     trades.js                 # trades, playbooks, analytics, exports, screenshots, replay
   lib/
     credentialEncryption.js  # AES-256-GCM for MT5 credentials + cTrader OAuth tokens
@@ -316,7 +316,8 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 | `/api/ctrader/connection/:ctidTraderAccountId` | DELETE | Disconnect one cTrader account |
 | `/api/ctrader/sync` / `/api/ctrader/sync/:ctidTraderAccountId` | POST | Sync every connected cTrader account, or just one |
 | `/api/investor/login` | POST *(public, rate-limited)* | Exchange an investor account number + password for a scoped read-only token |
-| `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | The only two routes an investor token can reach |
+| `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | Balance, headline stats, equity curve, and a financial-fields-only trade list |
+| `/api/investor/trades/:id/replay` | GET *(investor token)* | The same historical candles as owner Replay, sanitized to chart-only fields (no notes/emotion/grade) |
 
 All endpoints require authentication except login and health checks. Export and recovery routes work with the same authenticated user scope as trade routes.
 
@@ -330,6 +331,7 @@ All endpoints require authentication except login and health checks. Export and 
 | `API_BASE` | Backend API URL, normally `http://localhost:4000/api` |
 | `API_TIMEOUT` | HTTP timeout in seconds |
 | `SYNC_INTERVAL` | Polling interval in seconds |
+| `MT5_REQUIRE_REAL_ACCOUNT` | Legacy fallback for `requireRealAccount`; prefer setting it per-account on the **Accounts** page instead |
 
 MT5 login, password, server, real/demo policy, and symbol aliases are configured on the **Accounts** page. Each credential field is encrypted independently with AES-256-GCM before MongoDB persistence. JWT authenticates browser and worker sessions; it is not used as encryption. The backend keeps one stable `ACCOUNT_ENCRYPTION_KEY`, while the local worker keeps only `SYNC_SECRET`.
 
@@ -365,21 +367,33 @@ Replay also keeps an ownership-scoped server draft for unfinished notes, tags, p
 |---|---|
 | `PORT` | Express port, default `4000` |
 | `MONGODB_URI` | MongoDB connection string |
+| `NODE_ENV` | `development` or `production` |
+| `ALLOWED_ORIGINS` | Comma-separated exact frontend origins allowed to call this API (CORS allowlist); defaults to `http://localhost:3000` |
+| `SYNC_SECRET` | Installation secret the local `sync.py` worker exchanges for a short-lived sync-agent token |
 | `JWT_SECRET` | Long random JWT signing secret |
+| `ACCOUNT_ENCRYPTION_KEY` | Separate, stable AES-256-GCM master secret (32+ chars) for encrypting MT5 credentials and cTrader OAuth tokens; changing it makes existing encrypted credentials unreadable |
 | `SEED_OWNER_ENABLED` | Set `true` to create the first owner from environment variables |
 | `OWNER_NAME` | Owner name used only during first-time environment seeding |
 | `OWNER_EMAIL` | Owner email used for seeding and optional offline login |
-| `OWNER_PASSWORD` | Owner password used only for first-time seeding and optional offline login; minimum 8 characters |
+| `OWNER_PASSWORD` | Owner password used only for first-time seeding and the offline login fallback; minimum 8 characters. Prefer `OWNER_PASSWORD_HASH` (a bcrypt hash) so the real password is never stored in plaintext |
+| `OWNER_PASSWORD_HASH` | Bcrypt hash of the owner password; wins over `OWNER_PASSWORD` when both are set |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | Cloudinary API secret |
+| `CTRADER_CLIENT_ID` | cTrader Open API app Client ID (from [openapi.ctrader.com](https://openapi.ctrader.com)) |
+| `CTRADER_CLIENT_SECRET` | cTrader Open API app Client Secret |
+| `CTRADER_REDIRECT_URI` | Must exactly match the redirect URI configured on the cTrader app, typically the frontend's Accounts page (e.g. `http://localhost:3000/accounts`) |
 
 ## Security Notes
 
 - `.env` files are ignored by Git.
 - Public registration is disabled.
 - Signup is a one-time owner setup route and rejects every request after any user exists.
-- API routes require JWT authentication and scope data to the authenticated user.
+- API routes require JWT authentication and scope data to the authenticated user. CORS is pinned to an explicit origin allowlist (`ALLOWED_ORIGINS`) rather than reflecting every request origin.
+- MT5 credentials and cTrader OAuth tokens are encrypted independently per field with AES-256-GCM (`ACCOUNT_ENCRYPTION_KEY`) before storage and are never returned to the browser.
+- Login and investor-login attempts are rate-limited per IP.
+- Sync-agent and investor JWTs are restricted, at the auth-middleware level, to an explicit allowlist of routes for that role — neither can reach owner journal endpoints regardless of what else the token contains.
+- Investor access uses a bcrypt-hashed, rotatable password behind a stable account number; every investor request re-checks the account's live `investor.enabled` flag, so revoking access from the Accounts page locks out an already-issued, unexpired token on its very next request. Investor data is limited to financial fields — no notes, emotions, screenshots, or checklists.
 - Cloudinary recovery only scans the authenticated user's folder prefix.
 - Offline screenshots are removed from local staging after successful Cloudinary upload.
 - Published playbook versions referenced by trades are immutable audit records.

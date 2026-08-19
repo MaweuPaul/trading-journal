@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
   ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video, DownloadCloud,
-  Users, Copy, ShieldOff,
+  Users, Copy, ShieldOff, Check, TerminalSquare,
 } from 'lucide-react';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
@@ -84,6 +84,41 @@ export default function TradingAccountsPage() {
   const [form, setForm] = useState<AccountForm>(emptyForm);
 
   const token = () => localStorage.getItem('token');
+
+  // ── Personal MT5 sync-agent secret ───────────────────────────────────────
+  // Each user has their own secret (issued at signup) that their local
+  // sync.py uses to authenticate as them specifically. It's never readable
+  // after issuance -- only rotate returns the plaintext, once, same as the
+  // investor password below.
+  const [syncSecretReveal, setSyncSecretReveal] = useState<string | null>(null);
+  const [syncSecretBusy, setSyncSecretBusy] = useState(false);
+  const [syncSecretCopied, setSyncSecretCopied] = useState(false);
+  const [syncSecretError, setSyncSecretError] = useState('');
+
+  async function rotateSyncSecret() {
+    setSyncSecretBusy(true); setSyncSecretError('');
+    try {
+      const response = await fetch('/api/auth/sync-secret/rotate', { method: 'POST', headers: { Authorization: `Bearer ${token()}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not generate a sync secret.');
+      setSyncSecretReveal(body.syncSecret);
+    } catch (caught) {
+      setSyncSecretError(caught instanceof Error ? caught.message : 'Could not generate a sync secret.');
+    } finally {
+      setSyncSecretBusy(false);
+    }
+  }
+
+  async function copySyncSecret() {
+    if (!syncSecretReveal) return;
+    try {
+      await navigator.clipboard.writeText(syncSecretReveal);
+      setSyncSecretCopied(true);
+      setTimeout(() => setSyncSecretCopied(false), 1800);
+    } catch {
+      // Clipboard API can be unavailable -- the value is still visible/selectable.
+    }
+  }
 
   // ── cTrader connections (candle source for Trade Replay + trade sync) ───
   // An owner can hold several cTrader connections at once, even under
@@ -367,7 +402,7 @@ export default function TradingAccountsPage() {
       <header className="account-page-head">
         <div>
           <div className="account-title-line"><Landmark size={27} /><h1>Trading Accounts</h1></div>
-          <p>Connect multiple MT5 accounts and keep every trade tied to the account that produced it.</p>
+          <p>Connect MT5 and cTrader accounts and keep every trade tied to the account that produced it.</p>
         </div>
         <button className="btn-primary account-add-button" onClick={startCreate}><Plus size={17} /> Add account</button>
       </header>
@@ -375,6 +410,28 @@ export default function TradingAccountsPage() {
       <section className="account-security-note" aria-label="Credential security">
         <ShieldCheck size={21} />
         <div><strong>Credentials are encrypted before storage.</strong><span>Login, password and broker server are never returned to this browser. The local MT5 agent receives them through its authenticated connection only.</span></div>
+      </section>
+
+      <section className="account-security-note" aria-label="MT5 sync secret" style={{ flexWrap: 'wrap' }}>
+        <TerminalSquare size={21} />
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <strong>Your personal MT5 sync secret.</strong>
+          <span>This is your own installation's key for the local <code>sync.py</code> worker — it only ever syncs trades into your account, never anyone else's. Copy it into that machine's <code>.env</code> as <code>SYNC_SECRET</code>.</span>
+          {syncSecretError && <div className="account-alert error" role="alert" style={{ marginTop: 8 }}><AlertCircle size={14} />{syncSecretError}</div>}
+          {syncSecretReveal ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 700, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', wordBreak: 'break-all' }}>{syncSecretReveal}</code>
+              <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 9px' }} onClick={copySyncSecret}>
+                {syncSecretCopied ? <Check size={12} /> : <Copy size={12} />} {syncSecretCopied ? 'Copied' : 'Copy'}
+              </button>
+              <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => setSyncSecretReveal(null)}>I've saved it</button>
+            </div>
+          ) : (
+            <button className="btn-ghost" style={{ fontSize: 12, marginTop: 10 }} disabled={syncSecretBusy} onClick={rotateSyncSecret}>
+              {syncSecretBusy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Generate / rotate my sync secret
+            </button>
+          )}
+        </div>
       </section>
 
       {error && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}

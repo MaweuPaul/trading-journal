@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, Loader2, Lock, Mail, TrendingUp, UserRound } from 'lucide-react';
+import { AlertCircle, Check, Copy, Loader2, Lock, Mail, TrendingUp, UserRound } from 'lucide-react';
 
 const API = '/api';
 
@@ -13,16 +13,18 @@ export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [available, setAvailable] = useState<boolean | null>(null);
+  const [databaseAvailable, setDatabaseAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [syncSecret, setSyncSecret] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (localStorage.getItem('token')) { router.push('/'); return; }
     fetch(`${API}/auth/setup-status`)
       .then(response => response.json())
-      .then(status => setAvailable(Boolean(status.signupAvailable)))
-      .catch(() => { setAvailable(false); setError('Could not contact the journal backend.'); });
+      .then(status => setDatabaseAvailable(Boolean(status.databaseAvailable)))
+      .catch(() => { setDatabaseAvailable(false); setError('Could not contact the journal backend.'); });
   }, [router]);
 
   const submit = async (event: React.FormEvent) => {
@@ -38,36 +40,66 @@ export default function SignupPage() {
         body: JSON.stringify({ name, email, password }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not create the owner account.');
+      if (!response.ok) throw new Error(body.error || 'Could not create your account.');
       localStorage.setItem('token', body.token);
       localStorage.setItem('user', JSON.stringify(body.user));
-      router.push('/');
-      router.refresh();
+      setSyncSecret(body.syncSecret || null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create the owner account.');
+      setError(err instanceof Error ? err.message : 'Could not create your account.');
     } finally {
       setLoading(false);
     }
   };
+
+  const copySecret = async () => {
+    if (!syncSecret) return;
+    await navigator.clipboard.writeText(syncSecret);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
+  if (syncSecret) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-header">
+            <div className="login-logo"><TrendingUp size={24} /></div>
+            <h2>Save your MT5 sync secret</h2>
+            <p>This is shown once. Paste it into your local sync.py's .env as SYNC_SECRET to connect your MT5 terminal.</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', margin: '4px 0 16px' }}>
+            <code style={{ flex: 1, fontSize: 12.5, wordBreak: 'break-all', color: 'var(--text-primary)' }}>{syncSecret}</code>
+            <button type="button" className="btn btn-ghost" style={{ fontSize: 11, padding: '5px 9px', flexShrink: 0 }} onClick={copySecret}>
+              {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 16 }}>
+            You can regenerate this later from the Accounts page if you lose it — but the old one will stop working immediately.
+          </p>
+          <button type="button" className="login-btn" onClick={() => { router.push('/'); router.refresh(); }}>I've saved it — continue to my journal</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
           <div className="login-logo"><TrendingUp size={24} /></div>
-          <h2>{available === false ? 'Journal already configured' : 'Create your journal'}</h2>
-          <p>{available === false ? 'This personal journal already has an owner account.' : 'One-time setup for the owner of this installation'}</p>
+          <h2>Create your journal</h2>
+          <p>Set up your own private trading journal.</p>
         </div>
 
         {error && <div className="login-error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
 
-        {available === null ? (
+        {databaseAvailable === null ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 28 }}><Loader2 size={20} className="animate-spin" /></div>
-        ) : available ? (
+        ) : databaseAvailable ? (
           <form className="login-form" onSubmit={submit}>
             <div className="form-group">
               <label htmlFor="owner-name">Your name</label>
-              <div className="form-input-wrapper"><UserRound size={16} /><input id="owner-name" className="form-input" value={name} onChange={e => setName(e.target.value)} autoComplete="name" required maxLength={80} placeholder="Journal owner" /></div>
+              <div className="form-input-wrapper"><UserRound size={16} /><input id="owner-name" className="form-input" value={name} onChange={e => setName(e.target.value)} autoComplete="name" required maxLength={80} placeholder="Your name" /></div>
             </div>
             <div className="form-group">
               <label htmlFor="owner-email">Email address</label>
@@ -81,13 +113,13 @@ export default function SignupPage() {
               <label htmlFor="confirm-password">Confirm password</label>
               <div className="form-input-wrapper"><Lock size={16} /><input id="confirm-password" type="password" className="form-input" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" required minLength={8} placeholder="Repeat your password" /></div>
             </div>
-            <button type="submit" className="login-btn" disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : 'Create owner account'}</button>
+            <button type="submit" className="login-btn" disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : 'Create account'}</button>
           </form>
         ) : (
-          <div style={{ padding: '12px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>For security, another account cannot be created.</div>
+          <div style={{ padding: '12px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>The backend database is unavailable right now — try again shortly.</div>
         )}
 
-        <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12 }}><Link href="/login" style={{ color: 'var(--accent)', fontWeight: 700 }}>Return to sign in</Link></div>
+        <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12 }}><Link href="/login" style={{ color: 'var(--accent)', fontWeight: 700 }}>Already have an account? Sign in</Link></div>
       </div>
     </div>
   );

@@ -74,37 +74,47 @@ if (!process.env.MONGODB_URI) {
     .then(async () => {
       console.log(' MongoDB connected');
 
-      // Create the personal owner once from environment variables, or leave the
-      // database empty so the first-run Signup page can create the owner.
+      // Optionally seed the very first account from environment variables
+      // (useful for a scripted first deploy); otherwise the database starts
+      // empty and anyone can register normally at /signup.
       const User = require('./models/User');
       const bcrypt = require('bcryptjs');
+      const crypto = require('crypto');
       try {
         const seedEnabled = String(process.env.SEED_OWNER_ENABLED || 'false').toLowerCase() === 'true';
         const ownerName = process.env.OWNER_NAME || process.env.ADMIN_NAME || 'Journal Owner';
         const ownerEmail = process.env.OWNER_EMAIL || process.env.ADMIN_EMAIL || '';
         const ownerPassword = process.env.OWNER_PASSWORD || process.env.ADMIN_PASSWORD || '';
-        let owner = await User.findOne({}).sort({ createdAt: 1 });
+        let owner = await User.findOne({}).sort({ createdAt: 1 }).select('+syncSecretHash');
 
         if (!owner && seedEnabled) {
           if (!ownerEmail || !ownerPassword || ownerPassword.length < 8) {
             console.warn(' Owner seed skipped: OWNER_EMAIL and an OWNER_PASSWORD of at least 8 characters are required.');
           } else {
             owner = await User.create({
-              ownerKey: 'owner',
               name: ownerName,
               email: ownerEmail.toLowerCase(),
               password: await bcrypt.hash(ownerPassword, 12),
+              syncSecretHash: process.env.SYNC_SECRET
+                ? crypto.createHash('sha256').update(process.env.SYNC_SECRET).digest('hex')
+                : undefined,
             });
-            console.log(` Personal journal owner created from environment: ${ownerEmail}`);
+            console.log(` Account created from environment: ${ownerEmail}`);
           }
         } else if (owner) {
-          if (!owner.ownerKey) {
-            owner.ownerKey = 'owner';
+          // Pre-multi-user installations authenticated sync.py with one
+          // shared SYNC_SECRET env value rather than a per-user secret. Seed
+          // that value onto this (the original) account once, so an
+          // existing sync.py setup keeps working unchanged after upgrading
+          // — new users get their own generated secret from /register instead.
+          if (!owner.syncSecretHash && process.env.SYNC_SECRET) {
+            owner.syncSecretHash = crypto.createHash('sha256').update(process.env.SYNC_SECRET).digest('hex');
             await owner.save();
+            console.log(' Migrated the shared SYNC_SECRET onto the original account.');
           }
-          console.log(` Existing journal owner retained: ${owner.email}`);
+          console.log(` Existing account retained: ${owner.email}`);
         } else {
-          console.log(' No owner exists. Complete the one-time setup at /signup.');
+          console.log(' No accounts exist yet. Register the first one at /signup.');
         }
 
         if (!owner) return;

@@ -12,7 +12,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [setupRequired, setSetupRequired] = useState(false);
+  const [signupAvailable, setSignupAvailable] = useState(true);
 
   // If already logged in, redirect to dashboard
   useEffect(() => {
@@ -23,7 +23,7 @@ export default function LoginPage() {
     }
     fetch(`${API}/auth/setup-status`)
       .then(response => response.json())
-      .then(status => setSetupRequired(Boolean(status.setupRequired)))
+      .then(status => setSignupAvailable(Boolean(status.signupAvailable)))
       .catch(() => undefined);
   }, [router]);
 
@@ -124,9 +124,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {setupRequired && (
+        {signupAvailable && (
           <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
-            First time here? <Link href="/signup" style={{ color: 'var(--accent)', fontWeight: 700 }}>Create the owner account</Link>
+            New here? <Link href="/signup" style={{ color: 'var(--accent)', fontWeight: 700 }}>Create an account</Link>
           </div>
         )}
 

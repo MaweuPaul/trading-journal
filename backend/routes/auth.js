@@ -1,11 +1,19 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { safeSecretEqual } = require('../lib/credentialEncryption');
+
+function randomSyncSecret() {
+  return crypto.randomBytes(24).toString('hex'); // 48 hex chars, shown once
+}
+function hashSyncSecret(secret) {
+  return crypto.createHash('sha256').update(String(secret)).digest('hex');
+}
 
 const router = express.Router();
 
@@ -50,22 +58,22 @@ function publicUser(user) {
   return { id: String(user.id || user._id), name: user.name, email: user.email };
 }
 
-// GET /api/auth/setup-status — first-run state used by Login and Signup.
+// GET /api/auth/setup-status — reports whether registration and normal login
+// are usable right now. Signup is always open (this is a multi-user app);
+// the only thing that can be unavailable is the database itself, in which
+// case an offline owner login may still work if one is configured.
 router.get('/setup-status', async (_req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
       const env = ownerEnv();
       return res.json({
-        setupRequired: false,
         signupAvailable: false,
         databaseAvailable: false,
         offlineLoginAvailable: Boolean(env.email && (env.passwordHash || env.password)),
       });
     }
-    const ownerExists = Boolean(await User.exists({}));
     res.json({
-      setupRequired: !ownerExists,
-      signupAvailable: !ownerExists,
+      signupAvailable: true,
       databaseAvailable: true,
       offlineLoginAvailable: false,
     });
@@ -74,14 +82,14 @@ router.get('/setup-status', async (_req, res) => {
   }
 });
 
-// POST /api/auth/register — creates the one and only owner account.
+// POST /api/auth/register — creates a new user account. Also generates that
+// user's personal MT5 sync-agent secret up front and returns it once
+// (plaintext), the same way an API key is normally issued, so a brand-new
+// user can wire up sync.py immediately without a separate step.
 router.post('/register', credentialLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB must be connected to create the owner account.' });
-    }
-    if (await User.exists({})) {
-      return res.status(403).json({ error: 'This journal already has an owner. New account creation is locked.' });
+      return res.status(503).json({ error: 'MongoDB must be connected to create an account.' });
     }
 
     const name = String(req.body.name || '').trim();
@@ -92,15 +100,30 @@ router.post('/register', credentialLimiter, async (req, res) => {
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET must be configured before setup.' });
 
+    // Deliberately vague on the "already registered" case (same message, same
+    // 400 status as any other validation failure) rather than a distinct 409
+    // "that email already exists" -- confirming which emails are registered
+    // is a user-enumeration leak, useful for phishing/credential-stuffing
+    // targeting. A real owner of that email who tries to register again
+    // should just try signing in or resetting their password instead.
+    //
+    // The bcrypt hash runs *before* the existence check (not after) so the
+    // duplicate-email path takes roughly the same time as the success path
+    // instead of returning suspiciously fast -- otherwise the two outcomes
+    // would still be distinguishable by response time even with an identical
+    // error message.
+    const genericFailure = () => res.status(400).json({ error: 'Could not create an account with those details. If you already have an account, try signing in instead.' });
     const hashedPassword = await bcrypt.hash(password, 12);
-    const user = await User.create({ ownerKey: 'owner', name, email, password: hashedPassword });
-    res.status(201).json({ token: signToken(user), user: publicUser(user) });
+
+    if (await User.findOne({ email })) return genericFailure();
+
+    const syncSecret = randomSyncSecret();
+    const user = await User.create({ name, email, password: hashedPassword, syncSecretHash: hashSyncSecret(syncSecret) });
+    res.status(201).json({ token: signToken(user), user: publicUser(user), syncSecret });
   } catch (err) {
-    if (err?.code === 11000) {
-      return res.status(403).json({ error: 'This journal already has an owner. New account creation is locked.' });
-    }
-    console.error('Owner registration error:', err.message);
-    res.status(500).json({ error: 'Could not create the owner account.' });
+    if (err?.code === 11000) return res.status(400).json({ error: 'Could not create an account with those details. If you already have an account, try signing in instead.' });
+    console.error('Registration error:', err.message);
+    res.status(500).json({ error: 'Could not create the account.' });
   }
 });
 
@@ -133,16 +156,37 @@ router.post('/login', credentialLimiter, async (req, res) => {
   }
 });
 
-// POST /api/auth/sync-agent -- exchanges the installation secret for a short-lived agent JWT.
+// POST /api/auth/sync-agent -- exchanges one user's personal sync secret for
+// a short-lived agent JWT scoped to that same user. Each user's secret maps
+// to exactly their own account (via syncSecretHash), so multiple users can
+// each run their own local sync.py against this same backend without their
+// trades ever landing in someone else's account.
 router.post('/sync-agent', credentialLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB is required for sync-agent authentication.' });
-    if (!process.env.SYNC_SECRET) return res.status(503).json({ error: 'SYNC_SECRET is not configured on the API.' });
     const supplied = req.header('X-Sync-Secret') || req.body.syncSecret || '';
-    if (!safeSecretEqual(supplied, process.env.SYNC_SECRET)) return res.status(401).json({ error: 'Invalid sync agent secret.' });
-    const owner = await User.findOne({}).sort({ createdAt: 1 });
-    if (!owner) return res.status(404).json({ error: 'Complete journal owner setup first.' });
+    if (!supplied) return res.status(401).json({ error: 'Invalid sync agent secret.' });
+    const owner = await User.findOne({ syncSecretHash: hashSyncSecret(supplied) });
+    if (!owner) return res.status(401).json({ error: 'Invalid sync agent secret.' });
     res.json({ token: signAgentToken(owner), user: publicUser(owner) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/auth/sync-secret/rotate -- (re)generates the calling user's
+// personal MT5 sync-agent secret. Like the investor password, the plaintext
+// is only ever returned here, once; only its hash is stored afterward.
+router.post('/sync-secret/rotate', auth, async (req, res) => {
+  try {
+    if (req.user.role === 'sync_agent' || req.user.role === 'investor') {
+      return res.status(403).json({ error: 'Owner session required.' });
+    }
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB must be connected.' });
+    const syncSecret = randomSyncSecret();
+    const user = await User.findByIdAndUpdate(req.user.userId, { syncSecretHash: hashSyncSecret(syncSecret) }, { new: true });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ syncSecret });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

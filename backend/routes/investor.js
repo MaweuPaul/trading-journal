@@ -87,7 +87,7 @@ async function requireLiveInvestorAccess(req, res, next) {
 router.get('/investor/summary', auth, requireLiveInvestorAccess, async (req, res) => {
   try {
     const account = req.investorAccount;
-    const trades = await Trade.find({ accountKey: account.accountKey }).sort({ closeTime: 1 }).lean();
+    const trades = await Trade.find({ user: account.user, accountKey: account.accountKey }).sort({ closeTime: 1 }).lean();
     const results = summarizeTradeResults(trades);
     const drawdown = calculateDrawdown(trades);
     const lastTrade = trades[trades.length - 1];
@@ -121,13 +121,13 @@ router.get('/investor/trades', auth, requireLiveInvestorAccess, async (req, res)
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
 
     const [trades, total] = await Promise.all([
-      Trade.find({ accountKey: account.accountKey })
+      Trade.find({ user: account.user, accountKey: account.accountKey })
         .sort({ closeTime: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .select('symbol direction entryPrice exitPrice lotSize pnlUSD pnlPct commission swap openTime closeTime durationMinutes runningBalance')
         .lean(),
-      Trade.countDocuments({ accountKey: account.accountKey }),
+      Trade.countDocuments({ user: account.user, accountKey: account.accountKey }),
     ]);
 
     res.json({ trades, total, page, limit });
@@ -144,7 +144,7 @@ router.get('/investor/trades', auth, requireLiveInvestorAccess, async (req, res)
 router.get('/investor/trades/:id/replay', auth, requireLiveInvestorAccess, async (req, res) => {
   try {
     const account = req.investorAccount;
-    const trade = await Trade.findOne({ _id: req.params.id, accountKey: account.accountKey })
+    const trade = await Trade.findOne({ _id: req.params.id, user: account.user, accountKey: account.accountKey })
       .select('symbol direction entryPrice exitPrice openTime closeTime durationMinutes lotSize pnlUSD pnlPct accountKey')
       .lean();
     if (!trade) return res.status(404).json({ error: 'Trade not found on this account.' });

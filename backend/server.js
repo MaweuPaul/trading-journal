@@ -11,6 +11,7 @@ const authRouter = require('./routes/auth');
 const tradingAccountsRouter = require('./routes/tradingAccounts');
 const ctraderRouter = require('./routes/ctrader');
 const investorRouter = require('./routes/investor');
+const knowledgeRouter = require('./routes/knowledge');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -50,6 +51,7 @@ app.use('/api/auth', authRouter);
 app.use('/api', tradingAccountsRouter);
 app.use('/api', ctraderRouter);
 app.use('/api', investorRouter);
+app.use('/api', knowledgeRouter);
 app.use('/api', tradesRouter);
 
 // Health check

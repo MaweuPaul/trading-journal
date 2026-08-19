@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/stats',       label: 'Analytics',    icon: BarChart2 },
   { href: '/performance', label: 'Performance',  icon: LineChart },
   { href: '/coach',       label: 'Edge Coach',   icon: Brain },
+  { href: '/knowledge',   label: 'Knowledge Base', icon: BookOpen },
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
   { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },
   { href: '/accounts',    label: 'Accounts',      icon: Landmark },

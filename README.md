@@ -1,6 +1,6 @@
-# TradeJournal — Personal MT5 Trading Analytics Portal
+# TradeJournal — Self-Hosted MT5 Trading Analytics Portal
 
-A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 trades, preserves an auditable record of strategy changes, and measures what actually contributes to performance.
+A self-hosted, offline-resilient, multi-user trading journal that syncs closed MetaTrader 5 trades, preserves an auditable record of strategy changes, and measures what actually contributes to performance. Anyone can register their own account on an installation — every user's trades, accounts, playbooks, and knowledge base are fully isolated from every other user's.
 
 > New installation? Follow the complete [Setup Guide](SETUP.md). Validating an installation? Use the [Feature Testing Guide](TESTING.md).
 
@@ -28,7 +28,8 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
 | Offline Resilience | Fall back to local JSON when MongoDB is unavailable |
-| Private by Design | Public registration is disabled, trade routes require authentication, and investor sessions are locked to one account with no write access |
+| Multi-User, Fully Isolated | Anyone can register their own account; every trade, connection, playbook, and knowledge base entry is scoped to the user who owns it |
+| Private by Design | Trade routes require authentication, every MT5 sync agent is tied to one specific user's own secret, and investor sessions are locked to one account with no write access |
 
 ## Versioned Strategy Playbooks
 
@@ -172,14 +173,16 @@ Next.js frontend (:3000)
 
 ## Setup
 
-### Create the personal owner
+### Create your account
 
-This is a single-owner journal. It supports two first-run options:
+Registration is open — anyone who can reach `/signup` can create their own account, at any time, and each account's data is completely isolated from every other account's. There are two ways to get the first account onto a fresh installation:
 
-1. Leave `SEED_OWNER_ENABLED=false`, start MongoDB and the backend, then open `/signup`. Registration is available only while the user collection is empty and locks permanently after the owner is created.
-2. Set `SEED_OWNER_ENABLED=true` with `OWNER_NAME`, `OWNER_EMAIL`, and `OWNER_PASSWORD`. The backend creates the owner only when no user exists.
+1. Leave `SEED_OWNER_ENABLED=false`, start MongoDB and the backend, then open `/signup` and register normally like any other user.
+2. Set `SEED_OWNER_ENABLED=true` with `OWNER_NAME`, `OWNER_EMAIL`, and `OWNER_PASSWORD` to have the backend create that first account from environment variables on startup — useful for a scripted deploy. This only ever creates one account (the very first one); every user after that registers through `/signup` regardless of this setting.
 
-Environment seeding is create-only: restarting the backend never overwrites an existing owner's name, email, or password. If an owner already exists, both environment seeding and `POST /api/auth/register` are ignored or rejected.
+Environment seeding is create-only: restarting the backend never overwrites an existing account's name, email, or password.
+
+Every account gets its own personal MT5 sync-agent secret at signup (shown once, and regenerable from the Accounts page) — this is what lets multiple users each run their own local `sync.py` against the same backend without their trades ever landing in someone else's account. See "Live and Demo Accounts" below.
 
 ### Backend
 
@@ -302,8 +305,9 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 |---|---|---|
 | `/api/auth/setup-status` | GET *(public)* | Report whether the one-time owner Signup page is available |
 | `/api/auth/register` | POST *(public)* | Create the owner only when the database contains zero users |
-| `/api/login` | POST *(public)* | Owner sign-in |
-| `/api/sync-agent` | POST *(public)* | Exchange the installation secret for a short-lived worker token |
+| `/api/login` | POST *(public)* | Sign in |
+| `/api/sync-agent` | POST *(public)* | Exchange one user's personal sync secret for a short-lived worker token scoped to that user |
+| `/api/auth/sync-secret/rotate` | POST | Generate or rotate the caller's own personal sync secret (returned once, in plaintext) |
 | `/api/trading-accounts` | GET / POST | List safe summaries or encrypt a new MT5 account |
 | `/api/trading-accounts/:id` | PATCH / DELETE | Update, disable, or archive a trading account |
 | `/api/trading-accounts/:id/investor-access` | POST / DELETE | Enable or rotate (returns the plaintext password once), or revoke, read-only investor access |
@@ -327,13 +331,13 @@ All endpoints require authentication except login and health checks. Export and 
 
 | Variable | Description |
 |---|---|
-| `SYNC_SECRET` | Installation secret matching the backend; obtains a short-lived sync-agent token |
+| `SYNC_SECRET` | This user's personal sync-agent secret, generated for them at signup (or rotated later from the Accounts page); resolves to their account and no one else's |
 | `API_BASE` | Backend API URL, normally `http://localhost:4000/api` |
 | `API_TIMEOUT` | HTTP timeout in seconds |
 | `SYNC_INTERVAL` | Polling interval in seconds |
 | `MT5_REQUIRE_REAL_ACCOUNT` | Legacy fallback for `requireRealAccount`; prefer setting it per-account on the **Accounts** page instead |
 
-MT5 login, password, server, real/demo policy, and symbol aliases are configured on the **Accounts** page. Each credential field is encrypted independently with AES-256-GCM before MongoDB persistence. JWT authenticates browser and worker sessions; it is not used as encryption. The backend keeps one stable `ACCOUNT_ENCRYPTION_KEY`, while the local worker keeps only `SYNC_SECRET`.
+MT5 login, password, server, real/demo policy, and symbol aliases are configured on the **Accounts** page. Each credential field is encrypted independently with AES-256-GCM before MongoDB persistence, using an AAD context that includes the owning user's id, so ciphertext from one user's credentials can't be decrypted under another user's context even with the shared master key. JWT authenticates browser and worker sessions; it is not used as encryption. The backend keeps one stable `ACCOUNT_ENCRYPTION_KEY` shared across all users, while each user's local `sync.py` keeps only their own personal `SYNC_SECRET` — the backend looks up the secret's hash to find the matching user, so two users can each run their own `sync.py` against the same installation and their trades will never cross accounts.
 
 The worker loads every enabled account and switches the local MT5 terminal sequentially. Trades and cash-flow events carry the account's opaque database key, so filters and ticket deduplication remain isolated per account. Editing or archiving an account never rewrites its historical trades.
 
@@ -387,8 +391,8 @@ Replay also keeps an ownership-scoped server draft for unfinished notes, tags, p
 ## Security Notes
 
 - `.env` files are ignored by Git.
-- Public registration is disabled.
-- Signup is a one-time owner setup route and rejects every request after any user exists.
+- Registration is open, but every user's data is scoped to their own account — trades, trading accounts, playbooks, knowledge base entries, and investor grants are all queried and written with the authenticated user's id, never globally.
+- Each user's MT5 sync agent is authenticated by their own personal secret (its hash, not the plaintext, is what's stored), so one user's `sync.py` can never write into another user's account, even on a shared installation.
 - API routes require JWT authentication and scope data to the authenticated user. CORS is pinned to an explicit origin allowlist (`ALLOWED_ORIGINS`) rather than reflecting every request origin.
 - MT5 credentials and cTrader OAuth tokens are encrypted independently per field with AES-256-GCM (`ACCOUNT_ENCRYPTION_KEY`) before storage and are never returned to the browser.
 - Login and investor-login attempts are rate-limited per IP.

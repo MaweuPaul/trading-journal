@@ -154,7 +154,8 @@ function buildAccountEventsFromCashFlow(cashFlowEvents, accountIdentity) {
 
 async function getOrCreateTradingAccount(userId, connectionInfo, trader) {
   const accountKey = `ctrader:${connectionInfo.ctidTraderAccountId}`;
-  const label = `cTrader ${connectionInfo.isLive ? 'Live' : 'Demo'}${connectionInfo.traderLogin ? ` · ${connectionInfo.traderLogin}` : ''}`;
+  const broker = connectionInfo.brokerTitle ? ` (${connectionInfo.brokerTitle})` : connectionInfo.traderLogin ? ` · ${connectionInfo.traderLogin}` : '';
+  const label = `cTrader ${connectionInfo.isLive ? 'Live' : 'Demo'}${broker}`;
   return TradingAccount.findOneAndUpdate(
     { user: userId, accountKey },
     {

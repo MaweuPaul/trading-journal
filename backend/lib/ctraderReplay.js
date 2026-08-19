@@ -80,7 +80,13 @@ async function refreshConnectionIfNeeded(connection, userId) {
     connection.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
     await connection.save();
   }
-  return { accessToken, ctidTraderAccountId: connection.ctidTraderAccountId, isLive: connection.isLive };
+  return {
+    accessToken,
+    ctidTraderAccountId: connection.ctidTraderAccountId,
+    isLive: connection.isLive,
+    traderLogin: connection.traderLogin,
+    brokerTitle: connection.brokerTitle,
+  };
 }
 
 // An owner can have several cTrader connections (different accounts, even

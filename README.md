@@ -8,24 +8,27 @@ A self-hosted, offline-resilient trading journal that syncs closed MetaTrader 5 
 
 | Feature | Description |
 |---|---|
-| Automatic MT5 Sync | Python script polls MT5 and sends closed deals and account events to the backend |
-| Broker Account Filtering | Detects Live/Demo mode plus the exact MT5 login and broker server, then filters trades by either dimension |
+| Automatic MT5 Sync | Python script polls one or more MT5 terminals and sends closed deals and account events to the backend |
+| Multi-Account, Multi-Broker | Connect several MT5 logins and several cTrader connections (even under different cTrader accounts) side by side; every page can filter to a single account or blend them with a clear warning |
+| cTrader Sync & Replay | OAuth-connect one or more cTrader accounts to sync their trade history and cash flow alongside MT5, and to supply Trade Replay's real historical candles |
+| Broker Account Filtering | Detects Live/Demo mode plus the exact login/broker (or cTrader broker name), then filters trades by either dimension everywhere in the app |
+| Investor Access | Share a read-only, no-login view of one account's performance — modeled on MT5's own investor password: a stable account number plus a rotatable, instantly revocable password |
 | Dashboard | Account balance, equity curve, cash-flow-adjusted growth, and headline metrics |
 | Light/Dark Appearance | Choose Auto, Light, or Dark from the sign-in screen or sidebar; Auto follows the device setting and the choice persists across refreshes |
 | Performance | Equity curve, drawdown, profit factor, expectancy, and R:R metrics |
-| Trading Calendar | Daily P&L heatmap with trade drill-down |
+| Trading Calendar | Daily P&L heatmap with trade drill-down, per-day average R-multiple, a weekly P&L rollup strip, and its own account filter |
 | Analytics | Breakdowns by session, symbol, emotion, grade, weekday, setup, and tags |
 | Visual Strategy Playbooks | Build a complete strategy manual from lifecycle stages, detailed fields, and captioned chart evidence |
 | Structured Trade Review | Complete Plan, Manage, and Review fields against the exact immutable playbook version used |
 | Edge Coach Evidence | Compare versions, stage compliance, structured answers, and numeric fields by outcome and sample size |
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
-| Trade Replay | Request exact historical candles from the connected cTrader Open API account, cache them briefly, and replay price action |
+| Trade Replay | Request exact historical candles from a connected cTrader Open API account, cache them briefly, and replay price action |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
 | Offline Resilience | Fall back to local JSON when MongoDB is unavailable |
-| Private by Design | Public registration is disabled and trade routes require authentication |
+| Private by Design | Public registration is disabled, trade routes require authentication, and investor sessions are locked to one account with no write access |
 
 ## Versioned Strategy Playbooks
 
@@ -79,12 +82,32 @@ Boolean, single-choice, multiple-choice, and rating answers feed answer-group co
 
 - Real accounts are stored as `accountType: "live"`.
 - Demo and contest accounts are stored as `accountType: "demo"`.
-- Every trade also stores the MT5 login, broker server, account name, and a stable account key.
+- Every trade also stores the MT5 login, broker server, account name, and a stable account key (`mt5:<id>` for MT5, `ctrader:<ctidTraderAccountId>` for cTrader).
 - A full resync backfills both the type and exact account identity onto matching older trades.
-- The Trades page can filter independently by Live/Demo and by the exact broker account. Both filters are preserved in the URL.
-- Deal tickets are deduplicated within each account, so two connected accounts may safely contain the same MT5 ticket number.
+- Every analytics page (Dashboard, Trades, Calendar, Stats, Performance) can filter independently by Live/Demo and by the exact broker account, and the selection persists across navigation. Viewing "All accounts" shows a warning banner whenever the blended data spans more than one account.
+- Deal tickets are deduplicated within each account, so two connected accounts may safely contain the same broker ticket number.
 
 Set `MT5_REQUIRE_REAL_ACCOUNT=true` if the sync process must reject every non-real account. Leave it `false` to sync and compare both account types.
+
+### Multiple accounts, multiple brokers
+
+Both MT5 and cTrader support more than one connected account at once:
+
+- **MT5** — add each account from the Accounts page; `sync.py` loads every enabled account and switches the local terminal between them in turn.
+- **cTrader** — authorize as many times as needed, even under different cTrader logins (e.g. one personal, one for a partner). Each selected account gets its own row, its own OAuth token, and its own sync/Replay behavior; disconnecting one never affects the others. Account labels are disambiguated by broker name (e.g. "cTrader Live (FxPro)" vs. "cTrader Live (tradinghive)") so two live accounts never look identical in the filter dropdown.
+
+cTrader accounts are OAuth-connected, not credential-based, so they can't be edited like an MT5 login — only connected, resynced, or disconnected.
+
+## Investor Access
+
+Share one account's performance with someone who has no login on this app — no share link, no invite email, just an account number and a password, the same way MT5 itself separates a full-control master password from a view-only investor password:
+
+1. On the Accounts page, open **Investor** on the account to share and click **Enable investor access**. This generates a stable account number and a one-time password — the password is shown exactly once and can never be recovered afterward, only rotated.
+2. Send the investor the login link (prefills the account number) and the password through separate channels.
+3. They sign in at `/investor/login` with no account of their own and land on a read-only dashboard: balance, net P&L, win rate, profit factor, drawdown, equity curve, and a trade list limited to financial fields — no notes, emotions, screenshots, or checklists.
+4. **Rotate password** issues a new password without changing the account number a saved link points to. **Revoke access** disables it instantly — even an already-issued, unexpired session is locked out on its very next request, because every investor request re-checks the live database rather than trusting the token alone.
+
+Investor sessions are scoped by JWT to exactly two read-only endpoints and one account; they cannot reach any owner route, regardless of what the token contains.
 
 ## Data Redundancy and Reconstruction
 
@@ -113,22 +136,30 @@ Every Cloudinary screenshot stores:
 ## Architecture
 
 ```text
-MetaTrader 5
-    -> sync.py polls closed deals and account events
+MetaTrader 5 (one or more terminals)
+    -> sync.py switches accounts and polls closed deals + account events
     -> POST /api/sync and /api/sync-account-events
+
+cTrader Open API (one or more OAuth connections)
+    -> lib/ctraderSync.js pulls deals + cash flow directly, server-side
+    -> lib/ctraderReplay.js serves Trade Replay's historical candles
 
 Express backend (:4000)
     -> MongoDB Atlas primary storage
     -> local JSON offline mirror
     -> Cloudinary screenshot and sidecar storage
+    -> AES-256-GCM encrypted broker/OAuth credentials
 
 Next.js frontend (:3000)
     -> JWT-authenticated API proxy
-    -> /trades  trade list, filters, journal, and playbook review
-    -> /rules   versioned playbook builder
+    -> /trades    trade list, filters, journal, and playbook review
+    -> /calendar  daily/weekly P&L, R-multiple, account filter
+    -> /rules     versioned playbook builder
     -> /rules/read visual published-playbook reader
-    -> /coach   behavior and playbook evidence
-    -> /archive backup, export, and recovery controls
+    -> /coach     behavior and playbook evidence
+    -> /accounts  MT5 + cTrader connections, investor access
+    -> /archive   backup, export, and recovery controls
+    -> /investor/login, /investor  read-only view for a shared account (no owner login)
 ```
 
 ## Tech Stack
@@ -184,66 +215,108 @@ Use `python sync.py --once` for one sync cycle. A full resync can also be reques
 
 ```text
 backend/
-  middleware/auth.js
+  middleware/auth.js        # JWT auth; also enforces the sync-agent and investor route allowlists
   models/
     Trade.js
     User.js
     AccountEvent.js
+    TradingAccount.js       # MT5 credentials + investor access, per account
+    CTraderConnection.js    # one row per connected cTrader account
+    ReplayJournal.js        # Replay annotations, timeline events, quick review, drafts
+    ReplaySession.js
     SyncRequest.js
   routes/
     auth.js
-    trades.js              # trades, playbooks, analytics, exports, screenshots
-  local_trades.json        # generated local trade mirror
+    tradingAccounts.js      # MT5 account CRUD + investor-access management
+    ctrader.js               # cTrader OAuth, account selection, disconnect, sync
+    investor.js               # investor login + the two read-only investor endpoints
+    trades.js                 # trades, playbooks, analytics, exports, screenshots, replay
+  lib/
+    credentialEncryption.js  # AES-256-GCM for MT5 credentials + cTrader OAuth tokens
+    ctraderClient.js          # TCP/protobuf client for the cTrader Open API
+    ctraderAuth.js             # cTrader OAuth2 flow
+    ctraderSync.js               # deal/cash-flow sync -> Trade/AccountEvent
+    ctraderReplay.js              # symbol resolution + trendbar fetch for Replay
+    tradeMath.js                   # P&L, drawdown, R-multiple math (unit-tested)
+  local_trades.json          # generated local trade mirror
   local_account_events.json
-  local_playbooks.json     # generated offline playbook storage
-  public/screenshots/      # offline screenshot staging area
+  local_playbooks.json       # generated offline playbook storage
+  public/screenshots/         # offline screenshot staging area
+  test/                        # node:test suite
   server.js
 frontend/
   app/
-    trades/                # trade list, filters, journal, screenshots
-    rules/                 # versioned strategy playbook builder
-    coach/                 # Edge Coach evidence
-    stats/                 # analytics breakdowns
-    performance/           # equity and risk metrics
-    calendar/              # P&L calendar
-    archive/               # backup and recovery
-  components/Sidebar.tsx
+    trades/                # trade list, filters, journal, screenshots, Replay
+    calendar/               # daily/weekly P&L, R-multiple, account filter
+    rules/                    # versioned strategy playbook builder
+    coach/                     # Edge Coach evidence
+    stats/                      # analytics breakdowns
+    performance/                  # equity and risk metrics
+    accounts/                      # MT5 + cTrader connections, investor access
+    archive/                        # backup and recovery
+    investor/login, investor/       # read-only investor view (no owner login)
+  components/
+    Sidebar.tsx
+    TradeReplayModal.tsx
+  hooks/useAccountKeyFilter.ts   # persists the selected account across pages
 sync.py
 requirements.txt
 ```
 
 ## Key API Endpoints
 
+All routes below require a JWT except where noted. `accountKey` filters (`mt5:<id>` or `ctrader:<id>`) are accepted by every analytics endpoint; omitting it blends every connected account and flags the response as `mixedAccounts`.
+
+### Trades, analytics, and journal
+
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/trades` | GET | Paginated trades with `symbol`, `direction`, `accountType`, `accountKey`, `from`, and `to` filters |
-| `/api/trade-accounts` | GET | List exact MT5 accounts represented in the owner's trades, including counts |
+| `/api/trade-accounts` | GET | List broker accounts represented in the owner's trades, including counts (feeds every Account filter dropdown) |
 | `/api/trades/latest-close` | GET | Return the latest trade time for one account so incremental sync never skips another account's history |
 | `/api/trades/:id` | PUT | Update journal data and attach a canonical playbook snapshot |
-| `/api/trades/:id/replay` | GET | Return temporarily cached candles or queue an on-demand MT5 replay request; `?fallback=twelve` uses the optional fallback |
+| `/api/stats` | GET | Headline performance metrics, optionally grouped by setup |
+| `/api/performance` | GET | Equity curve, drawdown, and risk metrics |
+| `/api/calendar` | GET | Daily P&L, trade count, average R-multiple, and win rate for the month |
+| `/api/balance` | GET | Current balance reconstructed from trades + cash flow |
+| `/api/account-events` | GET / POST / DELETE | Deposits and withdrawals |
+| `/api/coach` | GET | Behavioral, version, and rule-answer analytics |
+| `/api/trades/:id/replay` | GET | Fetch cached or fresh historical candles from cTrader for one trade's Replay chart |
 | `/api/trades/:id/replay-journal` | GET | Load saved chart annotations for one trade and timeframe |
 | `/api/trades/:id/replay-journal/annotations` | PUT | Validate and autosave zones, lines, levels, arrows, text, and image pins for one timeframe |
 | `/api/trades/:id/replay-journal/events` | PUT | Validate and autosave the candle-linked trade-event timeline |
 | `/api/trades/:id/replay-journal/quick-review` | PUT | Autosave or complete the short process-focused review |
 | `/api/trades/:id/replay-journal/draft` | PUT | Autosave unfinished journal answers and Replay position |
-| `/api/replay-requests` | GET | Let the authenticated local sync agent claim pending replay requests |
-| `/api/trades/:id/replay-candles` | POST | Validate and temporarily cache broker OHLC candles returned by `sync.py` |
-| `/api/sync` | POST | Receive MT5 closed trades and backfill Live/Demo labels |
-| `/api/auth/setup-status` | GET | Report whether the one-time owner Signup page is available |
-| `/api/auth/register` | POST | Create the owner only when the database contains zero users |
-| `/api/auth/sync-agent` | POST | Exchange the installation secret for a short-lived worker token |
-| `/api/trading-accounts` | GET / POST | List safe summaries or encrypt a new MT5 account |
-| `/api/trading-accounts/:id` | PATCH / DELETE | Update, disable, or archive a trading account |
-| `/api/sync-agent/trading-accounts` | GET | Supply decrypted enabled accounts only to the authenticated local worker |
 | `/api/playbooks` | GET / POST | List playbooks or publish a new strategy |
 | `/api/playbooks/evidence` | POST | Upload reusable visual evidence for a draft playbook stage |
-| `/api/playbooks/:playbookId` | PUT | Publish a new immutable version |
-| `/api/playbooks/:playbookId` | PATCH | Archive or restore a strategy |
-| `/api/coach` | GET | Behavioral, version, and rule-answer analytics |
+| `/api/playbooks/:playbookId` | PUT / PATCH | Publish a new immutable version, or archive/restore a strategy |
+| `/api/maintenance/dedupe-trades` | POST | Remove duplicate trades sharing the same broker deal/ticket |
+| `/api/maintenance/recalculate-balances` | POST | Rebuild `runningBalance` from trade + cash-flow order |
 | `/api/maintenance/recover-screenshots` | POST | Reattach screenshots and reconstruct missing core trades |
-| `/api/export/json` | GET | Full JSON backup of trades and account events |
-| `/api/export/csv` | GET | Flat CSV trade export |
+| `/api/export/json` / `/api/export/csv` | GET | Full JSON backup or flat CSV export |
 | `/api/export/status` | GET | Database, backup, and pending screenshot status |
+
+### Auth and accounts
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/auth/setup-status` | GET *(public)* | Report whether the one-time owner Signup page is available |
+| `/api/auth/register` | POST *(public)* | Create the owner only when the database contains zero users |
+| `/api/login` | POST *(public)* | Owner sign-in |
+| `/api/sync-agent` | POST *(public)* | Exchange the installation secret for a short-lived worker token |
+| `/api/trading-accounts` | GET / POST | List safe summaries or encrypt a new MT5 account |
+| `/api/trading-accounts/:id` | PATCH / DELETE | Update, disable, or archive a trading account |
+| `/api/trading-accounts/:id/investor-access` | POST / DELETE | Enable or rotate (returns the plaintext password once), or revoke, read-only investor access |
+| `/api/sync-agent/trading-accounts` | GET *(sync-agent token)* | Supply decrypted enabled MT5 accounts only, to the local worker |
+| `/api/sync` / `/api/sync-account-events` | POST *(sync-agent token)* | Receive MT5 closed trades / cash-flow events |
+| `/api/ctrader/auth-url` | GET | Start a cTrader OAuth authorization |
+| `/api/ctrader/exchange` | POST | Complete OAuth, list the accounts it can reach |
+| `/api/ctrader/select-accounts` | POST | Finalize which of those accounts to connect |
+| `/api/ctrader/status` | GET | List the owner's connected cTrader accounts |
+| `/api/ctrader/connection/:ctidTraderAccountId` | DELETE | Disconnect one cTrader account |
+| `/api/ctrader/sync` / `/api/ctrader/sync/:ctidTraderAccountId` | POST | Sync every connected cTrader account, or just one |
+| `/api/investor/login` | POST *(public, rate-limited)* | Exchange an investor account number + password for a scoped read-only token |
+| `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | The only two routes an investor token can reach |
 
 All endpoints require authentication except login and health checks. Export and recovery routes work with the same authenticated user scope as trade routes.
 
@@ -264,9 +337,9 @@ The worker loads every enabled account and switches the local MT5 terminal seque
 
 ### cTrader-powered trade replay
 
-Trade Replay's candle data comes from the cTrader Open API, independent of MT5 (MT5 is used only for trade and cash-flow sync via `sync.py`). Connect it once from the **Accounts** page: register a free app at [openapi.ctrader.com](https://openapi.ctrader.com), set `CTRADER_CLIENT_ID`, `CTRADER_CLIENT_SECRET`, and `CTRADER_REDIRECT_URI` in `backend/.env`, then authorize the cTrader account you want candles from. The resulting OAuth tokens are stored encrypted the same way MT5 broker credentials are (`lib/credentialEncryption.js`) and refreshed automatically.
+Trade Replay's candle data comes from the cTrader Open API. cTrader accounts can also sync their own trade history and cash flow into the journal, alongside (not instead of) MT5 — MT5 sync always goes through `sync.py`. Connect from the **Accounts** page: register a free app at [openapi.ctrader.com](https://openapi.ctrader.com), set `CTRADER_CLIENT_ID`, `CTRADER_CLIENT_SECRET`, and `CTRADER_REDIRECT_URI` in `backend/.env`, then authorize each cTrader account you want candles or trade sync from — one authorization can grant access to several accounts at once, and you choose which to connect. Reconnecting the same account reuses its existing row instead of creating a duplicate. The resulting OAuth tokens are stored encrypted the same way MT5 broker credentials are (`lib/credentialEncryption.js`) and refreshed automatically.
 
-Opening Replay resolves the trade's symbol against cTrader's own symbol list for that account (matching common broker suffixes like `XAUUSDm` automatically), requests exact historical trendbars for the needed window and timeframe over a persistent TLS/protobuf connection, and returns them directly — no background worker or polling queue involved. Results are cached in-process for 30 minutes per trade/timeframe.
+A trade's Replay chart is fetched from whichever connected cTrader account it actually came from (falling back to any connected account for MT5 trades). Resolving the trade's symbol against that account's own symbol list matches common broker suffixes like `XAUUSDm` automatically, plus a small alias table for instruments that are named completely differently across brokers (e.g. `USTEC` ↔ `NASDAQ100`, `BITCOIN` ↔ `BTCUSD`). Trendbars are requested for the needed window and timeframe over a persistent TLS/protobuf connection and returned directly — no background worker or polling queue involved. Results are cached in-process for 30 minutes per trade/timeframe.
 
 Replay supports independently cached `1m`, `5m`, `15m`, `1H`, `4H`, and `1D` views; switching timeframe requests only that interval and preserves the trade's entry/exit timestamps. Its journal panel reads the immutable playbook snapshot already attached to the trade, organizes rules into Plan, Execution, and Review, and saves edited answers without replacing that historical version.
 
@@ -280,7 +353,7 @@ Replay is designed for reviewing the story of a recorded trade, not replacing ch
 
 Quick Review follows a deliberate sequence. Plan adherence, emotion, the relevant mistake/strength, and the main lesson must be recorded before the process grade unlocks. A non-blocking honesty check flags contradictory combinations such as “did not follow the plan” with an A/B process grade; the trader remains responsible for the final judgment.
 
-Each timeline event also has an explicit visibility scope. **This timeframe** is the default and is best for chart-specific evidence such as a 5-minute displacement. **All timeframes** is intended for trade-wide decisions and lessons; the same event is positioned by timestamp and price as the trader switches charts. Existing events without this field remain timeframe-specific.
+Each timeline event also has an explicit visibility scope. **All timeframes** is the default, so a moment logged while reviewing one chart interval doesn't disappear the moment the trader switches to another — the same event is repositioned by timestamp and price as the chart changes. **This timeframe** is available for genuinely chart-specific evidence, such as a 5-minute displacement that has no meaning on a 4-hour candle.
 
 The journal panel opens in **Quick Review** so an ordinary trade can be reviewed in five short answers: plan adherence, primary emotion, the main mistake or repeatable strength, one lesson, and a process grade. Drafts autosave. **Mark Complete & Save** validates the review and mirrors its emotion and grade onto the trade for existing Stats and Edge Coach reports. **Deep Playbook** keeps the full immutable strategy review available when more evidence is warranted.
 

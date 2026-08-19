@@ -1,17 +1,39 @@
 'use client';
-import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
+import { Suspense, useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
-import { 
-  SlidersHorizontal, ChevronLeft, ChevronRight, List, 
+import {
+  SlidersHorizontal, ChevronLeft, ChevronRight, List,
   X, Smile, Award, Tag, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
 const API = '/api';
 const PAGE_SIZE = 50;
+const GROUPED_LIMIT = 2000; // grouping needs the full filtered set, not one page
+
+// Same UTC-hour boundaries as the "P&L by Session" breakdown on the Stats
+// page (backend/routes/trades.js /api/stats) -- kept in sync deliberately so
+// a trade lands in the same session bucket everywhere in the app.
+const SESSION_ORDER = ['Tokyo', 'London', 'Overlap', 'NewYork', 'Pacific'] as const;
+type SessionKey = typeof SESSION_ORDER[number];
+const SESSION_LABELS: Record<SessionKey, string> = {
+  Tokyo: 'Tokyo (Asian)',
+  London: 'London (Europe)',
+  Overlap: 'London/NY Overlap',
+  NewYork: 'New York (US)',
+  Pacific: 'Pacific/Late NY',
+};
+function sessionForTrade(closeTime: string): SessionKey {
+  const hour = new Date(closeTime).getUTCHours();
+  if (hour >= 0 && hour < 8) return 'Tokyo';
+  if (hour >= 8 && hour < 13) return 'London';
+  if (hour >= 13 && hour < 16) return 'Overlap';
+  if (hour >= 16 && hour < 21) return 'NewYork';
+  return 'Pacific';
+}
 
 interface ChecklistItem {
   ruleId?: string;
@@ -261,6 +283,7 @@ function TradesPageContent() {
   const [symbols, setSymbols]     = useState<string[]>([]);
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
   const [unassignedAccountCount, setUnassignedAccountCount] = useState(0);
+  const [groupBySession, setGroupBySession] = useState(false);
 
   useEffect(() => {
     if (!hasToken) return;
@@ -313,9 +336,12 @@ function TradesPageContent() {
     if (!token) return;
     if (!accountFilterReady) return;
     setLoading(true);
+    // Grouping by session needs the whole filtered set at once -- a session
+    // bucket split across pages would be misleading -- so it trades
+    // pagination for a single larger fetch instead.
     const params = new URLSearchParams({
-      page: String(page),
-      limit: String(PAGE_SIZE),
+      page: groupBySession ? '1' : String(page),
+      limit: groupBySession ? String(GROUPED_LIMIT) : String(PAGE_SIZE),
       ...(symbol    && { symbol }),
       ...(direction && { direction }),
       ...(accountTypeFilter && { accountType: accountTypeFilter }),
@@ -346,7 +372,7 @@ function TradesPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [page, symbol, direction, accountTypeFilter, accountKeyFilter, accountFilterReady, from, to, router]);
+  }, [page, symbol, direction, accountTypeFilter, accountKeyFilter, accountFilterReady, from, to, router, groupBySession]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -354,6 +380,27 @@ function TradesPageContent() {
     setSymbol(''); setDirection(''); setAccountTypeFilter(''); setAccountKeyFilter(''); setFrom(''); setTo(''); setPage(1);
     updateQuery({ symbol: null, direction: null, account: null, accountKey: null, from: null, to: null, page: null });
   };
+
+  // Grouped-by-session view: bucket the loaded trades by the same UTC-hour
+  // session boundaries the Stats page's "P&L by Session" chart uses, then
+  // flatten back into one array in a fixed session order so the existing
+  // row-rendering code can iterate it unchanged. Session totals are
+  // computed alongside for the header row of each group.
+  const sessionGroups = useMemo(() => {
+    const buckets: Record<SessionKey, Trade[]> = { Tokyo: [], London: [], Overlap: [], NewYork: [], Pacific: [] };
+    for (const t of trades) buckets[sessionForTrade(t.closeTime)].push(t);
+    return SESSION_ORDER.map(key => {
+      const group = buckets[key];
+      const netPnL = group.reduce((s, t) => s + t.pnlUSD, 0);
+      const wins = group.filter(t => t.pnlUSD >= 0).length;
+      return { key, label: SESSION_LABELS[key], trades: group, netPnL, winRate: group.length ? (wins / group.length) * 100 : 0 };
+    }).filter(g => g.trades.length > 0);
+  }, [trades]);
+
+  const displayTrades = useMemo(
+    () => groupBySession ? sessionGroups.flatMap(g => g.trades) : trades,
+    [groupBySession, sessionGroups, trades]
+  );
 
   const handleRowClick = (trade: Trade) => {
     const rulesFor = (category: TradingRule['category'], fallback: ChecklistItem[]) => {
@@ -826,6 +873,15 @@ function TradesPageContent() {
           <label>To date</label>
           <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); updateQuery({ to: e.target.value, page: null }); }} />
         </div>
+        <button
+          className={`btn ${groupBySession ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setGroupBySession(current => !current)}
+          style={{ alignSelf: 'flex-end', flexShrink: 0 }}
+          title="Cluster trades under Tokyo / London / London-NY Overlap / New York / Pacific headers, by close time (UTC)."
+        >
+          <Sun size={13} />
+          {groupBySession ? 'Grouped by session' : 'Group by session'}
+        </button>
         <button className="btn btn-ghost" onClick={resetFilters} style={{ alignSelf: 'flex-end', flexShrink: 0 }}>
           <SlidersHorizontal size={13} />
           Reset
@@ -867,26 +923,45 @@ function TradesPageContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((t, i) => {
+                  {displayTrades.map((t, i) => {
                     const isProfit = t.pnlUSD >= 0;
                     // Color-coded grouping: tradeGroup takes priority over shared positionId
                     const groupKey = t.tradeGroup || (t.positionId || '');
-                    const prevGroupKey = i > 0 ? (trades[i-1].tradeGroup || trades[i-1].positionId || '') : '';
-                    const nextGroupKey = i < trades.length - 1 ? (trades[i+1].tradeGroup || trades[i+1].positionId || '') : '';
+                    const prevGroupKey = i > 0 ? (displayTrades[i-1].tradeGroup || displayTrades[i-1].positionId || '') : '';
+                    const nextGroupKey = i < displayTrades.length - 1 ? (displayTrades[i+1].tradeGroup || displayTrades[i+1].positionId || '') : '';
                     const isGrouped = Boolean(groupKey && (groupKey === prevGroupKey || groupKey === nextGroupKey));
                     const groupColors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#ec4899','#8b5cf6','#14b8a6'];
                     const colorIdx = groupKey ? (groupKey.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0) % groupColors.length) : 0;
                     const groupColor = isGrouped ? groupColors[colorIdx] : '';
+                    const sessionHere = groupBySession ? sessionForTrade(t.closeTime) : null;
+                    const startsNewSession = groupBySession && (i === 0 || sessionForTrade(displayTrades[i - 1].closeTime) !== sessionHere);
+                    const sessionSummary = startsNewSession ? sessionGroups.find(g => g.key === sessionHere) : null;
                     return (
-                      <tr 
-                        key={t._id} 
-                        className="clickable" 
+                      <Fragment key={t._id}>
+                        {sessionSummary && (
+                          <tr key={`session-${sessionSummary.key}`} className="session-group-header-row">
+                            <td colSpan={16} style={{ background: 'var(--bg-elevated)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '9px 12px', fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <Sun size={13} color="var(--accent)" />
+                                {sessionSummary.label}
+                                <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>· {sessionSummary.trades.length} trade{sessionSummary.trades.length === 1 ? '' : 's'}</span>
+                                <span className={sessionSummary.netPnL >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 700 }}>
+                                  {sessionSummary.netPnL >= 0 ? '+' : ''}${Math.abs(sessionSummary.netPnL).toFixed(2)}
+                                </span>
+                                <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>· {sessionSummary.winRate.toFixed(0)}% win</span>
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                      <tr
+                        key={t._id}
+                        className="clickable"
                         onClick={() => handleRowClick(t)}
                         title={isGrouped ? `Group: ${groupKey}` : 'Click to open journal drawer'}
                         style={isGrouped ? { borderLeft: `3px solid ${groupColor}` } : {}}
                       >
                         <td style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
-                          {(page - 1) * PAGE_SIZE + i + 1}
+                          {groupBySession ? i + 1 : (page - 1) * PAGE_SIZE + i + 1}
                           {isGrouped && t.tradeGroup && (
                             <span style={{
                               display: 'inline-block', marginLeft: 5, fontSize: 9, fontWeight: 700,
@@ -949,6 +1024,7 @@ function TradesPageContent() {
                         <td className="hide-sm" style={{ color: 'var(--text-secondary)' }}>{formatDuration(t.durationMinutes)}</td>
                         <td className="hide-sm" style={{ fontWeight: 500 }}>${t.runningBalance.toFixed(2)}</td>
                       </tr>
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -957,18 +1033,27 @@ function TradesPageContent() {
 
             {/* Pagination */}
             <div className="pagination">
-              <span>
-                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
-              </span>
-              <div className="pagination-controls">
-                <button className="page-btn" disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); updateQuery({ page: next }); }}>
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="page-current">{page} / {totalPages}</span>
-                <button className="page-btn" disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); updateQuery({ page: next }); }}>
-                  <ChevronRight size={14} />
-                </button>
-              </div>
+              {groupBySession ? (
+                <span>
+                  Showing all {trades.length.toLocaleString()} matching trades across {sessionGroups.length} session{sessionGroups.length === 1 ? '' : 's'}
+                  {trades.length >= GROUPED_LIMIT && ' (capped — narrow the filters to see more)'}
+                </span>
+              ) : (
+                <>
+                  <span>
+                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
+                  </span>
+                  <div className="pagination-controls">
+                    <button className="page-btn" disabled={page <= 1} onClick={() => { const next = page - 1; setPage(next); updateQuery({ page: next }); }}>
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="page-current">{page} / {totalPages}</span>
+                    <button className="page-btn" disabled={page >= totalPages} onClick={() => { const next = page + 1; setPage(next); updateQuery({ page: next }); }}>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}

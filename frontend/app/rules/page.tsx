@@ -288,36 +288,72 @@ function FieldDetails({ rule, onChange }: { rule: PlaybookRule; onChange: (patch
         <span>Optional instructions and limits shown when this rule is completed.</span>
       </div>
       <div className="playbook-field-details-grid">
-        <label style={{ ...labelStyle, gridColumn: 'span 2' }}>Help text
+        <label style={{ ...labelStyle, gridColumn: 'span 2' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Help text
+            <InfoHint text="Shown to the trader right under this question while they're completing the journal — use it to explain what counts as good evidence or how to judge the answer." />
+          </span>
           <input value={rule.helpText || ''} onChange={event => onChange({ helpText: event.target.value })} placeholder="Explain what evidence the trader should record" style={inputStyle} />
         </label>
-        <label style={labelStyle}>Input placeholder
+        <label style={labelStyle}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Input placeholder
+            <InfoHint text="Faint example text shown inside the empty answer field itself (not saved as the answer) — use it to model what a good response looks like." />
+          </span>
           <input value={rule.placeholder || ''} onChange={event => onChange({ placeholder: event.target.value })} placeholder="Example answer or instruction" style={inputStyle} />
         </label>
-        <label style={labelStyle}>Unit
+        <label style={labelStyle}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Unit
+            <InfoHint text="Only for Number-type answers (Percentage, Currency, Price, Duration, R:R, Rating). It's a label appended after whatever number the trader types — e.g. entering '15' with unit 'points' displays as '15 points'. Purely cosmetic; it doesn't convert or validate the value." />
+          </span>
           <input value={rule.unit || ''} onChange={event => onChange({ unit: event.target.value })} placeholder="%, USD, points, R…" style={inputStyle} />
         </label>
         {['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward'].includes(rule.inputType) && <>
-          <label style={labelStyle}>Minimum
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Minimum
+              <InfoHint text="Smallest number the trader is allowed to enter for this answer. Leave blank for no lower limit." />
+            </span>
             <input type="number" value={validation.min ?? ''} onChange={event => onChange({ validation: { ...validation, min: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
-          <label style={labelStyle}>Maximum
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Maximum
+              <InfoHint text="Largest number the trader is allowed to enter for this answer. Leave blank for no upper limit." />
+            </span>
             <input type="number" value={validation.max ?? ''} onChange={event => onChange({ validation: { ...validation, max: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
         </>}
         {['text', 'long_text'].includes(rule.inputType) && <>
-          <label style={labelStyle}>Minimum characters
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Minimum characters
+              <InfoHint text="Shortest answer length (in characters) accepted for this text field. Use it to stop one-word non-answers on rules that need real explanation." />
+            </span>
             <input type="number" min="0" value={validation.minLength ?? ''} onChange={event => onChange({ validation: { ...validation, minLength: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
-          <label style={labelStyle}>Maximum characters
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Maximum characters
+              <InfoHint text="Longest answer length (in characters) accepted for this text field." />
+            </span>
             <input type="number" min="1" value={validation.maxLength ?? ''} onChange={event => onChange({ validation: { ...validation, maxLength: optionalNumber(event.target.value) } })} style={inputStyle} />
           </label>
         </>}
         {(rule.exampleRequirement?.required || false) && <>
-          <label style={labelStyle}>Minimum trade screenshots
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Minimum trade screenshots
+              <InfoHint text="How many screenshots FROM THE ACTUAL TRADE the trader must attach to this rule before it counts as answered — this is evidence proving they actually checked, not the optional teaching examples above." />
+            </span>
             <input type="number" min="1" max="12" value={rule.exampleRequirement?.minimumImages || 1} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: Number(event.target.value) || 1, maximumImages: rule.exampleRequirement?.maximumImages || 6 } })} style={inputStyle} />
           </label>
-          <label style={labelStyle}>Maximum trade screenshots
+          <label style={labelStyle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Maximum trade screenshots
+              <InfoHint text="Upper limit on how many trade screenshots can be attached to this rule, so the journal doesn't balloon with unlimited uploads." />
+            </span>
             <input type="number" min="1" max="12" value={rule.exampleRequirement?.maximumImages || 6} onChange={event => onChange({ exampleRequirement: { required: true, minimumImages: rule.exampleRequirement?.minimumImages || 1, maximumImages: Number(event.target.value) || 6 } })} style={inputStyle} />
           </label>
         </>}

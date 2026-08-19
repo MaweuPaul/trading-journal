@@ -3768,4 +3768,11 @@ router.get('/coach', auth, ownerOnly, async (req, res) => {
   }
 });
 
+// Exposed for routes/investor.js, which needs the exact same interval
+// selection and cTrader window logic for its own scoped, sanitized replay
+// endpoint rather than reusing this route's owner-only response shape
+// (which includes private journal fields like notes/emotion/grade).
+router.requestedReplayInterval = requestedReplayInterval;
+router.replayWindow = replayWindow;
+
 module.exports = router;

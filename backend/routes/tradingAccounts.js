@@ -189,12 +189,17 @@ router.post('/trading-accounts/:id/investor-access', auth, ownerOnly, async (req
 // DELETE /trading-accounts/:id/investor-access -- revokes it outright. The
 // code is cleared too, not just the password, so a stale bookmarked login
 // page can't even identify the account, let alone get a password prompt.
+// investor.code must be $unset (made genuinely absent), not set to null --
+// the sparse unique index on it only exempts a missing field, and an
+// explicit null on two different revoked accounts collides as a duplicate.
 router.delete('/trading-accounts/:id/investor-access', auth, ownerOnly, async (req, res) => {
   try {
-    const account = await TradingAccount.findOne({ _id: req.params.id, user: req.user.userId, archivedAt: null });
+    const account = await TradingAccount.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.userId, archivedAt: null },
+      { $set: { 'investor.enabled': false, 'investor.passwordHash': null, 'investor.createdAt': null, 'investor.lastViewedAt': null }, $unset: { 'investor.code': '' } },
+      { new: true },
+    );
     if (!account) return res.status(404).json({ error: 'Trading account not found.' });
-    account.investor = { enabled: false, code: null, passwordHash: null, createdAt: null, lastViewedAt: null };
-    await account.save();
     res.json({ revoked: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

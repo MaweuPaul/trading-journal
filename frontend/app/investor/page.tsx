@@ -6,8 +6,9 @@ import {
 } from 'recharts';
 import {
   DollarSign, TrendingUp, TrendingDown, Percent, Award, AlertTriangle,
-  LogOut, Loader2, Eye,
+  LogOut, Loader2, Eye, Play,
 } from 'lucide-react';
+import InvestorReplayModal from '@/components/InvestorReplayModal';
 
 const API = '/api';
 
@@ -52,6 +53,7 @@ export default function InvestorDashboardPage() {
   const [trades, setTrades] = useState<InvestorTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
 
   const token = () => localStorage.getItem('investorToken');
 
@@ -176,7 +178,7 @@ export default function InvestorDashboardPage() {
           <thead>
             <tr>
               <th>Symbol</th><th>Direction</th><th>Entry</th><th>Exit</th><th>Lots</th>
-              <th>P&amp;L (USD)</th><th>P&amp;L (%)</th><th>Opened</th><th>Closed</th>
+              <th>P&amp;L (USD)</th><th>P&amp;L (%)</th><th>Opened</th><th>Closed</th><th />
             </tr>
           </thead>
           <tbody>
@@ -193,6 +195,11 @@ export default function InvestorDashboardPage() {
                   <td className={profit ? 'positive' : 'negative'}>{profit ? '+' : ''}{t.pnlPct.toFixed(2)}%</td>
                   <td>{new Date(t.openTime).toLocaleString()}</td>
                   <td>{new Date(t.closeTime).toLocaleString()}</td>
+                  <td>
+                    <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => setReplayTradeId(t._id)} title="View chart replay for this trade">
+                      <Play size={12} /> Replay
+                    </button>
+                  </td>
                 </tr>
               );
             })}
@@ -204,6 +211,19 @@ export default function InvestorDashboardPage() {
           </div>
         )}
       </div>
+
+      {replayTradeId && (() => {
+        const replayTrade = trades.find(t => t._id === replayTradeId);
+        if (!replayTrade) return null;
+        return (
+          <InvestorReplayModal
+            key={replayTradeId}
+            tradeId={replayTradeId}
+            tradeSummary={{ symbol: replayTrade.symbol, direction: replayTrade.direction, pnlUSD: replayTrade.pnlUSD, pnlPct: replayTrade.pnlPct }}
+            onClose={() => setReplayTradeId(null)}
+          />
+        );
+      })()}
     </main>
   );
 }

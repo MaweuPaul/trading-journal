@@ -42,6 +42,7 @@ module.exports = function (req, res, next) {
       const permitted = [
         ['GET', /^\/api\/investor\/summary$/],
         ['GET', /^\/api\/investor\/trades$/],
+        ['GET', /^\/api\/investor\/trades\/[^/]+\/replay$/],
       ].some(([method, pattern]) => method === req.method && pattern.test(path));
       if (!permitted) return res.status(403).json({ error: 'This investor token cannot access owner journal endpoints.' });
     }

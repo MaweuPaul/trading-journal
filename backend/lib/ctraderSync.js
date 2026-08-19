@@ -26,6 +26,25 @@ async function resolveSymbolNames(client, ctidTraderAccountId) {
   return byId;
 }
 
+// Per-symbol lot size ("units per lot", in the same hundredths-of-a-unit
+// convention as deal volumes) — 100,000 for FX pairs but wildly different for
+// other instrument classes (crypto is commonly 1 whole coin per lot, i.e.
+// lotSize=100). Without this a BTCUSD deal's volume divided by the FX
+// default of 100,000 units/lot produces a lot size ~100,000x too small.
+async function fetchSymbolLotSizes(client, ctidTraderAccountId, symbolIds) {
+  const byId = new Map();
+  if (symbolIds.length === 0) return byId;
+  const res = await client.request(PAYLOAD_TYPE.SYMBOL_BY_ID_REQ, {
+    ctidTraderAccountId: Number(ctidTraderAccountId),
+    symbolId: symbolIds.map(Number),
+  });
+  for (const symbol of res.symbol || []) {
+    const lotSize = Number(symbol.lotSize);
+    if (Number.isFinite(lotSize) && lotSize > 0) byId.set(String(symbol.symbolId), lotSize);
+  }
+  return byId;
+}
+
 async function fetchTrader(client, ctidTraderAccountId) {
   const res = await client.request(PAYLOAD_TYPE.TRADER_REQ, { ctidTraderAccountId: Number(ctidTraderAccountId) });
   return res.trader;
@@ -76,7 +95,7 @@ async function fetchAllCashFlow(client, ctidTraderAccountId, fromMs, toMs) {
 // Deals are individual executions, not closed trades — group by positionId so
 // a partial close still resolves against the position's real opening price
 // and open time instead of guessing from the closing deal alone.
-function buildTradesFromDeals(deals, symbolNames, accountIdentity) {
+function buildTradesFromDeals(deals, symbolNames, symbolLotSizes, accountIdentity) {
   const byPosition = new Map();
   for (const deal of deals) {
     const key = String(deal.positionId);
@@ -104,7 +123,8 @@ function buildTradesFromDeals(deals, symbolNames, accountIdentity) {
       const runningBalance = scale(detail.balance, moneyDigits);
       const balanceBeforeTrade = runningBalance - pnlUSD;
       const pnlPct = balanceBeforeTrade > 0 ? (pnlUSD / balanceBeforeTrade) * 100 : 0;
-      const lotSize = Number(detail.closedVolume ?? deal.filledVolume ?? deal.volume ?? 0) / (100 * LOT_UNITS);
+      const unitsPerLot = symbolLotSizes.get(String(deal.symbolId)) || LOT_UNITS * 100;
+      const lotSize = Number(detail.closedVolume ?? deal.filledVolume ?? deal.volume ?? 0) / unitsPerLot;
       const openTimeMs = Number(openDeal.executionTimestamp);
       const closeTimeMs = Number(deal.executionTimestamp);
 
@@ -253,8 +273,10 @@ async function syncOneConnection(userId, connectionInfo) {
     fetchAllDeals(client, connectionInfo.ctidTraderAccountId, fromMs, nowMs),
     fetchAllCashFlow(client, connectionInfo.ctidTraderAccountId, fromMs, nowMs),
   ]);
+  const dealSymbolIds = [...new Set(deals.map(deal => String(deal.symbolId)))];
+  const symbolLotSizes = await fetchSymbolLotSizes(client, connectionInfo.ctidTraderAccountId, dealSymbolIds);
 
-  const trades = buildTradesFromDeals(deals, symbolNames, accountIdentity);
+  const trades = buildTradesFromDeals(deals, symbolNames, symbolLotSizes, accountIdentity);
   const accountEvents = buildAccountEventsFromCashFlow(cashFlowEvents, accountIdentity);
 
   const tradeResult = await upsertTrades(userId, trades);

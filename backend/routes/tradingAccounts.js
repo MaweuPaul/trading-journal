@@ -146,7 +146,10 @@ router.delete('/trading-accounts/:id', auth, ownerOnly, async (req, res) => {
 router.get('/sync-agent/trading-accounts', auth, async (req, res) => {
   try {
     if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
-    const accounts = await TradingAccount.find({ user: req.user.userId, archivedAt: null, enabled: true }).sort({ createdAt: 1 });
+    // This endpoint only serves the local MT5 sync agent -- cTrader accounts
+    // are OAuth-connected and synced server-side (see routes/ctrader.js), so
+    // they carry no MT5 login/password/server to decrypt here.
+    const accounts = await TradingAccount.find({ user: req.user.userId, archivedAt: null, enabled: true, provider: 'mt5' }).sort({ createdAt: 1 });
     const values = accounts.map(account => {
       const context = field => credentialContext(req.user.userId, account._id, field);
       return {

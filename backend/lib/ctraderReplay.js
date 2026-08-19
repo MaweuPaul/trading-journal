@@ -172,6 +172,16 @@ const SYMBOL_ALIASES = {
   USOIL: ['WTI', 'CRUDEOIL', 'USOILCASH', 'WTICRUDE'],
   UKOIL: ['BRENT', 'UKOILCASH', 'BRENTCRUDE'],
   NATGAS: ['NATURALGAS', 'NGAS'],
+  // MT5 brokers (e.g. Exness) spell out crypto CFDs as full words; cTrader
+  // brokers use the USD-pair ticker instead.
+  BITCOIN: ['BTCUSD', 'BTCUSDT', 'XBTUSD'],
+  ETHEREUM: ['ETHUSD', 'ETHUSDT'],
+  LITECOIN: ['LTCUSD', 'LTCUSDT'],
+  RIPPLE: ['XRPUSD', 'XRPUSDT'],
+  BITCOINCASH: ['BCHUSD', 'BCHUSDT'],
+  CARDANO: ['ADAUSD', 'ADAUSDT'],
+  POLKADOT: ['DOTUSD', 'DOTUSDT'],
+  DOGECOIN: ['DOGEUSD', 'DOGEUSDT'],
 };
 
 async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
@@ -195,11 +205,23 @@ async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
   const tryMatch = candidate => {
     const normalized = normalizeSymbolForCTrader(candidate);
     if (cache.bySymbolName.has(normalized)) return cache.bySymbolName.get(normalized);
-    // Brokers append suffixes like 'm', '.a', '_i' to MT5 names, and cTrader's
-    // own naming can differ slightly in punctuation (e.g. slashes) — compare
-    // with everything but letters/digits stripped from both sides.
+    // cTrader's own naming can differ slightly in punctuation (e.g. slashes)
+    // from the broker's — compare with everything but letters/digits
+    // stripped from both sides.
     const stripped = normalized.replace(/[^A-Z0-9]/g, '');
-    return cache.strippedIndex.get(stripped) ?? null;
+    if (cache.strippedIndex.has(stripped)) return cache.strippedIndex.get(stripped);
+    // Only as a last resort, try peeling off a trailing MT5 account-type
+    // suffix ('XAUUSDm', 'EURUSD.a', 'EURUSD+'). Applying this unconditionally
+    // would mangle real words that happen to end in 'm'/'n' (e.g. BITCOIN,
+    // PLATINUM), so it only kicks in once the exact and punctuation-stripped
+    // matches have both failed.
+    const suffixStripped = stripBrokerSuffix(normalized);
+    if (suffixStripped !== normalized) {
+      if (cache.bySymbolName.has(suffixStripped)) return cache.bySymbolName.get(suffixStripped);
+      const suffixStrippedAndPunct = suffixStripped.replace(/[^A-Z0-9]/g, '');
+      if (cache.strippedIndex.has(suffixStrippedAndPunct)) return cache.strippedIndex.get(suffixStrippedAndPunct);
+    }
+    return null;
   };
 
   const direct = tryMatch(symbolName);
@@ -213,10 +235,16 @@ async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
   return null;
 }
 
-// MT5 broker symbols often carry suffixes ('XAUUSDm', 'EURUSD.a') or use
-// different separators than cTrader's own symbol names ('EUR/USD' vs 'EURUSD').
 function normalizeSymbolForCTrader(raw) {
-  return String(raw || '').toUpperCase().trim().replace(/[mn+\.]+$/i, '');
+  return String(raw || '').toUpperCase().trim();
+}
+
+// MT5 broker symbols often carry account-type suffixes ('XAUUSDm', 'EURUSD.a',
+// 'EURUSD+'). Only used as a fallback match once the exact name has already
+// failed, since applying it eagerly would corrupt real words ending in
+// 'm'/'n' (BITCOIN, PLATINUM).
+function stripBrokerSuffix(normalized) {
+  return normalized.replace(/[mn+\.]+$/i, '');
 }
 
 // The core Replay data call: historical candles for one symbol/window from

@@ -170,7 +170,7 @@ function replayWindow(trade, requestedInterval) {
   };
 }
 
-function buildReplayResult(trade, candleData) {
+function buildReplayResult(trade, candleData, interval) {
   const candles = candleData.candles || [];
   const entryTs = Math.floor(new Date(trade.openTime).getTime() / 1000);
   const exitTs = Math.floor(new Date(trade.closeTime).getTime() / 1000);
@@ -184,6 +184,7 @@ function buildReplayResult(trade, candleData) {
   const exitIndex = candleAt(exitTs);
   return {
     ...candleData,
+    interval,
     entryPrice: trade.entryPrice, exitPrice: trade.exitPrice,
     direction: trade.direction, symbol: trade.symbol,
     normalizedSymbol: candleData.normalizedSymbol || candleData.brokerSymbol || trade.symbol,
@@ -2105,7 +2106,7 @@ router.get('/trades/:id/replay', auth, ownerOnly, async (req, res) => {
       return res.status(422).json({ error: `cTrader returned no candles for ${trade.symbol} (${window.interval}).` });
     }
 
-    const result = buildReplayResult(trade, candleData);
+    const result = buildReplayResult(trade, candleData, window.interval);
     replayCache.set(cacheKey, { ts: Date.now(), data: result });
     res.json(result);
 

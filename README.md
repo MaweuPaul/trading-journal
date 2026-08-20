@@ -226,9 +226,20 @@ npm run dist
 
 Produces `desktop/dist/TradeJournal Sync Agent Setup <version>.exe` — a
 one-click NSIS installer with a settings window, tray icon, and process
-supervision around `sync.py`. Requires Python 3 on `PATH` (see
-[`desktop/README.md`](desktop/README.md)); the app itself doesn't bundle
-a Python runtime.
+supervision around `sync.py`. Requires Python 3 on `PATH` (the app itself
+doesn't bundle a Python runtime — install it from python.org if `python
+--version` doesn't resolve).
+
+Run the installer, make sure the backend is already running and reachable,
+then on first launch fill in:
+
+- **Backend API URL** — defaults to `http://localhost:4000/api`, correct
+  if the backend runs on this same machine. Point it at the backend's real
+  reachable address instead if it's deployed elsewhere.
+- **Sync secret** — from the **Accounts** page in the journal.
+
+Then **Install/update dependencies** once, then **Start Sync**. See
+[`desktop/README.md`](desktop/README.md) for the full walkthrough.
 
 ## Project Structure
 

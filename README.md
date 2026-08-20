@@ -214,6 +214,22 @@ python sync.py
 
 Use `python sync.py --once` for one sync cycle. A full resync can also be requested from the journal maintenance controls.
 
+### Desktop Sync Agent (optional GUI for MT5 Sync)
+
+Instead of running `sync.py` from a terminal, install the native Windows app:
+
+```bash
+cd desktop
+npm install
+npm run dist
+```
+
+Produces `desktop/dist/TradeJournal Sync Agent Setup <version>.exe` — a
+one-click NSIS installer with a settings window, tray icon, and process
+supervision around `sync.py`. Requires Python 3 on `PATH` (see
+[`desktop/README.md`](desktop/README.md)); the app itself doesn't bundle
+a Python runtime.
+
 ## Project Structure
 
 ```text

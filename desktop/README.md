@@ -38,10 +38,17 @@ This bundles `../sync.py` and `../requirements.txt` alongside the packaged
 app (see `package.json`'s `build.extraResources`) so the installed app is
 self-contained apart from the Python 3 requirement above.
 
-**Before distributing a packaged build**, replace `assets/icon.png` with a
-real icon (a transparent PNG is fine for the tray; `electron-builder` will
-need platform-specific formats — `.ico` for Windows, `.icns` for macOS — for
-the installer/app icon). The placeholder is omitted from this checkout.
+`assets/icon.png` (and its source, `assets/icon.svg`) match the app's gold
+trending-up mark used everywhere else — the login logo, sidebar, favicon.
+Regenerate it after editing the SVG with:
+
+```bash
+cd desktop
+node_modules/.bin/electron scripts/render-icon.js
+```
+
+`electron-builder` generates the platform-specific formats it needs (`.ico`
+for Windows, `.icns` for macOS) from this single PNG at package time.
 
 ## What it stores locally
 

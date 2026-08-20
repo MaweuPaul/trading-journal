@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>TradeJournal Sync Agent</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">↗</div>
+      <div>
+        <h1>TradeJournal Sync Agent</h1>
+        <p>Runs sync.py in the background — no terminal, no manual .env editing.</p>
+      </div>
+    </div>
+    <span id="status-pill" class="status-pill stopped">Stopped</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Connection</h2>
+      <label>
+        <span>Backend API URL</span>
+        <input id="apiBase" type="text" placeholder="http://localhost:4000/api" />
+      </label>
+      <label>
+        <span>Your sync secret <a href="#" id="secret-help">what's this?</a></span>
+        <div class="input-with-button">
+          <input id="syncSecret" type="password" placeholder="Paste the secret from your Accounts page" />
+          <button id="toggle-secret" type="button" class="btn-ghost" title="Show/hide">👁</button>
+        </div>
+      </label>
+      <label>
+        <span>Sync interval (seconds)</span>
+        <input id="syncInterval" type="number" min="10" value="60" />
+      </label>
+      <label class="checkbox-row">
+        <input id="requireRealAccount" type="checkbox" />
+        <span>Reject demo accounts (only sync live accounts)</span>
+      </label>
+      <div id="help-text" class="help-text hidden">
+        Generate this on the TradeJournal Accounts page under "Your personal MT5 sync secret." It authenticates this
+        agent as you specifically — it's never your MT5 password, and rotating it there instantly invalidates the old one.
+      </div>
+      <div class="actions">
+        <button id="save-btn" class="btn-primary">Save</button>
+        <span id="save-state" class="save-state"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Agent</h2>
+      <p class="python-status" id="python-status">Checking for Python…</p>
+      <div class="actions">
+        <button id="install-btn" class="btn-ghost">Install/update dependencies</button>
+        <button id="start-btn" class="btn-primary">Start Sync</button>
+        <button id="stop-btn" class="btn-ghost" disabled>Stop</button>
+      </div>
+    </section>
+
+    <section class="card log-card">
+      <h2>Activity Log</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

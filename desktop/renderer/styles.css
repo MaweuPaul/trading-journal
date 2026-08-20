@@ -1,0 +1,122 @@
+:root {
+  --bg-base: #14100a;
+  --bg-surface: #1e1810;
+  --bg-elevated: #241d12;
+  --border: #3c3018;
+  --text-primary: #f7f0dc;
+  --text-secondary: #d3c39a;
+  --text-muted: #a8996c;
+  --accent: #fbbf24;
+  --accent-deep: #d4af37;
+  --green: #34d399;
+  --red: #fb7185;
+  --radius: 10px;
+  font-family: 'Segoe UI', -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo {
+  width: 36px; height: 36px; border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+  color: #201a0a; font-weight: 800; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+}
+h1 { font-size: 15px; margin: 0; }
+header p { font-size: 11px; color: var(--text-muted); margin: 2px 0 0; }
+
+.status-pill {
+  font-size: 11px; font-weight: 700; padding: 5px 11px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.status-pill.stopped { background: rgba(168,153,108,0.15); color: var(--text-muted); }
+.status-pill.starting, .status-pill.restarting { background: rgba(251,191,36,0.15); color: var(--accent); }
+.status-pill.running { background: rgba(52,211,153,0.15); color: var(--green); }
+
+main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 12px; }
+
+label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: 12px; color: var(--text-secondary); }
+label span { display: flex; align-items: center; gap: 6px; }
+label a { color: var(--accent); font-size: 10.5px; text-decoration: none; }
+label a:hover { text-decoration: underline; }
+
+input[type="text"], input[type="password"], input[type="number"] {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+}
+input:focus { border-color: var(--accent); }
+
+.input-with-button { display: flex; gap: 6px; }
+.input-with-button input { flex: 1; }
+
+.checkbox-row { flex-direction: row; align-items: center; gap: 8px; }
+.checkbox-row input { width: auto; }
+
+.help-text {
+  font-size: 11px; color: var(--text-muted); background: var(--bg-elevated);
+  border: 1px solid var(--border); border-radius: 7px; padding: 10px; margin-bottom: 12px;
+}
+.hidden { display: none; }
+
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+button {
+  font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  border-radius: 8px; padding: 8px 14px; border: 1px solid transparent;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: linear-gradient(135deg, var(--accent-deep), var(--accent)); color: #201a0a; }
+.btn-ghost { background: var(--bg-elevated); border-color: var(--border); color: var(--text-secondary); }
+.btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+.save-state { font-size: 11px; color: var(--green); }
+.python-status { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+
+.log-card { flex: 1; display: flex; flex-direction: column; min-height: 160px; }
+#log {
+  flex: 1; margin: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  background: #0d0a06; border: 1px solid var(--border); border-radius: 7px;
+  padding: 10px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 11px;
+  color: var(--text-secondary); line-height: 1.5;
+}

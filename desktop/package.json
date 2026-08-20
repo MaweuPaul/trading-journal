@@ -1,0 +1,27 @@
+{
+  "name": "tradejournal-sync-agent",
+  "version": "1.0.0",
+  "description": "Desktop wrapper for the TradeJournal MT5 sync agent (sync.py) — a native settings UI, tray icon, and process supervision instead of hand-editing a .env file and running a script in a terminal.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "app.tradejournal.syncagent",
+    "productName": "TradeJournal Sync Agent",
+    "files": ["main.js", "preload.js", "renderer/**/*", "assets/**/*"],
+    "extraResources": [
+      { "from": "../sync.py", "to": "sync.py" },
+      { "from": "../requirements.txt", "to": "requirements.txt" }
+    ],
+    "win": { "target": "nsis", "icon": "assets/icon.png" },
+    "mac": { "target": "dmg", "icon": "assets/icon.png" },
+    "linux": { "target": "AppImage", "icon": "assets/icon.png" }
+  }
+}

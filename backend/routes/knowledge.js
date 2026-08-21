@@ -41,7 +41,7 @@ function validateEntryInput(body) {
 router.get('/knowledge-entries', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'The knowledge base requires MongoDB to be connected.' });
+      return res.status(503).json({ error: 'The knowledge base requires the database to be connected.' });
     }
     const query = { user: req.user.userId };
     const search = String(req.query.search || '').trim();
@@ -62,7 +62,7 @@ router.get('/knowledge-entries', auth, ownerOnly, async (req, res) => {
 router.post('/knowledge-entries', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'The knowledge base requires MongoDB to be connected.' });
+      return res.status(503).json({ error: 'The knowledge base requires the database to be connected.' });
     }
     const validationError = validateEntryInput(req.body);
     if (validationError) return res.status(400).json({ error: validationError });

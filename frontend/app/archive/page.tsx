@@ -9,7 +9,7 @@ import {
 const API = '/api';
 
 interface ExportStatus {
-  dbMode: 'mongodb' | 'offline';
+  dbMode: 'cloud' | 'offline';
   tradeCount: number;
   eventCount: number;
   oldestTrade: string | null;
@@ -37,8 +37,8 @@ function fmtBytes(b: number) {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function StatusBadge({ mode }: { mode: 'mongodb' | 'offline' }) {
-  const isOnline = mode === 'mongodb';
+function StatusBadge({ mode }: { mode: 'cloud' | 'offline' }) {
+  const isOnline = mode === 'cloud';
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -48,7 +48,7 @@ function StatusBadge({ mode }: { mode: 'mongodb' | 'offline' }) {
       border: `1px solid ${isOnline ? 'var(--green-border)' : '#f59e0b33'}`,
     }}>
       {isOnline ? <Wifi size={11} /> : <WifiOff size={11} />}
-      {isOnline ? 'MongoDB Connected' : 'Offline (Local Cache)'}
+      {isOnline ? 'Database Connected' : 'Offline (Local Cache)'}
     </span>
   );
 }
@@ -216,7 +216,7 @@ export default function ArchivePage() {
             }}>
               <AlertTriangle size={14} />
               <strong>{status.pendingOfflineScreenshots}</strong>&nbsp;screenshot{status.pendingOfflineScreenshots !== 1 ? 's' : ''}&nbsp;saved
-              locally (offline mode), waiting to sync to Cloudinary when MongoDB reconnects.
+              locally (offline mode), waiting to sync to Cloudinary when the connection is restored.
             </div>
           )}
         </div>
@@ -240,7 +240,7 @@ export default function ArchivePage() {
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
               Your trades are automatically mirrored to a local JSON file on the server disk. This backup
-              is updated on startup and every 24 hours. If MongoDB becomes unavailable, the server uses
+              is updated on startup and every 24 hours. If the database becomes unavailable, the server uses
               this file as a fallback — your data is never lost.
             </p>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--text-secondary)' }}>
@@ -272,9 +272,9 @@ export default function ArchivePage() {
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
-              { label: 'Cloudinary Context Tags', desc: 'Symbol, direction, P&L, prices, dates and more are embedded as tags directly on the Cloudinary image. You can read them from the Cloudinary dashboard without needing MongoDB.' },
+              { label: 'Cloudinary Context Tags', desc: 'Symbol, direction, P&L, prices, dates and more are embedded as tags directly on the Cloudinary image. You can read them from the Cloudinary dashboard without needing database access.' },
               { label: 'Sidecar metadata.json', desc: 'A companion JSON file is uploaded alongside each screenshot. It contains the full trade record so you can reconstruct any trade from the image folder alone.' },
-              { label: 'Offline Screenshots → Auto-Upload', desc: 'If MongoDB is offline when you upload a screenshot, the image is saved to the server disk with a meta.json sidecar. When MongoDB reconnects, it auto-uploads to Cloudinary and cleans up the disk file.' },
+              { label: 'Offline Screenshots → Auto-Upload', desc: 'If the database is offline when you upload a screenshot, the image is saved to the server disk with a meta.json sidecar. Once it reconnects, the image auto-uploads to Cloudinary and the disk file is cleaned up.' },
             ].map(item => (
               <div key={item.label} style={{
                 display: 'flex', gap: 10,
@@ -340,7 +340,7 @@ export default function ArchivePage() {
 
           {status && (
             <p style={{ marginTop: 14, fontSize: 11.5, color: 'var(--text-muted)', textAlign: 'center' }}>
-              Status as of {fmt(status.exportedAt)} · Source: <strong>{status.dbMode === 'mongodb' ? 'MongoDB (live)' : 'Local cache (offline)'}</strong>
+              Status as of {fmt(status.exportedAt)} · Source: <strong>{status.dbMode === 'cloud' ? 'Database (live)' : 'Local cache (offline)'}</strong>
             </p>
           )}
         </div>

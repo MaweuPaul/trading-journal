@@ -61,7 +61,7 @@ router.get('/ctrader/auth-url', auth, ownerOnly, (req, res) => {
 router.post('/ctrader/exchange', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB must be connected to store the cTrader connection.' });
+      return res.status(503).json({ error: 'The database must be connected to store the cTrader connection.' });
     }
     const code = String(req.body.code || '').trim();
     if (!code) return res.status(400).json({ error: 'Missing authorization code.' });
@@ -112,7 +112,7 @@ router.post('/ctrader/exchange', auth, ownerOnly, async (req, res) => {
 router.post('/ctrader/select-accounts', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB must be connected.' });
+      return res.status(503).json({ error: 'The database must be connected.' });
     }
     const requestedIds = Array.isArray(req.body.ctidTraderAccountIds)
       ? [...new Set(req.body.ctidTraderAccountIds.map(String).filter(Boolean))]
@@ -165,7 +165,7 @@ router.post('/ctrader/select-accounts', auth, ownerOnly, async (req, res) => {
 router.delete('/ctrader/connection/:ctidTraderAccountId', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB must be connected.' });
+      return res.status(503).json({ error: 'The database must be connected.' });
     }
     await CTraderConnection.deleteOne({ user: req.user.userId, ctidTraderAccountId: req.params.ctidTraderAccountId });
     res.json({ disconnected: true });

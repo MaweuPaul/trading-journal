@@ -40,7 +40,7 @@ function investorToken(account) {
 router.post('/investor/login', investorLoginLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'Investor access requires MongoDB to be connected.' });
+      return res.status(503).json({ error: 'Investor access requires the database to be connected.' });
     }
     const code = String(req.body.code || '').trim();
     const password = String(req.body.password || '');

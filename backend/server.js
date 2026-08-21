@@ -54,6 +54,26 @@ app.use('/api', investorRouter);
 app.use('/api', knowledgeRouter);
 app.use('/api', tradesRouter);
 
+// Desktop Sync Agent installer download — serves the newest built .exe from
+// desktop/dist so the Accounts page can link straight to it.
+app.get('/api/downloads/sync-agent', (req, res) => {
+  const distDir = path.join(__dirname, '..', 'desktop', 'dist');
+  let installerFile;
+  try {
+    installerFile = require('fs')
+      .readdirSync(distDir)
+      .filter(name => name.endsWith('.exe'))
+      .sort()
+      .pop();
+  } catch {
+    installerFile = null;
+  }
+  if (!installerFile) {
+    return res.status(404).json({ error: 'No installer has been built yet. Run "npm run dist" in desktop/.' });
+  }
+  res.download(path.join(distDir, installerFile), installerFile);
+});
+
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

@@ -89,7 +89,7 @@ router.get('/setup-status', async (_req, res) => {
 router.post('/register', credentialLimiter, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB must be connected to create an account.' });
+      return res.status(503).json({ error: 'The database must be connected to create an account.' });
     }
 
     const name = String(req.body.name || '').trim();
@@ -163,7 +163,7 @@ router.post('/login', credentialLimiter, async (req, res) => {
 // trades ever landing in someone else's account.
 router.post('/sync-agent', credentialLimiter, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB is required for sync-agent authentication.' });
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The database is required for sync-agent authentication.' });
     const supplied = req.header('X-Sync-Secret') || req.body.syncSecret || '';
     if (!supplied) return res.status(401).json({ error: 'Invalid sync agent secret.' });
     const owner = await User.findOne({ syncSecretHash: hashSyncSecret(supplied) });
@@ -182,7 +182,7 @@ router.post('/sync-secret/rotate', auth, async (req, res) => {
     if (req.user.role === 'sync_agent' || req.user.role === 'investor') {
       return res.status(403).json({ error: 'Owner session required.' });
     }
-    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'MongoDB must be connected.' });
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The database must be connected.' });
     const syncSecret = randomSyncSecret();
     const user = await User.findByIdAndUpdate(req.user.userId, { syncSecretHash: hashSyncSecret(syncSecret) }, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });

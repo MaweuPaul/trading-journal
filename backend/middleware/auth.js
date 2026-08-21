@@ -21,7 +21,7 @@ module.exports = function (req, res, next) {
     // MongoDB reconnects they must be replaced by a normal owner login token;
     // otherwise every owner-scoped query fails with a Mongoose CastError.
     if (mongoose.connection.readyState === 1 && !mongoose.Types.ObjectId.isValid(String(decoded.userId || ''))) {
-      return res.status(401).json({ error: 'Your offline session expired after MongoDB reconnected. Please sign in again.' });
+      return res.status(401).json({ error: 'Your offline session expired after the database reconnected. Please sign in again.' });
     }
     if (decoded.role === 'sync_agent') {
       const path = req.originalUrl.split('?')[0];

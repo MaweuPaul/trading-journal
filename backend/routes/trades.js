@@ -2360,7 +2360,7 @@ router.post('/trades/:id/screenshots', auth, ownerOnly, async (req, res) => {
         ...offlineTrade,
         screenshots: inMemoryTrades[tradeIdx]?.screenshots || [],
         _offlineScreenshot: true,
-        _message: 'Screenshot saved locally. Will be uploaded to Cloudinary when MongoDB reconnects.',
+        _message: 'Screenshot saved locally. Will be uploaded to Cloudinary once the database reconnects.',
       });
     }
 
@@ -2426,7 +2426,7 @@ router.patch('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (re
     const { caption = '' } = req.body;
 
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'Screenshot captions require MongoDB to be connected.' });
+      return res.status(503).json({ error: 'Screenshot captions require the database to be connected.' });
     }
 
     const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
@@ -2452,7 +2452,7 @@ router.patch('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (re
 router.delete('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'Screenshot deletes require MongoDB to be connected.' });
+      return res.status(503).json({ error: 'Screenshot deletes require the database to be connected.' });
     }
 
     const trade = await Trade.findOne({ _id: req.params.id, user: req.user.userId });
@@ -3229,7 +3229,7 @@ router.get('/export/json', auth, ownerOnly, async (req, res) => {
     const payload = {
       _schemaVersion: 2,
       exportedAt: new Date().toISOString(),
-      source: mongoose.connection.readyState === 1 ? 'mongodb' : 'local_cache',
+      source: mongoose.connection.readyState === 1 ? 'cloud' : 'local_cache',
       tradeCount: trades.length,
       accountEventCount: events.length,
       replayJournalCount: replayJournals.length,
@@ -3371,7 +3371,7 @@ router.get('/export/status', auth, ownerOnly, async (req, res) => {
     let dbMode = 'offline';
 
     if (mongoose.connection.readyState === 1) {
-      dbMode = 'mongodb';
+      dbMode = 'cloud';
       [tradeCount, eventCount] = await Promise.all([
         Trade.countDocuments({ user: req.user.userId }),
         AccountEvent.countDocuments({ user: req.user.userId }),

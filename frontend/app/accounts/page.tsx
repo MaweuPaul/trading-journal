@@ -410,7 +410,7 @@ export default function TradingAccountsPage() {
 
       <section className="account-security-note" aria-label="Credential security">
         <ShieldCheck size={21} />
-        <div><strong>Credentials are encrypted before storage.</strong><span>Login, password and broker server are never returned to this browser. The local MT5 agent receives them through its authenticated connection only. Use your account's investor (read-only) password, not your trading password — this journal never needs to place trades.</span></div>
+        <div><strong>Credentials are stored securely.</strong><span>Login, password and broker server are never returned to this browser. The local MT5 agent receives them through its authenticated connection only. Use your account's investor (read-only) password, not your trading password — this journal never needs to place trades.</span></div>
       </section>
 
       <section className="account-security-note" aria-label="MT5 sync secret" style={{ flexWrap: 'wrap' }}>
@@ -435,13 +435,33 @@ export default function TradingAccountsPage() {
         </div>
       </section>
 
+      <section className="account-security-note" aria-label="Desktop Sync Agent" style={{ flexWrap: 'wrap' }}>
+        <DownloadCloud size={21} />
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <strong>Desktop Sync Agent</strong>
+          <span>A small Windows app that runs <code>sync.py</code> for you — no terminal, no <code>.env</code> file. Install it, paste in your sync secret from above, and click Start.</span>
+          <ol style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+            <li>Download and run the installer below (one click, no prompts).</li>
+            <li>Enter the Backend API URL (defaults to <code>http://localhost:4000/api</code>) and the sync secret from the section above.</li>
+            <li>Click <strong>Install/update dependencies</strong> once, then <strong>Start Sync</strong>.</li>
+          </ol>
+          <a
+            href="/api/downloads/sync-agent"
+            className="btn-ghost"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 10, textDecoration: 'none' }}
+          >
+            <DownloadCloud size={14} /> Download for Windows
+          </a>
+        </div>
+      </section>
+
       {error && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}
       {notice && <div className="account-alert success" aria-live="polite"><CheckCircle2 size={17} />{notice}</div>}
 
       {formOpen && (
         <section className="account-editor" aria-labelledby="account-editor-title">
           <div className="account-editor-head">
-            <div><h2 id="account-editor-title">{editingId ? 'Edit trading account' : 'Add an MT5 account'}</h2><p>{editingId ? 'Leave credential fields empty to keep the encrypted values already stored.' : 'Use the exact login and server shown inside your broker terminal.'}</p></div>
+            <div><h2 id="account-editor-title">{editingId ? 'Edit trading account' : 'Add an MT5 account'}</h2><p>{editingId ? 'Leave credential fields empty to keep the values already stored securely.' : 'Use the exact login and server shown inside your broker terminal.'}</p></div>
             <button className="btn-ghost" type="button" onClick={() => setFormOpen(false)}>Cancel</button>
           </div>
           <form onSubmit={saveAccount}>
@@ -463,7 +483,7 @@ export default function TradingAccountsPage() {
             </div>
             <button className="account-advanced-toggle" type="button" onClick={() => setAdvancedOpen(value => !value)} aria-expanded={advancedOpen}><ChevronDown size={16} className={advancedOpen ? 'open' : ''} /> Advanced symbol mapping</button>
             {advancedOpen && <label className="account-alias-field"><span>Symbol aliases</span><textarea rows={3} value={form.symbolAliases} onChange={event => setForm({ ...form, symbolAliases: event.target.value })} placeholder="XAUUSD:XAUUSDm, USTEC:USTECm" /><small>Optional comma-separated journal-symbol:broker-symbol pairs.</small></label>}
-            <div className="account-form-actions"><button type="button" className="btn-ghost" onClick={() => setFormOpen(false)}>Cancel</button><button className="btn-primary" disabled={saving}>{saving ? <Loader2 size={17} className="spin" /> : <LockKeyhole size={17} />}{saving ? 'Encrypting…' : editingId ? 'Save changes' : 'Encrypt & save account'}</button></div>
+            <div className="account-form-actions"><button type="button" className="btn-ghost" onClick={() => setFormOpen(false)}>Cancel</button><button className="btn-primary" disabled={saving}>{saving ? <Loader2 size={17} className="spin" /> : <LockKeyhole size={17} />}{saving ? 'Saving…' : editingId ? 'Save changes' : 'Save account securely'}</button></div>
           </form>
         </section>
       )}

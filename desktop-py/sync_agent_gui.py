@@ -12,8 +12,10 @@ import queue
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
+import urllib.request
 from tkinter import ttk
 import webbrowser
 
@@ -59,6 +61,22 @@ REQUIRED_MODULES = ["MetaTrader5", "requests", "dotenv", "numpy"]
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+# Official python.org installer -- direct link from python.org's own
+# download server, the same file a user would get manually from
+# https://www.python.org/downloads/.
+PYTHON_VERSION = "3.12.10"
+PYTHON_INSTALLER_URL = (
+    f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-amd64.exe"
+)
+# Where python.org's installer puts a per-user install (InstallAllUsers=0) --
+# used to add it to this process's PATH immediately after installing, since
+# a freshly-installed program isn't visible to already-running processes
+# until Windows broadcasts the PATH change (which new processes pick up,
+# but this one won't without a restart otherwise).
+PYTHON_INSTALL_DIR = os.path.join(
+    os.getenv("LOCALAPPDATA", ""), "Programs", "Python", f"Python{PYTHON_VERSION.split('.')[0]}{PYTHON_VERSION.split('.')[1]}"
+)
+
 
 def load_config():
     try:
@@ -85,6 +103,41 @@ def resolve_python():
         except Exception:
             continue
     return None
+
+
+def download_and_install_python(log_fn):
+    """Downloads the official python.org installer and runs it silently
+    for the current user only (no admin prompt, no dialogs). Returns True
+    on success."""
+    try:
+        log_fn(f"Downloading Python {PYTHON_VERSION} from python.org...")
+        installer_path = os.path.join(tempfile.gettempdir(), f"python-{PYTHON_VERSION}-amd64.exe")
+        urllib.request.urlretrieve(PYTHON_INSTALLER_URL, installer_path)
+
+        log_fn("Installing Python (this takes a minute, no prompts will appear)...")
+        result = subprocess.run(
+            [
+                installer_path,
+                "/quiet",
+                "InstallAllUsers=0",
+                "PrependPath=1",
+                "Include_launcher=0",
+            ],
+            timeout=300,
+        )
+        if result.returncode != 0:
+            log_fn(f"Python installer exited with code {result.returncode}.")
+            return False
+
+        # Make the freshly-installed Python usable immediately in this
+        # already-running process, without waiting for a restart.
+        scripts_dir = os.path.join(PYTHON_INSTALL_DIR, "Scripts")
+        os.environ["PATH"] = PYTHON_INSTALL_DIR + os.pathsep + scripts_dir + os.pathsep + os.environ.get("PATH", "")
+        log_fn("Python installed.")
+        return True
+    except Exception as exc:
+        log_fn(f"Error installing Python: {exc}")
+        return False
 
 
 class SyncAgentApp:
@@ -173,9 +226,21 @@ class SyncAgentApp:
         # -- Agent card -------------------------------------------------------
         agent = ttk.LabelFrame(main, text="Agent", padding=12)
         agent.pack(fill="x", pady=(0, 12))
+
+        ttk.Label(
+            agent,
+            text="Before you start: MetaTrader 5 must be installed and open on this computer, logged into "
+                 "the account you added on the Accounts page.",
+            foreground="#6b6b6b", wraplength=560, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        python_row = ttk.Frame(agent)
+        python_row.pack(fill="x", pady=(0, 8))
         self.python_status_var = tk.StringVar(value="Checking for Python…")
-        self.python_status_label = ttk.Label(agent, textvariable=self.python_status_var)
-        self.python_status_label.pack(anchor="w", pady=(0, 8))
+        self.python_status_label = ttk.Label(python_row, textvariable=self.python_status_var)
+        self.python_status_label.pack(side="left")
+        self.install_python_btn = ttk.Button(python_row, text="Install Python", command=self._install_python)
+        # only shown once we know Python is actually missing
 
         agent_actions = ttk.Frame(agent)
         agent_actions.pack(anchor="w")
@@ -266,10 +331,28 @@ class SyncAgentApp:
                 if found:
                     self.python_status_var.set(f"Python detected ({found}).")
                     self.python_status_label.config(foreground="#2e7d32")
+                    self.install_python_btn.pack_forget()
                 else:
-                    self.python_status_var.set("Python was not found. Install Python 3 from python.org, then reopen this app.")
+                    self.python_status_var.set("Python was not found — required to run the sync.")
                     self.python_status_label.config(foreground="#c0392b")
+                    self.install_python_btn.pack(side="left", padx=(10, 0))
             self.root.after(0, update)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _install_python(self):
+        self.install_python_btn.config(state="disabled")
+        self.python_status_var.set("Installing Python…")
+        self._append_log("--- Installing Python ---")
+
+        def worker():
+            ok = download_and_install_python(self._append_log)
+            self.root.after(0, lambda: self.install_python_btn.config(state="normal"))
+            if ok:
+                self._check_python()
+            else:
+                self.root.after(0, lambda: self.python_status_var.set(
+                    "Python install failed — try downloading it yourself from python.org."))
+
         threading.Thread(target=worker, daemon=True).start()
 
     # ------------------------------------------------------------- deps --

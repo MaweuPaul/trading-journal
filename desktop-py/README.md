@@ -11,10 +11,17 @@ backend and is only ever decrypted for `sync.py` itself to use.
 
 ## Prerequisites
 
+- **MetaTrader 5** installed and **open** (logged into the account added on
+  the Accounts page) whenever Sync is started — `sync.py` attaches to an
+  already-running terminal via `mt5.initialize()`, it doesn't launch one.
 - **Python 3** installed and on `PATH` (this app looks for `python` then
   `python3`) to actually run `sync.py` and install its requirements —
   separate from whatever Python built/runs this GUI itself, since
   `sync.py`'s own dependencies (like `MetaTrader5`) aren't bundled here.
+  If Python isn't found, the app offers a one-click "Install Python" button
+  that downloads the official python.org installer and runs it silently
+  for the current user (see `download_and_install_python()` in
+  `sync_agent_gui.py`) — no manual download required.
 
 ## Development
 

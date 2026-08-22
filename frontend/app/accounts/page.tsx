@@ -410,14 +410,14 @@ export default function TradingAccountsPage() {
 
       <section className="account-security-note" aria-label="Credential security">
         <ShieldCheck size={21} />
-        <div><strong>Credentials are stored securely.</strong><span>Login, password and broker server are never returned to this browser. The local MT5 agent receives them through its authenticated connection only. Use your account's investor (read-only) password, not your trading password — this journal never needs to place trades.</span></div>
+        <div><strong>Your login details are stored securely.</strong><span>They're never shown again once saved. Use your account's investor (read-only) password, not your trading password — this journal only ever reads your history, it can never place trades or move money.</span></div>
       </section>
 
       <section className="account-security-note" aria-label="MT5 sync secret" style={{ flexWrap: 'wrap' }}>
         <TerminalSquare size={21} />
         <div style={{ flex: 1, minWidth: 220 }}>
-          <strong>Your personal MT5 sync secret.</strong>
-          <span>This is your own installation's key for the local <code>sync.py</code> worker — it only ever syncs trades into your account, never anyone else's. Copy it into that machine's <code>.env</code> as <code>SYNC_SECRET</code>.</span>
+          <strong>Your personal sync key.</strong>
+          <span>Paste this into the Desktop Sync App below to connect it to your account — it only ever syncs trades into your account, never anyone else's.</span>
           {syncSecretError && <div className="account-alert error" role="alert" style={{ marginTop: 8 }}><AlertCircle size={14} />{syncSecretError}</div>}
           {syncSecretReveal ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
@@ -438,12 +438,12 @@ export default function TradingAccountsPage() {
       <section className="account-security-note" aria-label="Desktop Sync Agent" style={{ flexWrap: 'wrap' }}>
         <DownloadCloud size={21} />
         <div style={{ flex: 1, minWidth: 220 }}>
-          <strong>Desktop Sync Agent</strong>
-          <span>A small Windows app that runs <code>sync.py</code> for you — no terminal, no <code>.env</code> file. Install it, paste in your sync secret from above, and click Start.</span>
+          <strong>Desktop Sync App</strong>
+          <span>A simple Windows app that keeps your trades syncing automatically in the background — no technical setup required.</span>
           <ol style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             <li>Download and run the installer below (one click, no prompts).</li>
-            <li>Enter the Backend API URL (defaults to <code>http://localhost:4000/api</code>) and the sync secret from the section above.</li>
-            <li>Click <strong>Install/update dependencies</strong> once, then <strong>Start Sync</strong>.</li>
+            <li>Paste in your sync key from above.</li>
+            <li>Click <strong>Start Sync</strong>.</li>
           </ol>
           <a
             href="/api/downloads/sync-agent"

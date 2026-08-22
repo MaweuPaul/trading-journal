@@ -55,9 +55,10 @@ app.use('/api', knowledgeRouter);
 app.use('/api', tradesRouter);
 
 // Desktop Sync Agent installer download — serves the newest built .exe from
-// desktop-py/dist so the Accounts page can link straight to it.
+// desktop-py/release, which (unlike the git-ignored dist/build folders) is
+// committed to the repo so it deploys along with the rest of the backend.
 app.get('/api/downloads/sync-agent', (req, res) => {
-  const distDir = path.join(__dirname, '..', 'desktop-py', 'dist');
+  const distDir = path.join(__dirname, '..', 'desktop-py', 'release');
   let installerFile;
   try {
     installerFile = require('fs')

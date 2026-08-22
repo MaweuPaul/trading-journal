@@ -14,6 +14,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ICON_PNG = os.path.join(HERE, "assets", "icon.png")
 ICON_ICO = os.path.join(HERE, "assets", "icon.ico")
+# Not named "dist" -- that's git-ignored repo-wide as generic build output.
+# This folder is committed on purpose so the built .exe rides along on
+# git-based deploys (e.g. Render) straight to the production server.
+RELEASE_DIR = os.path.join(HERE, "release")
 
 
 def ensure_ico():
@@ -37,6 +41,7 @@ def main():
         "--windowed",
         "--name", "TradeJournal Sync Agent",
         "--icon", ICON_ICO,
+        "--distpath", RELEASE_DIR,
         "--add-data", f"{sync_py}{os.pathsep}.",
         "--add-data", f"{requirements_txt}{os.pathsep}.",
         "--add-data", f"{os.path.join(HERE, 'assets')}{os.pathsep}assets",

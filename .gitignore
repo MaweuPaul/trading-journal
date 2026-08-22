@@ -43,6 +43,7 @@ build/
 .venv/
 venv/
 env/
+*.spec
 
 # ── OS & Editor junk ─────────────────────────────────────────────────
 .DS_Store

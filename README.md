@@ -216,19 +216,19 @@ Use `python sync.py --once` for one sync cycle. A full resync can also be reques
 
 ### Desktop Sync Agent (optional GUI for MT5 Sync)
 
-Instead of running `sync.py` from a terminal, install the native Windows app:
+Instead of running `sync.py` from a terminal, build the native Windows app:
 
 ```bash
-cd desktop
-npm install
-npm run dist
+cd desktop-py
+pip install -r requirements.txt
+python build.py
 ```
 
-Produces `desktop/dist/TradeJournal Sync Agent Setup <version>.exe` — a
-one-click NSIS installer with a settings window, tray icon, and process
-supervision around `sync.py`. Requires Python 3 on `PATH` (the app itself
-doesn't bundle a Python runtime — install it from python.org if `python
---version` doesn't resolve).
+Produces `desktop-py/dist/TradeJournal Sync Agent.exe` — a single-file
+~30MB app (a native Tkinter GUI, not Electron) with a settings window, tray
+icon, and process supervision around `sync.py`. Requires Python 3 on `PATH`
+(the app itself doesn't bundle a Python runtime for running `sync.py` —
+install it from python.org if `python --version` doesn't resolve).
 
 Run the installer, make sure the backend is already running and reachable,
 then on first launch fill in:
@@ -239,7 +239,7 @@ then on first launch fill in:
 - **Sync secret** — from the **Accounts** page in the journal.
 
 Then **Install/update dependencies** once, then **Start Sync**. See
-[`desktop/README.md`](desktop/README.md) for the full walkthrough.
+[`desktop-py/README.md`](desktop-py/README.md) for the full walkthrough.
 
 ## Project Structure
 

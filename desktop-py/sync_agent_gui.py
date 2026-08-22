@@ -40,12 +40,22 @@ ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.png")
 
 CONFIG_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "TradeJournalSyncAgent")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+
+# Fixed on purpose -- this app only ever talks to the one production
+# TradeJournal backend, so there's no "Backend API URL" field for a user to
+# fill in or mistype.
+PRODUCTION_API_BASE = "https://trading-journal-x5fe.onrender.com/api"
+
 DEFAULT_CONFIG = {
-    "apiBase": "http://localhost:4000/api",
+    "apiBase": PRODUCTION_API_BASE,
     "syncSecret": "",
     "syncInterval": 60,
     "requireRealAccount": False,
 }
+
+# Import names (not pip package names) sync.py needs -- used to skip the
+# install step once dependencies are already present.
+REQUIRED_MODULES = ["MetaTrader5", "requests", "dotenv", "numpy"]
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -108,7 +118,7 @@ class SyncAgentApp:
         title_box = ttk.Frame(header)
         title_box.pack(side="left")
         ttk.Label(title_box, text=APP_NAME, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-        ttk.Label(title_box, text="Runs sync.py in the background — no terminal, no manual .env editing.",
+        ttk.Label(title_box, text="Keeps your trades syncing automatically in the background.",
                   foreground="#6b6b6b").pack(anchor="w")
         self.status_var = tk.StringVar(value="Stopped")
         self.status_label = ttk.Label(header, textvariable=self.status_var, font=("Segoe UI", 9, "bold"))
@@ -121,20 +131,16 @@ class SyncAgentApp:
         conn = ttk.LabelFrame(main, text="Connection", padding=12)
         conn.pack(fill="x", pady=(0, 12))
 
-        ttk.Label(conn, text="Backend API URL").grid(row=0, column=0, sticky="w", pady=(0, 2))
-        self.api_base_var = tk.StringVar()
-        ttk.Entry(conn, textvariable=self.api_base_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-
         secret_row = ttk.Frame(conn)
-        secret_row.grid(row=2, column=0, columnspan=2, sticky="ew")
-        ttk.Label(secret_row, text="Your sync secret").pack(side="left")
+        secret_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(secret_row, text="Your sync key").pack(side="left")
         help_link = ttk.Label(secret_row, text=" what's this?", foreground="#3366cc", cursor="hand2")
         help_link.pack(side="left")
         help_link.bind("<Button-1>", self._toggle_help)
 
         self.sync_secret_var = tk.StringVar()
         secret_entry_row = ttk.Frame(conn)
-        secret_entry_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(2, 8))
+        secret_entry_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 8))
         secret_entry_row.columnconfigure(0, weight=1)
         self.secret_entry = ttk.Entry(secret_entry_row, textvariable=self.sync_secret_var, show="•")
         self.secret_entry.grid(row=0, column=0, sticky="ew")
@@ -142,24 +148,24 @@ class SyncAgentApp:
 
         self.help_text = tk.Message(
             conn, width=560, foreground="#6b6b6b",
-            text=("Generate this on the TradeJournal Accounts page under \"Your personal MT5 sync secret.\" "
-                  "It authenticates this agent as you specifically — it's never your MT5 password, and "
-                  "rotating it there instantly invalidates the old one."),
+            text=("Find this on the TradeJournal Accounts page under \"Your personal sync key.\" It connects "
+                  "this app to your account only — it's never your MT5 password, and generating a new one "
+                  "there instantly disables the old one."),
         )
         # hidden until the user clicks "what's this?"
 
-        ttk.Label(conn, text="Sync interval (seconds)").grid(row=5, column=0, sticky="w", pady=(0, 2))
+        ttk.Label(conn, text="Sync interval (seconds)").grid(row=3, column=0, sticky="w", pady=(0, 2))
         self.sync_interval_var = tk.StringVar(value="60")
-        ttk.Spinbox(conn, from_=10, to=86400, textvariable=self.sync_interval_var, width=10).grid(row=6, column=0, sticky="w", pady=(0, 8))
+        ttk.Spinbox(conn, from_=10, to=86400, textvariable=self.sync_interval_var, width=10).grid(row=4, column=0, sticky="w", pady=(0, 8))
 
         self.require_real_account_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(conn, text="Reject demo accounts (only sync live accounts)",
-                        variable=self.require_real_account_var).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
+                        variable=self.require_real_account_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         conn.columnconfigure(0, weight=1)
 
         actions_row = ttk.Frame(conn)
-        actions_row.grid(row=8, column=0, columnspan=2, sticky="w")
+        actions_row.grid(row=6, column=0, columnspan=2, sticky="w")
         ttk.Button(actions_row, text="Save", command=self._save_config).pack(side="left")
         self.save_state_var = tk.StringVar()
         ttk.Label(actions_row, textvariable=self.save_state_var, foreground="#2e7d32").pack(side="left", padx=(8, 0))
@@ -194,7 +200,7 @@ class SyncAgentApp:
         if self.help_text.winfo_manager():
             self.help_text.grid_forget()
         else:
-            self.help_text.grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 8))
+            self.help_text.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 8))
 
     def _toggle_secret_visibility(self):
         self.secret_entry.config(show="" if self.secret_entry.cget("show") else "•")
@@ -202,7 +208,6 @@ class SyncAgentApp:
     # ------------------------------------------------------------- config --
     def _load_config_into_form(self):
         config = load_config()
-        self.api_base_var.set(config.get("apiBase") or DEFAULT_CONFIG["apiBase"])
         self.sync_secret_var.set(config.get("syncSecret") or "")
         self.sync_interval_var.set(str(config.get("syncInterval") or 60))
         self.require_real_account_var.set(bool(config.get("requireRealAccount")))
@@ -213,7 +218,7 @@ class SyncAgentApp:
         except ValueError:
             interval = 60
         return {
-            "apiBase": self.api_base_var.get().strip() or DEFAULT_CONFIG["apiBase"],
+            "apiBase": PRODUCTION_API_BASE,
             "syncSecret": self.sync_secret_var.get().strip(),
             "syncInterval": interval,
             "requireRealAccount": bool(self.require_real_account_var.get()),
@@ -319,11 +324,45 @@ class SyncAgentApp:
             self._append_log("Error: Python was not found on this machine. Install Python 3 from python.org, then try again.")
             return
 
+        if self._dependencies_missing(python):
+            self._append_log("Setting things up for the first time — this only happens once...")
+            if not self._run_pip_install(python):
+                self._append_log("Error: setup failed. Try again, or check your internet connection.")
+                return
+
         self.sync_stopped_by_user = False
         self.restart_attempts = 0
         self.root.after(0, lambda: self._set_status("starting"))
         self._append_log(f"Starting sync.py with {python}...")
         self._spawn_sync(python, config)
+
+    def _dependencies_missing(self, python):
+        check_code = "import " + ", ".join(REQUIRED_MODULES)
+        try:
+            result = subprocess.run(
+                [python, "-c", check_code],
+                capture_output=True, timeout=15, creationflags=NO_WINDOW,
+            )
+            return result.returncode != 0
+        except Exception:
+            return True
+
+    def _run_pip_install(self, python):
+        try:
+            proc = subprocess.Popen(
+                [python, "-m", "pip", "install", "-r", REQUIREMENTS_PATH],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, creationflags=NO_WINDOW,
+            )
+            for raw_line in proc.stdout:
+                line = raw_line.rstrip()
+                if line:
+                    self._append_log(line)
+            proc.wait()
+            return proc.returncode == 0
+        except Exception as exc:
+            self._append_log(f"Error: {exc}")
+            return False
 
     def _spawn_sync(self, python, config):
         env = {

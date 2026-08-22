@@ -441,7 +441,7 @@ export default function TradingAccountsPage() {
           <strong>Desktop Sync App</strong>
           <span>A simple Windows app that keeps your trades syncing automatically in the background — no technical setup required.</span>
           <ol style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            <li>Download and run the installer below (one click, no prompts).</li>
+            <li>Download the file below, extract it, and open the app inside.</li>
             <li>Paste in your sync key from above.</li>
             <li>Click <strong>Start Sync</strong>.</li>
           </ol>

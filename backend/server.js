@@ -54,16 +54,19 @@ app.use('/api', investorRouter);
 app.use('/api', knowledgeRouter);
 app.use('/api', tradesRouter);
 
-// Desktop Sync Agent installer download — serves the newest built .exe from
+// Desktop Sync Agent download — serves the newest built .zip from
 // desktop-py/release, which (unlike the git-ignored dist/build folders) is
 // committed to the repo so it deploys along with the rest of the backend.
+// Shipped as a --onedir build zipped up, not --onefile, since the onefile
+// self-extracting stub is a common false-positive trigger for antivirus/
+// browser download scanners on small unsigned Python apps.
 app.get('/api/downloads/sync-agent', (req, res) => {
   const distDir = path.join(__dirname, '..', 'desktop-py', 'release');
   let installerFile;
   try {
     installerFile = require('fs')
       .readdirSync(distDir)
-      .filter(name => name.endsWith('.exe'))
+      .filter(name => name.endsWith('.zip'))
       .sort()
       .pop();
   } catch {

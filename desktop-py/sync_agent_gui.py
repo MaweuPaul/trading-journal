@@ -39,6 +39,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYNC_PY_PATH = os.path.join(BASE_DIR, "sync.py") if IS_FROZEN else os.path.join(SCRIPT_DIR, "..", "sync.py")
 REQUIREMENTS_PATH = os.path.join(BASE_DIR, "requirements.txt") if IS_FROZEN else os.path.join(SCRIPT_DIR, "..", "requirements.txt")
 ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.png")
+VERSION_PATH = os.path.join(BASE_DIR, "VERSION") if IS_FROZEN else os.path.join(SCRIPT_DIR, "VERSION")
+
+try:
+    with open(VERSION_PATH, "r", encoding="utf-8") as _f:
+        APP_VERSION = _f.read().strip()
+except Exception:
+    APP_VERSION = "0.0.0"
 
 CONFIG_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "TradeJournalSyncAgent")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
@@ -140,6 +147,31 @@ def download_and_install_python(log_fn):
         return False
 
 
+def _version_tuple(version_str):
+    parts = []
+    for piece in version_str.strip().split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def check_for_update():
+    """Returns the latest version string if it's newer than this build,
+    else None. Never raises -- a failed check just means no banner."""
+    try:
+        url = f"{PRODUCTION_API_BASE}/downloads/sync-agent-version"
+        with urllib.request.urlopen(url, timeout=8) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        latest = data.get("version", "").strip()
+        if latest and _version_tuple(latest) > _version_tuple(APP_VERSION):
+            return latest
+    except Exception:
+        pass
+    return None
+
+
 class SyncAgentApp:
     def __init__(self, root):
         self.root = root
@@ -156,6 +188,7 @@ class SyncAgentApp:
         self._load_config_into_form()
         self._check_python()
         self._poll_log_queue()
+        self._check_for_update()
 
         if TRAY_AVAILABLE:
             threading.Thread(target=self._start_tray, daemon=True).start()
@@ -168,6 +201,7 @@ class SyncAgentApp:
 
         header = ttk.Frame(self.root, padding=(16, 14))
         header.pack(fill="x")
+        self.header = header
         title_box = ttk.Frame(header)
         title_box.pack(side="left")
         ttk.Label(title_box, text=APP_NAME, font=("Segoe UI", 13, "bold")).pack(anchor="w")
@@ -176,6 +210,12 @@ class SyncAgentApp:
         self.status_var = tk.StringVar(value="Stopped")
         self.status_label = ttk.Label(header, textvariable=self.status_var, font=("Segoe UI", 9, "bold"))
         self.status_label.pack(side="right", anchor="ne")
+
+        self.update_banner = ttk.Frame(self.root, padding=(16, 6))
+        self.update_banner_var = tk.StringVar()
+        ttk.Label(self.update_banner, textvariable=self.update_banner_var, foreground="#a8731e").pack(side="left")
+        ttk.Button(self.update_banner, text="Get update", command=self._open_update_download).pack(side="left", padx=(10, 0))
+        # only shown once a newer version is actually found
 
         main = ttk.Frame(self.root, padding=(16, 0, 16, 16))
         main.pack(fill="both", expand=True)
@@ -322,6 +362,21 @@ class SyncAgentApp:
         if self.tray_icon:
             self.tray_icon.title = f"{APP_NAME} — {status}"
             self._rebuild_tray_menu()
+
+    # ------------------------------------------------------------ update --
+    def _check_for_update(self):
+        def worker():
+            latest = check_for_update()
+            if latest:
+                self.root.after(0, lambda: self._show_update_banner(latest))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update_banner(self, latest_version):
+        self.update_banner_var.set(f"Update available (v{latest_version} — you have v{APP_VERSION})")
+        self.update_banner.pack(fill="x", after=self.header)
+
+    def _open_update_download(self):
+        webbrowser.open(f"{PRODUCTION_API_BASE}/downloads/sync-agent")
 
     # ------------------------------------------------------------ python --
     def _check_python(self):

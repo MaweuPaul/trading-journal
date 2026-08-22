@@ -51,6 +51,7 @@ def main():
         "--distpath", BUILD_DIST_DIR,
         "--add-data", f"{sync_py}{os.pathsep}.",
         "--add-data", f"{requirements_txt}{os.pathsep}.",
+        "--add-data", f"{os.path.join(HERE, 'VERSION')}{os.pathsep}.",
         "--add-data", f"{os.path.join(HERE, 'assets')}{os.pathsep}assets",
         os.path.join(HERE, "sync_agent_gui.py"),
     ]

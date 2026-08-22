@@ -78,6 +78,19 @@ app.get('/api/downloads/sync-agent', (req, res) => {
   res.download(path.join(distDir, installerFile), installerFile);
 });
 
+// Lets the installed Sync Agent check whether a newer build exists, so it
+// can show an "Update available" banner instead of silently going stale.
+app.get('/api/downloads/sync-agent-version', (req, res) => {
+  try {
+    const version = require('fs')
+      .readFileSync(path.join(__dirname, '..', 'desktop-py', 'VERSION'), 'utf8')
+      .trim();
+    res.json({ version });
+  } catch {
+    res.status(404).json({ error: 'No version file found.' });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

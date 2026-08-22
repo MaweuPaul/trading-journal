@@ -38,11 +38,25 @@ cd desktop-py
 python build.py
 ```
 
-Produces `dist/TradeJournal Sync Agent.exe` — a single-file PyInstaller
-build. It bundles `../sync.py` and `../requirements.txt` alongside the exe
-(see `build.py`'s `--add-data` flags) so the installed app is self-contained
-apart from the Python 3 requirement above. `assets/icon.ico` is generated
-automatically from `assets/icon.png` on first build.
+Produces `release/TradeJournal Sync Agent.zip` — a `--onedir` PyInstaller
+build zipped up (not `--onefile`; the one-file self-extracting stub is a
+common false-positive trigger for antivirus/browser download scanners on
+small unsigned Python apps). It bundles `../sync.py`, `../requirements.txt`,
+and `VERSION` (see `build.py`'s `--add-data` flags) so the installed app is
+self-contained apart from the Python 3 requirement above. `assets/icon.ico`
+is generated automatically from `assets/icon.png` on first build.
+
+`release/` is committed on purpose (unlike the git-ignored `dist/`/`build/`
+scratch folders) so the built zip deploys along with the rest of the
+backend on Render's git-based deploys, and `/api/downloads/sync-agent`
+can serve it straight from disk.
+
+### Releasing a new version
+
+Bump the version in `VERSION` before rebuilding — the running app checks
+`/api/downloads/sync-agent-version` (which just reads this file) on
+startup and shows an "Update available" banner if the deployed version is
+newer than the one it was built with.
 
 ## What it stores locally
 

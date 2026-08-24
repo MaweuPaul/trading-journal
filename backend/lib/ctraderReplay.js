@@ -157,7 +157,7 @@ async function getAuthenticatedClient({ accessToken, ctidTraderAccountId, isLive
 // entry here — 'EURUSD' is universal enough that direct/stripped matching
 // already handles broker suffixes like 'EURUSDm' or 'EURUSD.a'.
 const SYMBOL_ALIASES = {
-  USTEC: ['NASDAQ100', 'NASDAQCOMP', 'US100', 'USTECH', 'NAS100', 'NDX100'],
+  USTEC: ['NASDAQ100', 'NASDAQCOMP', 'US100', 'USTECH', 'NAS100', 'NDX100', 'NASDAQ', 'NDX', 'USTECHCASH', 'USTECH100', 'TECH100'],
   NAS100: ['NASDAQ100', 'USTEC', 'US100', 'NASDAQCOMP'],
   US100: ['NASDAQ100', 'USTEC', 'NAS100'],
   US30: ['DOW30', 'WALLSTREET30', 'DJ30', 'US30CASH', 'DOWJONES30'],
@@ -238,6 +238,16 @@ async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
     const matched = tryMatch(alias);
     if (matched != null) return matched;
   }
+
+  // Every alias we know of has already missed for this broker -- log the
+  // account's actual symbol names so whoever's debugging this can find the
+  // real spelling and add it to SYMBOL_ALIASES, instead of guessing blind.
+  // (This is the same class of bug fixed twice before for USTEC/DOW/crypto
+  // names -- each broker spells index/commodity CFDs differently.)
+  console.warn(
+    `[ctraderReplay] No symbol match for "${symbolName}" (tried: ${[symbolName, ...(SYMBOL_ALIASES[aliasKey] || [])].join(', ')}). ` +
+    `This account's actual symbols: ${[...cache.bySymbolName.keys()].sort().join(', ')}`
+  );
   return null;
 }
 

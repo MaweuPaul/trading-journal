@@ -19,6 +19,7 @@ backend/backups/
 
 # ── Full mongodump backups (contain everything, never commit) ───────
 backend/db-backups/
+backend/db-backups/*.zip
 
 # ── Screenshot uploads (served via Cloudinary, not stored in repo) ──
 backend/public/screenshots/

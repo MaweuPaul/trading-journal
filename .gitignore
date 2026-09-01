@@ -17,6 +17,9 @@ backend/local_replay_journals.json
 # ── Pre-delete maintenance backups (contain real trade data) ────────
 backend/backups/
 
+# ── Full mongodump backups (contain everything, never commit) ───────
+backend/db-backups/
+
 # ── Screenshot uploads (served via Cloudinary, not stored in repo) ──
 backend/public/screenshots/
 

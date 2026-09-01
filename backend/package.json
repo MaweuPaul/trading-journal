@@ -8,7 +8,8 @@
     "dev": "node --watch server.js",
     "test": "node --test",
     "migrate:trading-account": "node scripts/migrate-env-trading-account.js",
-    "seed:test-playbook": "node scripts/seed-test-playbook.js"
+    "seed:test-playbook": "node scripts/seed-test-playbook.js",
+    "backup": "node scripts/backup-database.js"
   },
   "keywords": [],
   "author": "",

@@ -2125,7 +2125,7 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
       analysisGrade, executionGrade,
       plannedRR, exitReason, manuallyIntervened,
       confidenceRating, accountType,
-      isReEntry, parentTradeId, tradeGroup,
+      isReEntry, parentTradeId, tradeGroup, reEntryReason,
       primarySetup, setupConfirmations,
       executionChecklist,
       playbookId, playbookVersionId, playbookResponses,
@@ -2196,6 +2196,7 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
       } else if (tradeGroup !== undefined) {
         t.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
       }
+      if (reEntryReason !== undefined) t.reEntryReason = String(reEntryReason || '').slice(0, 500);
       if (primarySetup !== undefined) t.primarySetup = primarySetup;
       if (setupConfirmations !== undefined) t.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
       if (executionChecklist !== undefined) t.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];
@@ -2240,6 +2241,7 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
     } else if (tradeGroup !== undefined) {
       update.tradeGroup = String(tradeGroup || '').trim().slice(0, 60);
     }
+    if (reEntryReason !== undefined) update.reEntryReason = String(reEntryReason || '').slice(0, 500);
     if (primarySetup !== undefined) update.primarySetup = primarySetup;
     if (setupConfirmations !== undefined) update.setupConfirmations = Array.isArray(setupConfirmations) ? setupConfirmations : [];
     if (executionChecklist !== undefined) update.executionChecklist = Array.isArray(executionChecklist) ? executionChecklist : [];

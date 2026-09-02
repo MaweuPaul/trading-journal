@@ -5,7 +5,7 @@ import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
 import {
   SlidersHorizontal, ChevronLeft, ChevronRight, List,
-  X, Smile, Award, Tag, CheckSquare, Save, Info,
+  X, Award, CheckSquare, Save, Info,
   Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
@@ -95,20 +95,12 @@ interface Trade {
   positionId?: string;
   tradeGroup?: string;
   parentTradeId?: string;
+  reEntryReason?: string;
   playbookId?: string;
   playbookVersionId?: string;
   playbookSnapshot?: PlaybookSnapshot | null;
   playbookResponses?: Record<string, unknown>;
 }
-
-const EMOTIONS = [
-  { name: 'Calm', emoji: '😊' },
-  { name: 'Disciplined', emoji: '🧠' },
-  { name: 'Anxious', emoji: '😰' },
-  { name: 'Greedy', emoji: '🤑' },
-  { name: 'Fearful', emoji: '😨' },
-  { name: 'FOMO', emoji: '💥' },
-];
 
 const GRADES = ['A', 'B', 'C', 'D', 'F'];
 
@@ -303,12 +295,10 @@ function TradesPageContent() {
   const [draftEmotion, setDraftEmotion] = useState('');
   const [draftGrade, setDraftGrade] = useState('');
   const [draftTags, setDraftTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
   const [draftChecklist, setDraftChecklist] = useState<ChecklistItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [screenshotCaption, setScreenshotCaption] = useState('');
   const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
-  const [previewScreenshot, setPreviewScreenshot] = useState<TradeScreenshot | null>(null);
   // Edge Coach draft state
   const [draftAnalysisGrade, setDraftAnalysisGrade] = useState('');
   const [draftExecutionGrade, setDraftExecutionGrade] = useState('');
@@ -323,6 +313,7 @@ function TradesPageContent() {
   const [draftIsReEntry, setDraftIsReEntry] = useState(false);
   const [draftTradeGroup, setDraftTradeGroup] = useState('');
   const [draftParentTradeId, setDraftParentTradeId] = useState('');
+  const [draftReEntryReason, setDraftReEntryReason] = useState('');
   const [parentSearchQuery, setParentSearchQuery] = useState('');
   const [showParentDropdown, setShowParentDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -421,9 +412,7 @@ function TradesPageContent() {
         ? trade.checklist
         : rulesFor('pre_trade', DEFAULT_CHECKLIST)
     );
-    setTagInput('');
     setScreenshotCaption('');
-    setPreviewScreenshot(null);
     // Edge Coach
     setDraftAnalysisGrade(trade.analysisGrade || '');
     setDraftExecutionGrade(trade.executionGrade || '');
@@ -442,6 +431,7 @@ function TradesPageContent() {
     setDraftIsReEntry(trade.isReEntry ?? false);
     setDraftTradeGroup(trade.tradeGroup || '');
     setDraftParentTradeId(trade.parentTradeId || '');
+    setDraftReEntryReason(trade.reEntryReason || '');
     setDraftPlaybookSnapshot(trade.playbookSnapshot || null);
     setDraftPlaybookResponses(trade.playbookResponses || {});
     setActivePlaybookPhase('plan');
@@ -464,19 +454,6 @@ function TradesPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trades, searchParams]);
 
-  const handleAddTag = (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = tagInput.trim().replace(/^#/, '');
-    if (clean && !draftTags.includes(clean)) {
-      setDraftTags([...draftTags, clean]);
-    }
-    setTagInput('');
-  };
-
-  const handleRemoveTag = (tagToRemove: string) => {
-    setDraftTags(draftTags.filter(t => t !== tagToRemove));
-  };
-
   const toggleChecklistItem = (index: number) => {
     const copy = [...draftChecklist];
     copy[index] = { ...copy[index], complied: !copy[index].complied };
@@ -485,29 +462,33 @@ function TradesPageContent() {
 
   const handleSaveJournal = async () => {
     if (!selectedTrade) return;
-    const missingRequired = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
-      if (!rule.required) return false;
-      const value = draftPlaybookResponses[rule.ruleId];
-      return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
-    });
-    if (missingRequired) {
-      const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingRequired.ruleId));
-      const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
-      if (missingPhase) setActivePlaybookPhase(missingPhase.id);
-      alert(`Complete the required playbook field: ${missingRequired.label}`);
-      return;
-    }
-    const missingImageRule = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
-      if (!rule.exampleRequirement?.required) return false;
-      const count = (selectedTrade.screenshots || []).filter(screenshot => screenshot.playbookRuleId === rule.ruleId && screenshot.playbookVersionId === draftPlaybookSnapshot.versionId).length;
-      return count < (rule.exampleRequirement.minimumImages || 1);
-    });
-    if (missingImageRule) {
-      const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingImageRule.ruleId));
-      const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
-      if (missingPhase) setActivePlaybookPhase(missingPhase.id);
-      alert(`Add ${missingImageRule.exampleRequirement?.minimumImages || 1} trade screenshot confirmation${(missingImageRule.exampleRequirement?.minimumImages || 1) === 1 ? '' : 's'} for: ${missingImageRule.label}`);
-      return;
+    // Re-entries inherit their playbook/journal from the parent trade already --
+    // don't force re-filling required fields or screenshot confirmations for one.
+    if (!draftIsReEntry) {
+      const missingRequired = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
+        if (!rule.required) return false;
+        const value = draftPlaybookResponses[rule.ruleId];
+        return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+      });
+      if (missingRequired) {
+        const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingRequired.ruleId));
+        const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
+        if (missingPhase) setActivePlaybookPhase(missingPhase.id);
+        alert(`Complete the required playbook field: ${missingRequired.label}`);
+        return;
+      }
+      const missingImageRule = draftPlaybookSnapshot?.blocks.flatMap(block => block.rules).find(rule => {
+        if (!rule.exampleRequirement?.required) return false;
+        const count = (selectedTrade.screenshots || []).filter(screenshot => screenshot.playbookRuleId === rule.ruleId && screenshot.playbookVersionId === draftPlaybookSnapshot.versionId).length;
+        return count < (rule.exampleRequirement.minimumImages || 1);
+      });
+      if (missingImageRule) {
+        const missingBlock = draftPlaybookSnapshot?.blocks.find(block => block.rules.some(rule => rule.ruleId === missingImageRule.ruleId));
+        const missingPhase = JOURNAL_PHASES.find(phase => missingBlock && phase.categories.includes(missingBlock.category));
+        if (missingPhase) setActivePlaybookPhase(missingPhase.id);
+        alert(`Add ${missingImageRule.exampleRequirement?.minimumImages || 1} trade screenshot confirmation${(missingImageRule.exampleRequirement?.minimumImages || 1) === 1 ? '' : 's'} for: ${missingImageRule.label}`);
+        return;
+      }
     }
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -542,6 +523,7 @@ function TradesPageContent() {
           isReEntry: draftIsReEntry,
           tradeGroup: draftTradeGroup.trim(),
           parentTradeId: draftParentTradeId,
+          reEntryReason: draftReEntryReason,
         })
       });
       if (res.status === 401) {
@@ -639,82 +621,6 @@ function TradesPageContent() {
     }
   }, [fileToDataUrl, uploadScreenshotDataUrl]);
 
-  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
-    await uploadScreenshotFile(file);
-  };
-
-  const handleScreenshotPaste = async (event: React.ClipboardEvent<HTMLDivElement>) => {
-    if (uploadingScreenshot) return;
-
-    const items = Array.from(event.clipboardData.items || []);
-    const imageItem = items.find(item => item.type.startsWith('image/'));
-    if (!imageItem) return;
-
-    const file = imageItem.getAsFile();
-    if (!file) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    await uploadScreenshotFile(file);
-  };
-
-  useEffect(() => {
-    if (!selectedTrade) return;
-
-    const handlePaste = async (event: ClipboardEvent) => {
-      if (uploadingScreenshot) return;
-
-      const items = Array.from(event.clipboardData?.items || []);
-      const imageItem = items.find(item => item.type.startsWith('image/'));
-      if (!imageItem) return;
-
-      const file = imageItem.getAsFile();
-      if (!file) return;
-
-      if (file.size > 8 * 1024 * 1024) {
-        alert('Please keep screenshots under 8MB.');
-        return;
-      }
-
-      event.preventDefault();
-      await uploadScreenshotFile(file);
-    };
-
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [selectedTrade, uploadScreenshotFile, uploadingScreenshot]);
-
-  const handleScreenshotCaptionChange = async (screenshotId: string, caption: string) => {
-    if (!selectedTrade) return;
-    const token = localStorage.getItem('token');
-    if (!token) return;
-
-    try {
-      const res = await fetch(`${API}/trades/${selectedTrade._id}/screenshots/${screenshotId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ caption }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Could not update screenshot caption');
-      }
-
-      updateTradeInState(await res.json());
-    } catch (err) {
-      console.error(err);
-      alert(err instanceof Error ? err.message : 'Could not update screenshot caption');
-    }
-  };
-
   const handleScreenshotDelete = async (screenshotId: string) => {
     if (!selectedTrade) return;
     const confirmed = window.confirm('Delete this screenshot from the trade?');
@@ -735,7 +641,6 @@ function TradesPageContent() {
       }
 
       updateTradeInState(await res.json());
-      setPreviewScreenshot(null);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Could not delete screenshot');
@@ -1572,7 +1477,9 @@ function TradesPageContent() {
                                   if (parent.primarySetup) setDraftPrimarySetup(parent.primarySetup);
                                   if (parent.setupConfirmations) setDraftSetupConfirmations(parent.setupConfirmations);
                                   if (parent.executionChecklist) setDraftExecChecklist(parent.executionChecklist);
-                                  alert('Details inherited from parent! You can still customize them before saving.');
+                                  if (parent.playbookSnapshot) setDraftPlaybookSnapshot(parent.playbookSnapshot);
+                                  if (parent.playbookResponses) setDraftPlaybookResponses(parent.playbookResponses);
+                                  alert('Everything inherited from parent! You can still customize it before saving.');
                                 }
                               }}
                               style={{
@@ -1581,31 +1488,27 @@ function TradesPageContent() {
                                 cursor: 'pointer', fontFamily: 'var(--font-sans)', transition: 'background 0.2s'
                               }}
                             >
-                              📥 Inherit Parent Details (Notes, Checklist, etc.)
+                              📥 Inherit Everything From Parent
                             </button>
                           )}
+
+                          <div style={{ marginTop: 10 }}>
+                            <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                              Reason for re-entering
+                            </label>
+                            <textarea
+                              className="drawer-textarea"
+                              style={{ minHeight: 50, fontSize: 12 }}
+                              placeholder="Why did you re-enter this setup? e.g. price retested the level with confirmation..."
+                              value={draftReEntryReason}
+                              onChange={e => setDraftReEntryReason(e.target.value)}
+                            />
+                          </div>
                         </div>
                       );
                     })()}
                   </div>
                 )}
-              </div>
-
-              {/* Trader Emotion / Mindset */}
-              <div className="drawer-section">
-                <span className="drawer-section-title"><Smile size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Emotional Mindset</span>
-                <div className="emotion-grid">
-                  {EMOTIONS.map(e => (
-                    <button
-                      key={e.name}
-                      className={`emotion-pill ${draftEmotion === e.name ? `active ${e.name}` : ''}`}
-                      onClick={() => setDraftEmotion(e.name)}
-                    >
-                      <span>{e.emoji}</span>
-                      <span>{e.name}</span>
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Legacy flat checklist is preserved in stored trades but replaced by playbook blocks. */}
@@ -1626,99 +1529,6 @@ function TradesPageContent() {
                   ))}
                 </div>
               </div>}
-
-              {/* Custom Tag Input */}
-              <div className="drawer-section">
-                <span className="drawer-section-title"><Tag size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Strategy / Custom Tags</span>
-                <form onSubmit={handleAddTag} className="tags-input-wrap">
-                  {draftTags.map(t => (
-                    <span className="tag-badge" key={t}>
-                      #{t}
-                      <button type="button" onClick={() => handleRemoveTag(t)}>×</button>
-                    </span>
-                  ))}
-                  <input
-                    type="text"
-                    className="tags-input-element"
-                    placeholder="+ add tag..."
-                    value={tagInput}
-                    onChange={e => setTagInput(e.target.value)}
-                  />
-                </form>
-              </div>
-
-              {/* Chart Screenshots */}
-              <div className="drawer-section">
-                <span className="drawer-section-title"><ImageIcon size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Chart Screenshots</span>
-                <div
-                  className={`screenshot-paste-zone ${uploadingScreenshot ? 'uploading' : ''}`}
-                  tabIndex={0}
-                  role="button"
-                  aria-label="Paste chart screenshot here"
-                  onPaste={handleScreenshotPaste}
-                >
-                  <ImageIcon size={18} />
-                  <div>
-                    <strong>{uploadingScreenshot ? 'Uploading screenshot...' : 'Paste screenshot here'}</strong>
-                    <span>Click this box, then press Ctrl+V</span>
-                  </div>
-                </div>
-                <div className="screenshot-upload-panel">
-                  <input
-                    type="text"
-                    className="screenshot-caption-input"
-                    placeholder="Optional caption for pasted or uploaded screenshot"
-                    value={screenshotCaption}
-                    onChange={e => setScreenshotCaption(e.target.value)}
-                    maxLength={180}
-                  />
-                  <label className={`btn btn-ghost screenshot-upload-btn ${uploadingScreenshot ? 'disabled' : ''}`}>
-                    <Upload size={14} />
-                    {uploadingScreenshot ? 'Uploading...' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleScreenshotUpload}
-                      disabled={uploadingScreenshot}
-                      hidden
-                    />
-                  </label>
-                </div>
-
-                {selectedTrade.screenshots && selectedTrade.screenshots.length > 0 ? (
-                  <div className="screenshot-grid">
-                    {selectedTrade.screenshots.map(shot => (
-                      <div className="screenshot-tile" key={shot._id}>
-                        <button className="screenshot-thumb-btn" onClick={() => setPreviewScreenshot(shot)}>
-                          <img src={shot.url} alt={shot.caption || `${selectedTrade.symbol} trade screenshot`} loading="lazy" />
-                        </button>
-                        <input
-                          className="screenshot-inline-caption"
-                          value={shot.caption || ''}
-                          placeholder="Add caption..."
-                          maxLength={180}
-                          onChange={e => {
-                            const caption = e.target.value;
-                            const updatedScreenshots = (selectedTrade.screenshots || []).map(s =>
-                              s._id === shot._id ? { ...s, caption } : s
-                            );
-                            updateTradeInState({ ...selectedTrade, screenshots: updatedScreenshots });
-                          }}
-                          onBlur={e => handleScreenshotCaptionChange(shot._id, e.target.value)}
-                        />
-                        <button className="screenshot-delete-btn" onClick={() => handleScreenshotDelete(shot._id)} aria-label="Delete screenshot">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="screenshot-empty">
-                    <ImageIcon size={16} />
-                    <span>No screenshots attached yet</span>
-                  </div>
-                )}
-              </div>
 
               {/* Journal Notes */}
               <div className="drawer-section">
@@ -1752,34 +1562,6 @@ function TradesPageContent() {
             </div>
           </div>
 
-          {previewScreenshot && (
-            <div className="screenshot-preview-overlay" onClick={() => setPreviewScreenshot(null)}>
-              <div className="screenshot-preview-modal" onClick={e => e.stopPropagation()}>
-                <div className="screenshot-preview-header">
-                  <div>
-                    <div className="card-title">Chart Screenshot</div>
-                    {previewScreenshot.caption && (
-                      <div className="card-subtitle">{previewScreenshot.caption}</div>
-                    )}
-                  </div>
-                  <button className="drawer-close" onClick={() => setPreviewScreenshot(null)}>
-                    <X size={16} />
-                  </button>
-                </div>
-                <img
-                  src={previewScreenshot.url}
-                  alt={previewScreenshot.caption || `${selectedTrade.symbol} trade screenshot`}
-                  className="screenshot-preview-image"
-                />
-                <div className="screenshot-preview-footer">
-                  <button className="btn btn-danger" onClick={() => handleScreenshotDelete(previewScreenshot._id)}>
-                    <Trash2 size={14} />
-                    Delete Screenshot
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
       {replayTradeId && selectedTrade && <TradeReplayModal

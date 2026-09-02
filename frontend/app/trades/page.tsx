@@ -1133,10 +1133,25 @@ function TradesPageContent() {
                                   <figcaption>{screenshot.caption || rule.label}</figcaption>
                                   <button type="button" onClick={() => void handleScreenshotDelete(screenshot._id)} aria-label={`Remove screenshot confirmation for ${rule.label}`}><Trash2 size={13} /></button>
                                 </figure>)}</div>}
-                                <label className={`journal-rule-confirmation-upload${uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages ? ' disabled' : ''}`}>
-                                  <Upload size={14} />{uploadingScreenshot ? 'Uploading…' : confirmations.length ? 'Add another screenshot' : 'Add trade screenshot'}
-                                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void uploadScreenshotFile(file, rule); }} />
-                                </label>
+                                <div
+                                  tabIndex={0}
+                                  role="button"
+                                  aria-label={`Paste a screenshot for ${rule.label}`}
+                                  onPaste={event => {
+                                    if (uploadingScreenshot || confirmations.length >= (rule.exampleRequirement?.maximumImages ?? Infinity)) return;
+                                    const items = Array.from(event.clipboardData.items || []);
+                                    const imageItem = items.find(item => item.type.startsWith('image/'));
+                                    const file = imageItem?.getAsFile();
+                                    if (!file) return;
+                                    event.preventDefault();
+                                    void uploadScreenshotFile(file, rule);
+                                  }}
+                                >
+                                  <label className={`journal-rule-confirmation-upload${uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages ? ' disabled' : ''}`}>
+                                    <Upload size={14} />{uploadingScreenshot ? 'Uploading…' : confirmations.length ? 'Add another screenshot (or click here and press Ctrl+V)' : 'Add trade screenshot (or click here and press Ctrl+V)'}
+                                    <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingScreenshot || confirmations.length >= rule.exampleRequirement.maximumImages} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void uploadScreenshotFile(file, rule); }} />
+                                  </label>
+                                </div>
                                 {!complete && <span className="journal-rule-confirmation-error" role="alert">A screenshot is required before this journal can be saved.</span>}
                               </div>;
                             })()}

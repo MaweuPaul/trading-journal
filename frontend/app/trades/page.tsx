@@ -1118,7 +1118,7 @@ function TradesPageContent() {
                               <figcaption><strong>{example.kind === 'valid' ? 'Valid' : example.kind === 'invalid' ? 'Avoid' : 'Reference'}</strong>{example.caption}</figcaption>
                             </figure>)}</div>}
                             {renderPlaybookInput(rule)}
-                            {rule.exampleRequirement?.required && (() => {
+                            {rule.exampleRequirement?.required && !draftIsReEntry && (() => {
                               const confirmations = (selectedTrade.screenshots || []).filter(screenshot => screenshot.playbookRuleId === rule.ruleId && screenshot.playbookVersionId === draftPlaybookSnapshot.versionId);
                               const minimum = rule.exampleRequirement.minimumImages || 1;
                               const complete = confirmations.length >= minimum;

@@ -3776,5 +3776,8 @@ router.get('/coach', auth, ownerOnly, async (req, res) => {
 // (which includes private journal fields like notes/emotion/grade).
 router.requestedReplayInterval = requestedReplayInterval;
 router.replayWindow = replayWindow;
+// Shared with routes/preTradeAnalyses.js so a playbook snapshot locks the
+// same way there as it does here, without duplicating the lookup logic.
+router.getPlaybooks = getPlaybooks;
 
 module.exports = router;

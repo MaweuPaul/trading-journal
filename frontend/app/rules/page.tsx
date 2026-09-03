@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, CopyPlus, FileClock, ImagePlus, Plus, Save, Settings2, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, ClipboardList, CopyPlus, FileClock, ImagePlus, Plus, Save, Settings2, ShieldCheck, Trash2, X } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 
 type InputType = 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
@@ -582,6 +582,8 @@ export default function PlaybooksPage() {
   const [saved, setSaved] = useState(false);
   const [newBlockCategory, setNewBlockCategory] = useState<TemplateCategory>('context');
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(() => new Set());
+  const [preTradeAnalyses, setPreTradeAnalyses] = useState<Array<{ _id: string; symbol: string; direction: string; createdAt: string }>>([]);
+  const [startingAnalysis, setStartingAnalysis] = useState(false);
 
   const selectPlaybook = useCallback((playbook: Playbook) => {
     const version = latest(playbook);
@@ -621,6 +623,53 @@ export default function PlaybooksPage() {
 
   const selected = playbooks.find(item => item.playbookId === selectedId);
   const totalRules = useMemo(() => blocks.reduce((sum, block) => sum + block.rules.length, 0), [blocks]);
+
+  const loadPreTradeAnalyses = useCallback(async () => {
+    if (!selectedId) { setPreTradeAnalyses([]); return; }
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/pre-trade-analyses?playbookId=${encodeURIComponent(selectedId)}&status=open`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await response.json();
+      if (response.ok) setPreTradeAnalyses(body.analyses || []);
+    } catch {
+      // Non-critical -- the list just stays empty on failure.
+    }
+  }, [selectedId]);
+
+  useEffect(() => { void loadPreTradeAnalyses(); }, [loadPreTradeAnalyses]);
+
+  const startPreTradeAnalysis = async () => {
+    if (!selectedId) return;
+    setStartingAnalysis(true);
+    const token = localStorage.getItem('token');
+    if (!token) { router.push('/login'); return; }
+    try {
+      const response = await fetch('/api/pre-trade-analyses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ playbookId: selectedId }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not start pre-trade analysis');
+      router.push(`/pretrade?id=${body._id}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not start pre-trade analysis');
+    } finally {
+      setStartingAnalysis(false);
+    }
+  };
+
+  const discardPreTradeAnalysis = async (id: string) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      await fetch(`/api/pre-trade-analyses/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      void loadPreTradeAnalyses();
+    } catch {
+      // Non-critical -- user can retry from the list.
+    }
+  };
 
   const markDirty = () => { setDirty(true); setSaved(false); };
   const updateBlock = (blockId: string, patch: Partial<PlaybookBlock>) => {
@@ -740,6 +789,7 @@ export default function PlaybooksPage() {
             {saved ? <Check size={16} /> : <Save size={16} />}{saving ? 'Publishing…' : saved ? 'Published' : creating ? 'Publish strategy' : 'Publish new version'}
           </button>
           {!creating && selectedId && <button className="btn-ghost" onClick={() => router.push(`/rules/read?playbook=${encodeURIComponent(selectedId)}`)} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}><BookOpen size={16} />Read playbook</button>}
+          {!creating && selectedId && <button className="btn-ghost" onClick={startPreTradeAnalysis} disabled={startingAnalysis} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 8 }}><ClipboardList size={16} />{startingAnalysis ? 'Starting...' : 'Start Pre-Trade Analysis'}</button>}
         </div>
 
         {error && <div role="alert" style={{ padding: 12, marginBottom: 16, borderRadius: 10, background: 'var(--red-bg)', border: '1px solid var(--red-border)', color: 'var(--red)' }}>{error}</div>}
@@ -768,6 +818,21 @@ export default function PlaybooksPage() {
                   <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
                     <FileClock size={14} /> Version {latest(selected)?.versionNumber} · {selected.versions.length} immutable version{selected.versions.length === 1 ? '' : 's'} · {totalRules} rules <InfoHint text="Published versions cannot be overwritten. Existing trades retain the exact rules they used, while new trades use the newest published version." />
                     <button onClick={toggleArchive} style={{ marginLeft: 'auto', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 10px' }}><Archive size={13} style={{ verticalAlign: 'middle', marginRight: 5 }} />{selected.archived ? 'Restore' : 'Archive strategy'}</button>
+                  </div>
+                )}
+                {!creating && selectedId && preTradeAnalyses.length > 0 && (
+                  <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      Open pre-trade analyses ({preTradeAnalyses.length})
+                    </span>
+                    {preTradeAnalyses.map(item => (
+                      <div key={item._id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+                        <button onClick={() => router.push(`/pretrade?id=${item._id}`)} style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 0, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12.5 }}>
+                          {item.symbol || 'No symbol yet'}{item.direction ? ` · ${item.direction}` : ''} · {new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </button>
+                        <button onClick={() => discardPreTradeAnalysis(item._id)} aria-label="Discard" style={{ background: 'transparent', border: 0, cursor: 'pointer', color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </section>

@@ -3,6 +3,8 @@ import { Suspense, useEffect, useState, useCallback, useRef, useMemo, Fragment }
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
+import PlaybookRuleInput from '@/components/PlaybookRuleInput';
+import type { PlaybookRule, PlaybookBlock, PlaybookSnapshot, Playbook } from '@/types/playbook';
 import {
   SlidersHorizontal, ChevronLeft, ChevronRight, List,
   X, Award, CheckSquare, Save, Info,
@@ -138,33 +140,6 @@ interface TradeAccountOption {
   count: number;
 }
 
-interface PlaybookRule {
-  ruleId: string;
-  label: string;
-  inputType: 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'percentage' | 'currency' | 'price' | 'duration' | 'risk_reward' | 'rating' | 'text' | 'long_text' | 'date' | 'time';
-  options: string[];
-  required: boolean;
-  helpText?: string;
-  placeholder?: string;
-  unit?: string;
-  defaultValue?: string | number | boolean | null;
-  validation?: { min?: number | null; max?: number | null; minLength?: number | null; maxLength?: number | null };
-  examples?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid' }>;
-  exampleRequirement?: { required: boolean; minimumImages: number; maximumImages: number };
-  toolRole?: 'observation' | 'confirmation' | 'trigger' | 'decision_gate' | 'invalidation' | 'risk_limit' | 'management_action' | 'exit_signal' | 'review_prompt';
-  timeframes?: string[];
-  failureAction?: 'none' | 'warn' | 'skip_trade' | 'stop_session';
-  failureMessage?: string;
-}
-
-interface PlaybookBlock {
-  blockId: string;
-  name: string;
-  category: string;
-  rules: PlaybookRule[];
-  evidence?: Array<{ evidenceId: string; url: string; caption: string; kind: 'reference' | 'valid' | 'invalid'; linkedRuleId?: string }>;
-}
-
 type JournalPhase = 'plan' | 'manage' | 'review';
 const JOURNAL_PHASES: Array<{ id: JournalPhase; label: string; categories: string[] }> = [
   { id: 'plan', label: '1. Plan', categories: ['concept', 'context', 'setup', 'entry', 'risk', 'pre_trade'] },
@@ -183,24 +158,6 @@ function hasPlaybookAnswer(value: unknown) {
   return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
 }
 
-interface PlaybookSnapshot {
-  playbookId: string;
-  name: string;
-  description?: string;
-  versionId: string;
-  versionNumber: number;
-  schemaVersion?: number;
-  publishedAt: string;
-  blocks: PlaybookBlock[];
-}
-
-interface Playbook {
-  playbookId: string;
-  name: string;
-  description: string;
-  archived: boolean;
-  versions: Array<{ versionId: string; versionNumber: number; schemaVersion?: number; publishedAt: string; blocks: PlaybookBlock[] }>;
-}
 
 function formatDuration(mins: number) {
   if (mins < 60) return `${mins}m`;
@@ -236,6 +193,8 @@ function TradesPageContent() {
   const [hasToken, setHasToken] = useState(false);
   const [tradingRules, setTradingRules] = useState<TradingRule[]>([]);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [openPreTradeAnalyses, setOpenPreTradeAnalyses] = useState<Array<{ _id: string; symbol: string; direction: string; playbookSnapshot: PlaybookSnapshot; responses: Record<string, unknown>; notes: string }>>([]);
+  const [selectedPreTradeAnalysisId, setSelectedPreTradeAnalysisId] = useState('');
 
   // Auth checking
   useEffect(() => {
@@ -680,44 +639,43 @@ function TradesPageContent() {
     setActivePlaybookPhase('plan');
   };
 
+  useEffect(() => {
+    const playbookId = draftPlaybookSnapshot?.playbookId;
+    if (!playbookId || selectedTrade?.playbookSnapshot) { setOpenPreTradeAnalyses([]); return; }
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`/api/pre-trade-analyses?playbookId=${encodeURIComponent(playbookId)}&status=open`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : { analyses: [] })
+      .then(body => setOpenPreTradeAnalyses(body.analyses || []))
+      .catch(() => setOpenPreTradeAnalyses([]));
+  }, [draftPlaybookSnapshot?.playbookId, selectedTrade?.playbookSnapshot]);
+
+  const inheritFromPreTradeAnalysis = async () => {
+    const analysis = openPreTradeAnalyses.find(item => item._id === selectedPreTradeAnalysisId);
+    if (!analysis || !selectedTrade) return;
+    setDraftPlaybookSnapshot(analysis.playbookSnapshot);
+    setDraftPlaybookResponses(analysis.responses || {});
+    if (analysis.notes) setDraftNotes(current => current ? `${current}\n\n${analysis.notes}` : analysis.notes);
+    const token = localStorage.getItem('token');
+    if (token) {
+      await fetch(`/api/pre-trade-analyses/${analysis._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'linked', linkedTradeId: selectedTrade._id }),
+      }).catch(() => {});
+    }
+    setOpenPreTradeAnalyses(current => current.filter(item => item._id !== analysis._id));
+    setSelectedPreTradeAnalysisId('');
+    alert('Pre-trade analysis inherited! You can still customize the answers before saving.');
+  };
+
   const setPlaybookResponse = (ruleId: string, value: unknown) => {
     setDraftPlaybookResponses(current => ({ ...current, [ruleId]: value }));
   };
 
-  const renderPlaybookInput = (rule: PlaybookRule) => {
-    const value = draftPlaybookResponses[rule.ruleId];
-    if (rule.inputType === 'boolean') {
-      return (
-        <div style={{ display: 'flex', gap: 6 }}>
-          {([{ label: 'Yes', value: true }, { label: 'No', value: false }] as const).map(option => (
-            <button key={option.label} type="button" onClick={() => setPlaybookResponse(rule.ruleId, option.value)} style={{ minHeight: 38, minWidth: 64, borderRadius: 8, border: `1px solid ${value === option.value ? 'var(--accent)' : 'var(--border)'}`, background: value === option.value ? 'var(--accent-soft)' : 'var(--bg-surface)', color: value === option.value ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700 }}>{option.label}</button>
-          ))}
-        </div>
-      );
-    }
-    if (rule.inputType === 'single_choice') {
-      return <select value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }}><option value="">Select…</option>{rule.options.map(option => <option key={option} value={option}>{option}</option>)}</select>;
-    }
-    if (rule.inputType === 'multi_choice') {
-      const selected = Array.isArray(value) ? value as string[] : [];
-      return <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>{rule.options.map(option => <button key={option} type="button" onClick={() => setPlaybookResponse(rule.ruleId, selected.includes(option) ? selected.filter(item => item !== option) : [...selected, option])} style={{ minHeight: 36, borderRadius: 18, border: `1px solid ${selected.includes(option) ? 'var(--accent)' : 'var(--border)'}`, background: selected.includes(option) ? 'var(--accent-soft)' : 'var(--bg-surface)', color: selected.includes(option) ? 'var(--accent)' : 'var(--text-muted)', padding: '0 10px', cursor: 'pointer' }}>{option}</button>)}</div>;
-    }
-    if (rule.inputType === 'rating') {
-      return <div><input type="range" min="1" max="10" value={Number(value || 5)} onChange={event => setPlaybookResponse(rule.ruleId, Number(event.target.value))} style={{ width: '100%', accentColor: 'var(--accent)' }} /><div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>{Number(value || 5)}/10</div></div>;
-    }
-    const numericTypes = ['number', 'percentage', 'currency', 'price', 'duration', 'risk_reward'];
-    if (numericTypes.includes(rule.inputType)) {
-      const defaultUnit = rule.inputType === 'percentage' ? '%' : rule.inputType === 'risk_reward' ? 'R' : '';
-      return <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}><input type="number" step="any" min={rule.inputType === 'percentage' || rule.inputType === 'risk_reward' ? (rule.validation?.min ?? 0) : (rule.validation?.min ?? undefined)} max={rule.inputType === 'percentage' ? (rule.validation?.max ?? 100) : (rule.validation?.max ?? undefined)} placeholder={rule.placeholder || (rule.inputType === 'risk_reward' ? 'e.g. 2 for 1:2' : undefined)} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value === '' ? '' : Number(event.target.value))} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />{(rule.unit || defaultUnit) && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{rule.unit || defaultUnit}</span>}</div>;
-    }
-    if (rule.inputType === 'date' || rule.inputType === 'time') {
-      return <input type={rule.inputType} value={String(value ?? '')} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
-    }
-    if (rule.inputType === 'text') {
-      return <input type="text" value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />;
-    }
-    return <textarea value={String(value ?? '')} minLength={rule.validation?.minLength ?? undefined} maxLength={rule.validation?.maxLength ?? undefined} placeholder={rule.placeholder || undefined} onChange={event => setPlaybookResponse(rule.ruleId, event.target.value)} rows={4} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: 9, resize: 'vertical' }} />;
-  };
+  const renderPlaybookInput = (rule: PlaybookRule) => (
+    <PlaybookRuleInput rule={rule} value={draftPlaybookResponses[rule.ruleId]} onChange={value => setPlaybookResponse(rule.ruleId, value)} />
+  );
 
   return (
     <div>
@@ -1083,6 +1041,20 @@ function TradesPageContent() {
                       })}
                     </select>
                     {draftPlaybookSnapshot && <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>This will attach {draftPlaybookSnapshot.name} v{draftPlaybookSnapshot.versionNumber} permanently when you save.</div>}
+                    {openPreTradeAnalyses.length > 0 && (
+                      <div style={{ marginTop: 10, padding: 10, borderRadius: 8, border: '1px solid #6366f140', background: '#6366f115' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#818cf8', marginBottom: 6 }}>Planned this one ahead of time?</div>
+                        <select value={selectedPreTradeAnalysisId} onChange={e => setSelectedPreTradeAnalysisId(e.target.value)} style={{ width: '100%', minHeight: 38, padding: '0 9px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 12, marginBottom: 6 }}>
+                          <option value="">— Select a pre-trade analysis —</option>
+                          {openPreTradeAnalyses.map(item => (
+                            <option key={item._id} value={item._id}>{item.symbol || 'No symbol'}{item.direction ? ` · ${item.direction}` : ''}</option>
+                          ))}
+                        </select>
+                        <button type="button" disabled={!selectedPreTradeAnalysisId} onClick={inheritFromPreTradeAnalysis} style={{ width: '100%', padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 700, border: '1px solid #6366f140', background: '#6366f115', color: '#818cf8', cursor: selectedPreTradeAnalysisId ? 'pointer' : 'not-allowed', opacity: selectedPreTradeAnalysisId ? 1 : 0.5 }}>
+                          📥 Inherit From Pre-Trade Analysis
+                        </button>
+                      </div>
+                    )}
                   </>}
                 </div>
 

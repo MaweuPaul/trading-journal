@@ -608,6 +608,17 @@ function TradesPageContent() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  useEffect(() => {
+    const playbookId = draftPlaybookSnapshot?.playbookId;
+    if (!playbookId || selectedTrade?.playbookSnapshot) { setOpenPreTradeAnalyses([]); return; }
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`/api/pre-trade-analyses?playbookId=${encodeURIComponent(playbookId)}&status=open`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : { analyses: [] })
+      .then(body => setOpenPreTradeAnalyses(body.analyses || []))
+      .catch(() => setOpenPreTradeAnalyses([]));
+  }, [draftPlaybookSnapshot?.playbookId, selectedTrade?.playbookSnapshot]);
+
   if (!hasToken) return null;
 
   const selectPlaybookForTrade = (playbookId: string) => {
@@ -638,17 +649,6 @@ function TradesPageContent() {
     setDraftPlaybookResponses(defaults);
     setActivePlaybookPhase('plan');
   };
-
-  useEffect(() => {
-    const playbookId = draftPlaybookSnapshot?.playbookId;
-    if (!playbookId || selectedTrade?.playbookSnapshot) { setOpenPreTradeAnalyses([]); return; }
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    fetch(`/api/pre-trade-analyses?playbookId=${encodeURIComponent(playbookId)}&status=open`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.ok ? res.json() : { analyses: [] })
-      .then(body => setOpenPreTradeAnalyses(body.analyses || []))
-      .catch(() => setOpenPreTradeAnalyses([]));
-  }, [draftPlaybookSnapshot?.playbookId, selectedTrade?.playbookSnapshot]);
 
   const inheritFromPreTradeAnalysis = async () => {
     const analysis = openPreTradeAnalyses.find(item => item._id === selectedPreTradeAnalysisId);

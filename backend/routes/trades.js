@@ -2810,7 +2810,7 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
         equityCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
         avgDurationMin: 0, avgWinUSD: 0, avgLossUSD: 0, winLossRatio: 0,
         expectancyUSD: 0, maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
-        bySession: [], byDirection: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0,
+        bySession: [], byDirection: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: null, tradesWithPlaybookData: 0,
         mixedAccounts: false, accountKeys: [],
         avgR: null, avgWinR: null, avgLossR: null, tradesWithRiskData: 0,
       });
@@ -3003,18 +3003,35 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       winRate: em.trades > 0 ? (em.wins / em.trades) * 100 : 0
     })).sort((a, b) => b.pnl - a.pnl);
 
-    // Global Checklst compliance
-    let totalRules = 0;
-    let compledRules = 0;
+    // Global Playbook compliance -- % of a trade's own required playbook
+    // fields (and required screenshot confirmations) actually filled in.
+    // Re-entries are excluded: they don't carry their own playbook (see the
+    // re-entry journal simplification), so they'd otherwise drag this down
+    // for a reason that has nothing to do with anyone's discipline.
+    const isAnswered = value => !(value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0));
+    let totalRequiredItems = 0;
+    let completedRequiredItems = 0;
+    let tradesWithPlaybookData = 0;
     for (const t of trades) {
-      if (t.checklist && t.checklist.length > 0) {
-        for (const rule of t.checklist) {
-          totalRules++;
-          if (rule.complied) compledRules++;
+      if (t.isReEntry || !t.playbookSnapshot) continue;
+      tradesWithPlaybookData++;
+      const responses = t.playbookResponses || {};
+      for (const block of t.playbookSnapshot.blocks || []) {
+        for (const rule of block.rules || []) {
+          if (rule.required) {
+            totalRequiredItems++;
+            if (isAnswered(responses[rule.ruleId])) completedRequiredItems++;
+          }
+          if (rule.exampleRequirement?.required) {
+            totalRequiredItems++;
+            const minimum = rule.exampleRequirement.minimumImages || 1;
+            const confirmations = (t.screenshots || []).filter(s => s.playbookRuleId === rule.ruleId && s.playbookVersionId === t.playbookSnapshot.versionId);
+            if (confirmations.length >= minimum) completedRequiredItems++;
+          }
         }
       }
     }
-    const globalComplianceRate = totalRules > 0 ? (compledRules / totalRules) * 100 : 0;
+    const globalComplianceRate = totalRequiredItems > 0 ? (completedRequiredItems / totalRequiredItems) * 100 : null;
 
     // Performance by Grade
     const gradeMap = {};
@@ -3062,6 +3079,7 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       byEmotion,
       byGrade,
       globalComplianceRate,
+      tradesWithPlaybookData,
       mixedAccounts,
       accountKeys: distinctAccountKeys,
       avgR: rStats.avgR,

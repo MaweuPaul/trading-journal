@@ -22,7 +22,8 @@ interface Stats {
   byTag: { tag: string; pnl: number; trades: number; wins: number; winRate: number }[];
   byEmotion: { emotion: string; pnl: number; trades: number; wins: number; winRate: number }[];
   byGrade: { grade: string; pnl: number; trades: number; wins: number; winRate: number }[];
-  globalComplianceRate: number;
+  globalComplianceRate: number | null;
+  tradesWithPlaybookData?: number;
   mixedAccounts?: boolean;
   accountKeys?: string[];
   avgR?: number | null;
@@ -272,9 +273,13 @@ export default function StatsPage() {
         </div>
         <div className="stat-card green-card">
           <div className="stat-icon green"><CheckSquare size={14} /></div>
-          <div className="stat-label">Checklist Discipline</div>
-          <div className="stat-value green">{(stats.globalComplianceRate || 0).toFixed(0)}%</div>
-          <div className="stat-sub">Global rules compliance rate</div>
+          <div className="stat-label">Playbook Discipline</div>
+          <div className="stat-value green">{stats.globalComplianceRate == null ? '—' : `${stats.globalComplianceRate.toFixed(0)}%`}</div>
+          <div className="stat-sub">
+            {stats.globalComplianceRate == null
+              ? 'No required playbook fields answered yet'
+              : `Required fields completed across ${stats.tradesWithPlaybookData} journaled trade${stats.tradesWithPlaybookData === 1 ? '' : 's'}`}
+          </div>
         </div>
         <div className="stat-card green-card">
           <div className="stat-icon green"><Activity size={14} /></div>

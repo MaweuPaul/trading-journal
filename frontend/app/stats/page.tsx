@@ -18,6 +18,7 @@ interface Stats {
   byDayOfWeek: { day: string; pnl: number; trades: number }[];
   byMonth: { month: string; pnl: number; trades: number; wins: number }[];
   bySession: { session: string; pnl: number; trades: number; wins: number; winRate: number }[];
+  byDirection: { direction: string; pnl: number; trades: number; wins: number; winRate: number; avgPnL: number }[];
   byTag: { tag: string; pnl: number; trades: number; wins: number; winRate: number }[];
   byEmotion: { emotion: string; pnl: number; trades: number; wins: number; winRate: number }[];
   byGrade: { grade: string; pnl: number; trades: number; wins: number; winRate: number }[];
@@ -165,6 +166,7 @@ export default function StatsPage() {
   const byDayOfWeek = stats.byDayOfWeek || [];
   const byMonth = stats.byMonth || [];
   const bySession = stats.bySession || [];
+  const byDirection = stats.byDirection || [];
   const byTag = stats.byTag || [];
   const byEmotion = stats.byEmotion || [];
   const byGrade = stats.byGrade || [];
@@ -366,6 +368,76 @@ export default function StatsPage() {
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* Buy vs Sell Profitability */}
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Buy vs Sell</div>
+              <div className="card-subtitle">Which direction is more profitable</div>
+            </div>
+          </div>
+          {byDirection.some(d => d.trades > 0) ? (
+            <div className="chart-wrap">
+              <BarGroup data={byDirection} dataKey="pnl" labelKey="direction" />
+            </div>
+          ) : <div className="empty-state" style={{ padding: 32 }}><h3>No direction data in range</h3></div>}
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">Direction Breakdown</div>
+              <div className="card-subtitle">Trade count, win rate & average P&L per direction</div>
+            </div>
+          </div>
+          {(() => {
+            const buy = byDirection.find(d => d.direction === 'BUY');
+            const sell = byDirection.find(d => d.direction === 'SELL');
+            const winner = buy && sell && (buy.trades > 0 || sell.trades > 0)
+              ? (buy.pnl === sell.pnl ? null : buy.pnl > sell.pnl ? 'BUY' : 'SELL')
+              : null;
+            return (
+              <>
+                {winner && (
+                  <div style={{ padding: '8px 12px', marginBottom: 10, borderRadius: 8, background: 'var(--bg-elevated)', fontSize: 12.5 }}>
+                    <strong style={{ color: winner === 'BUY' ? '#3b82f6' : '#e8364a' }}>{winner}</strong> trades have been more profitable overall.
+                  </div>
+                )}
+                <div className="session-summary-box">
+                  {byDirection.map(d => {
+                    const active = d.trades > 0;
+                    return (
+                      <div className="session-summary-row" key={d.direction} style={{ opacity: active ? 1 : 0.55 }}>
+                        <div className="session-name">{d.direction}</div>
+                        <div className="session-stats-group">
+                          <span style={{ color: 'var(--text-muted)' }}>{d.trades} trades</span>
+                          {active ? (
+                            <>
+                              <span style={{ color: d.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                                {d.winRate.toFixed(0)}% WR
+                              </span>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                avg {d.avgPnL >= 0 ? '+' : ''}${d.avgPnL.toFixed(2)}
+                              </span>
+                              <span className={`pnl ${d.pnl >= 0 ? 'positive' : 'negative'}`}>
+                                {d.pnl >= 0 ? '+' : ''}${d.pnl.toFixed(2)}
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>—</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

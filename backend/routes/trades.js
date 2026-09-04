@@ -2810,7 +2810,7 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
         equityCurve: [], bySymbol: [], byDayOfWeek: [], byMonth: [],
         avgDurationMin: 0, avgWinUSD: 0, avgLossUSD: 0, winLossRatio: 0,
         expectancyUSD: 0, maxWinStreak: 0, maxLossStreak: 0, sharpeRatio: 0,
-        bySession: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0,
+        bySession: [], byDirection: [], byTag: [], byEmotion: [], byGrade: [], globalComplianceRate: 0,
         mixedAccounts: false, accountKeys: [],
         avgR: null, avgWinR: null, avgLossR: null, tradesWithRiskData: 0,
       });
@@ -2950,6 +2950,24 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       winRate: s.trades > 0 ? (s.wins / s.trades) * 100 : 0
     }));
 
+    // Buy vs Sell profitability
+    const byDirectionMap = {
+      BUY: { direction: 'BUY', pnl: 0, trades: 0, wins: 0 },
+      SELL: { direction: 'SELL', pnl: 0, trades: 0, wins: 0 },
+    };
+    for (const t of trades) {
+      const dir = byDirectionMap[t.direction] ? t.direction : null;
+      if (!dir) continue;
+      byDirectionMap[dir].pnl += netAmount(t);
+      byDirectionMap[dir].trades++;
+      if (netAmount(t) > 0) byDirectionMap[dir].wins++;
+    }
+    const byDirection = Object.values(byDirectionMap).map(d => ({
+      ...d,
+      winRate: d.trades > 0 ? (d.wins / d.trades) * 100 : 0,
+      avgPnL: d.trades > 0 ? d.pnl / d.trades : 0,
+    }));
+
     // Performance by Tag
     const tagMap = {};
     for (const t of trades) {
@@ -3039,6 +3057,7 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       maxLossStreak,
       sharpeRatio,
       bySession,
+      byDirection,
       byTag,
       byEmotion,
       byGrade,

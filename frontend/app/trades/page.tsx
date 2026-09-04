@@ -347,10 +347,34 @@ function TradesPageContent() {
     }).filter(g => g.trades.length > 0);
   }, [trades]);
 
-  const displayTrades = useMemo(
+  const displayTradesFlat = useMemo(
     () => groupBySession ? sessionGroups.flatMap(g => g.trades) : trades,
     [groupBySession, sessionGroups, trades]
   );
+
+  // Re-entries manually linked to a parent (currently loaded on this page)
+  // render as nested rows directly under it instead of scattered by time --
+  // re-entries no longer carry their own journal, so their PnL is easiest to
+  // read right alongside the setup that produced it.
+  const displayTrades = useMemo(() => {
+    const childrenByParent = new Map<string, Trade[]>();
+    for (const t of displayTradesFlat) {
+      if (t.isReEntry && t.parentTradeId && displayTradesFlat.some(p => p._id === t.parentTradeId)) {
+        const list = childrenByParent.get(t.parentTradeId) || [];
+        list.push(t);
+        childrenByParent.set(t.parentTradeId, list);
+      }
+    }
+    if (childrenByParent.size === 0) return displayTradesFlat.map(t => ({ trade: t, nested: false }));
+    const nestedIds = new Set(Array.from(childrenByParent.values()).flat().map(t => t._id));
+    const result: Array<{ trade: Trade; nested: boolean }> = [];
+    for (const t of displayTradesFlat) {
+      if (nestedIds.has(t._id)) continue;
+      result.push({ trade: t, nested: false });
+      for (const child of childrenByParent.get(t._id) || []) result.push({ trade: child, nested: true });
+    }
+    return result;
+  }, [displayTradesFlat]);
 
   const handleRowClick = (trade: Trade) => {
     const rulesFor = (category: TradingRule['category'], fallback: ChecklistItem[]) => {
@@ -786,18 +810,18 @@ function TradesPageContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayTrades.map((t, i) => {
+                  {displayTrades.map(({ trade: t, nested }, i) => {
                     const isProfit = t.pnlUSD >= 0;
                     // Color-coded grouping: tradeGroup takes priority over shared positionId
                     const groupKey = t.tradeGroup || (t.positionId || '');
-                    const prevGroupKey = i > 0 ? (displayTrades[i-1].tradeGroup || displayTrades[i-1].positionId || '') : '';
-                    const nextGroupKey = i < displayTrades.length - 1 ? (displayTrades[i+1].tradeGroup || displayTrades[i+1].positionId || '') : '';
+                    const prevGroupKey = i > 0 ? (displayTrades[i-1].trade.tradeGroup || displayTrades[i-1].trade.positionId || '') : '';
+                    const nextGroupKey = i < displayTrades.length - 1 ? (displayTrades[i+1].trade.tradeGroup || displayTrades[i+1].trade.positionId || '') : '';
                     const isGrouped = Boolean(groupKey && (groupKey === prevGroupKey || groupKey === nextGroupKey));
                     const groupColors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#ec4899','#8b5cf6','#14b8a6'];
                     const colorIdx = groupKey ? (groupKey.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0) % groupColors.length) : 0;
                     const groupColor = isGrouped ? groupColors[colorIdx] : '';
                     const sessionHere = groupBySession ? sessionForTrade(t.closeTime) : null;
-                    const startsNewSession = groupBySession && (i === 0 || sessionForTrade(displayTrades[i - 1].closeTime) !== sessionHere);
+                    const startsNewSession = groupBySession && (i === 0 || sessionForTrade(displayTrades[i - 1].trade.closeTime) !== sessionHere);
                     const sessionSummary = startsNewSession ? sessionGroups.find(g => g.key === sessionHere) : null;
                     return (
                       <Fragment key={t._id}>
@@ -820,10 +844,14 @@ function TradesPageContent() {
                         key={t._id}
                         className="clickable"
                         onClick={() => handleRowClick(t)}
-                        title={isGrouped ? `Group: ${groupKey}` : 'Click to open journal drawer'}
-                        style={isGrouped ? { borderLeft: `3px solid ${groupColor}` } : {}}
+                        title={nested ? `Re-entry of #${t.parentTradeId}` : isGrouped ? `Group: ${groupKey}` : 'Click to open journal drawer'}
+                        style={{
+                          ...(isGrouped ? { borderLeft: `3px solid ${groupColor}` } : {}),
+                          ...(nested ? { background: 'var(--bg-elevated)', opacity: 0.85 } : {}),
+                        }}
                       >
-                        <td style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+                        <td style={{ color: 'var(--text-muted)', fontWeight: 500, paddingLeft: nested ? 22 : undefined }}>
+                          {nested && <span style={{ marginRight: 4, color: '#818cf8' }}>↳</span>}
                           {groupBySession ? i + 1 : (page - 1) * PAGE_SIZE + i + 1}
                           {isGrouped && t.tradeGroup && (
                             <span style={{
@@ -995,6 +1023,10 @@ function TradesPageContent() {
                 </div>
               </div>
 
+              {/* Re-entries roll their PnL up into the parent's journal instead of
+                  keeping their own -- nothing to fill in, so the whole Edge Coach /
+                  playbook block below is skipped entirely for them. */}
+              {!draftIsReEntry && <>
               {/* ── EDGE COACH: Execution Review ────────────────────────────── */}
               <div className="drawer-section" style={{ background: 'var(--bg-elevated)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
                 <span className="drawer-section-title" style={{ color: '#8b5cf6' }}>
@@ -1282,6 +1314,7 @@ function TradesPageContent() {
                 </div>}
               </div>
               {/* ── END EDGE COACH ──────────────────────────────────────────── */}
+              </>}
 
               {/* ── Re-Entry Section ─────────────────────────────────────────── */}
               <div className="drawer-section" style={{ padding: '12px 16px', background: draftIsReEntry ? '#6366f108' : 'transparent', borderRadius: 10, border: draftIsReEntry ? '1px solid #6366f130' : '1px solid var(--border)' }}>
@@ -1449,36 +1482,6 @@ function TradesPageContent() {
                             </div>
                           )}
 
-                          {draftParentTradeId && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const parent = potentialParents.find(p => p._id === draftParentTradeId);
-                                if (parent) {
-                                  if (parent.notes) setDraftNotes(parent.notes);
-                                  if (parent.emotion) setDraftEmotion(parent.emotion);
-                                  if (parent.grade) setDraftGrade(parent.grade);
-                                  if (parent.tags) setDraftTags(parent.tags);
-                                  if (parent.analysisGrade) setDraftAnalysisGrade(parent.analysisGrade);
-                                  if (parent.executionGrade) setDraftExecutionGrade(parent.executionGrade);
-                                  if (parent.primarySetup) setDraftPrimarySetup(parent.primarySetup);
-                                  if (parent.setupConfirmations) setDraftSetupConfirmations(parent.setupConfirmations);
-                                  if (parent.executionChecklist) setDraftExecChecklist(parent.executionChecklist);
-                                  if (parent.playbookSnapshot) setDraftPlaybookSnapshot(parent.playbookSnapshot);
-                                  if (parent.playbookResponses) setDraftPlaybookResponses(parent.playbookResponses);
-                                  alert('Everything inherited from parent! You can still customize it before saving.');
-                                }
-                              }}
-                              style={{
-                                width: '100%', padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 700,
-                                border: '1px solid #6366f140', background: '#6366f115', color: '#818cf8',
-                                cursor: 'pointer', fontFamily: 'var(--font-sans)', transition: 'background 0.2s'
-                              }}
-                            >
-                              📥 Inherit Everything From Parent
-                            </button>
-                          )}
-
                           <div style={{ marginTop: 10 }}>
                             <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
                               Reason for re-entering
@@ -1517,8 +1520,8 @@ function TradesPageContent() {
                 </div>
               </div>}
 
-              {/* Journal Notes */}
-              <div className="drawer-section">
+              {/* Journal Notes -- re-entries use the "Reason for re-entering" field above instead */}
+              {!draftIsReEntry && <div className="drawer-section">
                 <span className="drawer-section-title">Journal Notes</span>
                 <textarea
                   className="drawer-textarea"
@@ -1526,7 +1529,7 @@ function TradesPageContent() {
                   value={draftNotes}
                   onChange={e => setDraftNotes(e.target.value)}
                 />
-              </div>
+              </div>}
             </div>
 
             <div className="drawer-footer">

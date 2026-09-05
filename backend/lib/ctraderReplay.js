@@ -271,16 +271,45 @@ function stripBrokerSuffix(normalized) {
 // The account's actual tradable symbol names, so callers can offer a picker
 // instead of having the user guess a broker-specific spelling (the same
 // guesswork SYMBOL_ALIASES exists to paper over further down the pipeline).
+//
+// Unlike getTrendbars (which has a specific trade/account to target),
+// there's no way to know which of the owner's connections is "right" here --
+// and a connection can be a stored token cTrader itself no longer recognizes
+// (the account was removed/deactivated on the broker's side after we saved
+// it) without that being visible from our side until we try to use it. So
+// this tries every connection, most recently connected first, instead of
+// hard-failing on whichever happens to be oldest.
 async function listAccountSymbols({ userId, preferredCtidTraderAccountId }) {
-  const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
-  if (!connectionInfo) {
+  if (preferredCtidTraderAccountId) {
+    const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
+    if (!connectionInfo) {
+      const err = new Error('cTrader is not connected. Connect it on the Accounts page.');
+      err.code = 'NOT_CONNECTED';
+      throw err;
+    }
+    const client = await getAuthenticatedClient(connectionInfo);
+    const cache = await getSymbolCache(client, connectionInfo.ctidTraderAccountId);
+    return [...cache.bySymbolName.keys()].sort();
+  }
+
+  const connections = await listConnections(userId);
+  if (!connections.length) {
     const err = new Error('cTrader is not connected. Connect it on the Accounts page.');
     err.code = 'NOT_CONNECTED';
     throw err;
   }
-  const client = await getAuthenticatedClient(connectionInfo);
-  const cache = await getSymbolCache(client, connectionInfo.ctidTraderAccountId);
-  return [...cache.bySymbolName.keys()].sort();
+  let lastError = null;
+  for (const connection of [...connections].reverse()) {
+    try {
+      const connectionInfo = await refreshConnectionIfNeeded(connection, userId);
+      const client = await getAuthenticatedClient(connectionInfo);
+      const cache = await getSymbolCache(client, connectionInfo.ctidTraderAccountId);
+      return [...cache.bySymbolName.keys()].sort();
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // The core Replay data call: historical candles for one symbol/window from

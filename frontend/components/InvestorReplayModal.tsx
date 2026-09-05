@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
 import { X, Loader2, AlertTriangle, Play, Pause, SkipBack, SkipForward, LogIn, LogOut } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 
@@ -40,6 +40,7 @@ export default function InvestorReplayModal({ tradeId, tradeSummary, onClose }: 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -87,6 +88,7 @@ export default function InvestorReplayModal({ tradeId, tradeSummary, onClose }: 
       wickUpColor: '#10b981', wickDownColor: '#ef4444',
     });
     seriesRef.current = series;
+    markersRef.current = createSeriesMarkers(series, []);
     series.createPriceLine({
       price: replayData.entryPrice,
       color: replayData.direction === 'BUY' ? '#10b981' : '#ef4444',
@@ -101,14 +103,35 @@ export default function InvestorReplayModal({ tradeId, tradeSummary, onClose }: 
 
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
+    return () => { ro.disconnect(); markersRef.current?.detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; markersRef.current = null; };
   }, [replayData, resolvedTheme]);
 
   // Reveals candles up to replayIdx, replaying the trade forward.
   useEffect(() => {
-    if (!replayData || !seriesRef.current) return;
+    if (!replayData || !seriesRef.current || !markersRef.current) return;
     seriesRef.current.setData(replayData.candles.slice(0, replayIdx + 1));
-    if (replayIdx === 0) chartRef.current?.timeScale().fitContent();
+    const markers: SeriesMarker<Time>[] = [];
+    if (replayIdx >= replayData.entryIndex) {
+      markers.push({
+        time: replayData.candles[replayData.entryIndex].time as UTCTimestamp,
+        position: replayData.direction === 'BUY' ? 'belowBar' : 'aboveBar', color: '#10b981',
+        shape: replayData.direction === 'BUY' ? 'arrowUp' : 'arrowDown', text: replayData.direction, size: 2,
+      });
+    }
+    if (replayIdx >= replayData.exitIndex) {
+      markers.push({
+        time: replayData.candles[replayData.exitIndex].time as UTCTimestamp,
+        position: replayData.direction === 'BUY' ? 'aboveBar' : 'belowBar',
+        color: replayData.pnlUSD >= 0 ? '#10b981' : '#ef4444', shape: 'square',
+        text: `${replayData.pnlUSD >= 0 ? '+' : ''}$${fmt(replayData.pnlUSD)}`, size: 1,
+      });
+    }
+    markersRef.current.setMarkers(markers);
+    // Re-fit to whatever's revealed so far on every tick -- not just once at
+    // the start -- so the entry/exit price lines scroll into view reliably
+    // as soon as their candle is reached, instead of staying pinned to
+    // whatever narrow price range the very first candle happened to have.
+    chartRef.current?.timeScale().fitContent();
   }, [replayData, replayIdx]);
 
   const jumpToReplayIndex = useCallback((index: number) => {
@@ -116,7 +139,6 @@ export default function InvestorReplayModal({ tradeId, tradeSummary, onClose }: 
     const clamped = Math.max(0, Math.min(replayData.candles.length - 1, index));
     setPlaying(false);
     setReplayIdx(clamped);
-    chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, clamped - 30), to: Math.min(replayData.candles.length - 1, clamped + 10) });
   }, [replayData]);
 
   useEffect(() => {

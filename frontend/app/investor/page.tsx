@@ -94,12 +94,12 @@ export default function InvestorDashboardPage() {
   }
 
   if (loading && !summary) {
-    return <main className="page-content"><div className="loading-wrap" style={{ minHeight: '60vh' }}><Loader2 className="spin" size={22} /></div></main>;
+    return <main className="page-content investor-view"><div className="loading-wrap" style={{ minHeight: '60vh' }}><Loader2 className="spin" size={22} /></div></main>;
   }
 
   if (error) {
     return (
-      <main className="page-content">
+      <main className="page-content investor-view">
         <div className="empty-state">
           <div className="empty-icon"><AlertTriangle size={24} color="var(--red)" /></div>
           <h3>Couldn't load this view</h3>
@@ -124,7 +124,7 @@ export default function InvestorDashboardPage() {
   ];
 
   return (
-    <main className="page-content">
+    <main className="page-content investor-view">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

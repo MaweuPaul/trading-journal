@@ -2570,6 +2570,13 @@ body:has(.login-container) .main-content {
   padding: 0 !important;
 }
 
+/* Investor dashboard has no Sidebar (see Sidebar.tsx's path check), so the
+   240px margin .main-content normally reserves for it just wastes space
+   and clips wide content (like the trades table) instead of using it. */
+body:has(.investor-view) .main-content {
+  margin-left: 0 !important;
+}
+
 /* User Profile and Sign out widget inside Sidebar */
 .user-profile-widget {
   display: flex;

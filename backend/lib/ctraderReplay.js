@@ -190,7 +190,7 @@ const SYMBOL_ALIASES = {
   DOGECOIN: ['DOGEUSD', 'DOGEUSDT'],
 };
 
-async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
+async function getSymbolCache(client, ctidTraderAccountId) {
   let cache = symbolCache.get(ctidTraderAccountId);
   if (!cache || Date.now() - cache.fetchedAt > SYMBOL_CACHE_TTL_MS) {
     const res = await client.request(PAYLOAD_TYPE.SYMBOLS_LIST_REQ, {
@@ -207,6 +207,11 @@ async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
     cache = { fetchedAt: Date.now(), bySymbolName, strippedIndex };
     symbolCache.set(ctidTraderAccountId, cache);
   }
+  return cache;
+}
+
+async function resolveSymbolId(client, ctidTraderAccountId, symbolName) {
+  const cache = await getSymbolCache(client, ctidTraderAccountId);
 
   const tryMatch = candidate => {
     const normalized = normalizeSymbolForCTrader(candidate);
@@ -263,6 +268,21 @@ function stripBrokerSuffix(normalized) {
   return normalized.replace(/[mn+\.]+$/i, '');
 }
 
+// The account's actual tradable symbol names, so callers can offer a picker
+// instead of having the user guess a broker-specific spelling (the same
+// guesswork SYMBOL_ALIASES exists to paper over further down the pipeline).
+async function listAccountSymbols({ userId, preferredCtidTraderAccountId }) {
+  const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
+  if (!connectionInfo) {
+    const err = new Error('cTrader is not connected. Connect it on the Accounts page.');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+  const client = await getAuthenticatedClient(connectionInfo);
+  const cache = await getSymbolCache(client, connectionInfo.ctidTraderAccountId);
+  return [...cache.bySymbolName.keys()].sort();
+}
+
 // The core Replay data call: historical candles for one symbol/window from
 // the owner's connected cTrader account.
 async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferredCtidTraderAccountId }) {
@@ -311,4 +331,4 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };
 }
 
-module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient };
+module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols };

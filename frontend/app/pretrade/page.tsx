@@ -37,6 +37,16 @@ function PreTradeAnalysisContent() {
   const [direction, setDirection] = useState<'long' | 'short' | ''>('');
   const [notes, setNotes] = useState('');
   const [responses, setResponses] = useState<Record<string, unknown>>({});
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch('/api/pre-trade-analyses/symbols', { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : { symbols: [] })
+      .then(data => setAvailableSymbols(Array.isArray(data.symbols) ? data.symbols : []))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) { setError('No pre-trade analysis specified.'); setLoading(false); return; }
@@ -137,7 +147,10 @@ function PreTradeAnalysisContent() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
           <label>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Symbol</span>
-            <input type="text" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. XAUUSD" style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
+            <input type="text" list="pretrade-symbol-options" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. XAUUSD" style={{ width: '100%', minHeight: 40, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
+            <datalist id="pretrade-symbol-options">
+              {availableSymbols.map(s => <option key={s} value={s} />)}
+            </datalist>
           </label>
           <label>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Direction</span>

@@ -4,7 +4,7 @@ const { v2: cloudinary } = require('cloudinary');
 const PreTradeAnalysis = require('../models/PreTradeAnalysis');
 const auth = require('../middleware/auth');
 const { getPlaybooks } = require('./trades');
-const { getTrendbars } = require('../lib/ctraderReplay');
+const { getTrendbars, listAccountSymbols } = require('../lib/ctraderReplay');
 const { normalizePretradeAnnotations } = require('../lib/pretradeAnnotations');
 
 function ownerOnly(req, res, next) {
@@ -35,6 +35,21 @@ router.get('/pre-trade-analyses/chart', auth, ownerOnly, async (req, res) => {
     const setupCodes = new Set(['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED']);
     const status = setupCodes.has(err.code) ? 503 : err.code === 'SYMBOL_NOT_FOUND' ? 422 : 502;
     res.status(status).json({ error: err.message, code: err.code || 'CTRADER_ERROR', setup: setupCodes.has(err.code) });
+  }
+});
+
+// GET /pre-trade-analyses/symbols  the connected account's actual tradable
+// symbol names, so the chart's symbol field can offer real spellings instead
+// of the user guessing a broker-specific name (a datalist, not a required
+// selection -- typing something not in this list still works).
+router.get('/pre-trade-analyses/symbols', auth, ownerOnly, async (req, res) => {
+  try {
+    const symbols = await listAccountSymbols({ userId: req.user.userId });
+    res.json({ symbols });
+  } catch (err) {
+    const setupCodes = new Set(['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED']);
+    const status = setupCodes.has(err.code) ? 503 : 502;
+    res.status(status).json({ error: err.message, code: err.code || 'CTRADER_ERROR' });
   }
 });
 

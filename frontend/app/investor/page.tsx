@@ -118,6 +118,9 @@ export default function InvestorDashboardPage() {
     { label: 'Win Rate', icon: Percent, iconCls: 'green', value: `${summary.winRate.toFixed(1)}%`, cardCls: 'green-card' },
     { label: 'Profit Factor', icon: Award, iconCls: 'amber', value: summary.profitFactor >= 999 ? '∞' : summary.profitFactor.toFixed(2), cardCls: 'blue-card' },
     { label: 'Max Drawdown', icon: AlertTriangle, iconCls: summary.maxDrawdownPct > 10 ? 'red' : 'amber', value: `${summary.maxDrawdownPct.toFixed(2)}%`, cls: summary.maxDrawdownPct > 10 ? 'red' : '', cardCls: 'red-card' },
+    { label: 'Avg Win', icon: TrendingUp, iconCls: 'green', value: fmtUSD(summary.avgWinUSD), cls: 'green', cardCls: 'green-card' },
+    { label: 'Avg Loss', icon: TrendingDown, iconCls: 'red', value: fmtUSD(summary.avgLossUSD), cls: 'red', cardCls: 'red-card' },
+    { label: 'Expectancy', icon: DollarSign, iconCls: summary.expectancyUSD >= 0 ? 'green' : 'red', value: `${summary.expectancyUSD >= 0 ? '+' : ''}${fmtUSD(summary.expectancyUSD)}`, cls: summary.expectancyUSD >= 0 ? 'green' : 'red', cardCls: summary.expectancyUSD >= 0 ? 'green-card' : 'red-card' },
   ];
 
   return (

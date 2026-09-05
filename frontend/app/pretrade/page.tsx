@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ClipboardList, Save, Trash2 } from 'lucide-react';
 import PlaybookRuleInput from '@/components/PlaybookRuleInput';
+import PreTradeChart, { type ChartAnnotation } from '@/components/PreTradeChart';
 import type { PlaybookSnapshot } from '@/types/playbook';
 import { PLAN_PHASE_CATEGORIES } from '@/types/playbook';
 
@@ -16,6 +17,9 @@ interface PreTradeAnalysis {
   direction: 'long' | 'short' | '';
   notes: string;
   status: 'open' | 'linked' | 'archived';
+  chartSymbol?: string;
+  chartInterval?: string;
+  chartAnnotations?: ChartAnnotation[];
 }
 
 function PreTradeAnalysisContent() {
@@ -145,6 +149,13 @@ function PreTradeAnalysisContent() {
           </label>
         </div>
       </div>
+
+      <PreTradeChart
+        analysisId={analysis._id}
+        symbol={symbol}
+        initialInterval={analysis.chartInterval}
+        initialAnnotations={analysis.chartAnnotations || []}
+      />
 
       {planBlocks.length === 0 && (
         <div className="empty-state"><p>This playbook has no Plan-phase blocks (concept/context/setup/entry/risk).</p></div>

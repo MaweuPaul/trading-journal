@@ -19,6 +19,13 @@ const preTradeAnalysisSchema = new mongoose.Schema({
 
   status: { type: String, enum: ['open', 'linked', 'archived'], default: 'open', index: true },
   linkedTradeId: { type: String, default: '' },
+
+  // Manually-drawn chart markup (PDH/PDL, session highs/lows, sweeps, etc.) --
+  // the levels themselves are never computed by the backend, only stored.
+  chartSymbol: { type: String, default: '' },
+  chartInterval: { type: String, default: '15min' },
+  chartAnnotations: { type: mongoose.Schema.Types.Mixed, default: [] },
+  screenshots: { type: [mongoose.Schema.Types.Mixed], default: [] },
 }, { timestamps: true });
 
 module.exports = mongoose.model('PreTradeAnalysis', preTradeAnalysisSchema);

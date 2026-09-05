@@ -64,8 +64,8 @@ export default function SignupPage() {
         <div className="login-card">
           <div className="login-header">
             <div className="login-logo"><TrendingUp size={24} /></div>
-            <h2>Save your MT5 sync secret</h2>
-            <p>This is shown once. Paste it into your local sync.py's .env as SYNC_SECRET to connect your MT5 terminal.</p>
+            <h2>Save your sync key</h2>
+            <p>This is shown once. Paste it into the Desktop Sync App on the Accounts page to connect it to your account — no manual setup needed.</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', margin: '4px 0 16px' }}>
             <code style={{ flex: 1, fontSize: 12.5, wordBreak: 'break-all', color: 'var(--text-primary)' }}>{syncSecret}</code>

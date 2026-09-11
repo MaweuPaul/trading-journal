@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradeJournal Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f2e6;
+    --surface: #fffcf5;
+    --surface-2: #f1ead9;
+    --border: #e1d6bc;
+    --text: #2a2416;
+    --text-muted: #6e6650;
+    --text-faint: #948c73;
+    --accent: #9c6f0e;
+    --accent-strong: #7a5709;
+    --accent-soft: #f0e2b8;
+    --green: #14795a;
+    --red: #b13a3a;
+    --code-bg: #eee4c9;
+    --shadow: 0 1px 2px rgba(42,36,22,.06), 0 8px 24px rgba(42,36,22,.06);
+    --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --font-body: 'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14110b;
+      --surface: #1b1710;
+      --surface-2: #221c13;
+      --border: #332b1c;
+      --text: #ede4d0;
+      --text-muted: #a89c81;
+      --text-faint: #756a54;
+      --accent: #d4af37;
+      --accent-strong: #f0c454;
+      --accent-soft: #3a2f13;
+      --green: #34d399;
+      --red: #f28b8b;
+      --code-bg: #241d10;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14110b;
+    --surface: #1b1710;
+    --surface-2: #221c13;
+    --border: #332b1c;
+    --text: #ede4d0;
+    --text-muted: #a89c81;
+    --text-faint: #756a54;
+    --accent: #d4af37;
+    --accent-strong: #f0c454;
+    --accent-soft: #3a2f13;
+    --green: #34d399;
+    --red: #f28b8b;
+    --code-bg: #241d10;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15.5px;
+    line-height: 1.62;
+  }
+  h1, h2, h3, h4 { font-family: var(--font-display); text-wrap: balance; color: var(--text); margin: 0; }
+  a { color: var(--accent-strong); }
+  code, .kbd { font-family: var(--font-mono); }
+  ::selection { background: var(--accent-soft); }
+  img { max-width: 100%; }
+
+  .toolbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .toolbar button {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+    padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); cursor: pointer;
+  }
+  .toolbar button:hover { border-color: var(--accent); color: var(--accent-strong); }
+  .toolbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .page { display: flex; min-height: 100vh; max-width: 1280px; margin: 0 auto; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 252px;
+    flex: none;
+    position: sticky;
+    top: 49px;
+    align-self: flex-start;
+    height: calc(100vh - 49px);
+    overflow-y: auto;
+    padding: 28px 18px 40px;
+    border-right: 1px solid var(--border);
+    scrollbar-width: thin;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 22px; padding: 0 6px;
+  }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(155deg, var(--accent-strong), var(--accent));
+    display: grid; place-items: center; flex: none;
+    box-shadow: var(--shadow);
+  }
+  .brand-mark svg { width: 16px; height: 16px; }
+  .brand-name { font-family: var(--font-display); font-weight: 600; font-size: 16.5px; letter-spacing: .01em; }
+  .brand-sub { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .09em; margin-top: -2px; }
+
+  .nav-group { margin-bottom: 4px; }
+  .nav-group-label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--text-faint); padding: 14px 10px 6px;
+  }
+  .nav-link {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 6px 10px; border-radius: 7px;
+    color: var(--text-muted); text-decoration: none;
+    font-size: 13.4px; font-weight: 500;
+    border-left: 2px solid transparent;
+  }
+  .nav-link .n { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
+  .nav-link:hover { background: var(--surface-2); color: var(--text); }
+  .nav-link.active { background: var(--accent-soft); color: var(--accent-strong); border-left-color: var(--accent); font-weight: 600; }
+
+  /* ---------- Content ---------- */
+  .content { flex: 1; min-width: 0; padding: 44px clamp(20px, 5vw, 64px) 120px; }
+  .content-inner { max-width: 700px; }
+
+  .manual-header { max-width: 760px; margin-bottom: 56px; }
+  .manual-eyebrow {
+    font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent-strong); margin-bottom: 14px; display: block;
+  }
+  .manual-header h1 { font-size: clamp(32px, 4.4vw, 44px); font-weight: 600; line-height: 1.08; margin-bottom: 16px; }
+  .manual-header .lede { font-size: 16.5px; color: var(--text-muted); max-width: 58ch; }
+  .header-stack {
+    display: flex; flex-wrap: wrap; gap: 10px 26px; margin-top: 26px;
+    padding-top: 20px; border-top: 1px solid var(--border);
+  }
+  .stack-item { font-size: 12.5px; color: var(--text-muted); }
+  .stack-item b { color: var(--text); font-weight: 600; }
+
+  section.chapter { max-width: 700px; padding-top: 30px; margin-top: 6px; border-top: 1px solid var(--border); scroll-margin-top: 24px; }
+  section.chapter:first-of-type { border-top: none; }
+  .chapter-kicker {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  }
+  .chapter-num {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-faint);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px;
+  }
+  .chapter-route { font-family: var(--font-mono); font-size: 12px; color: var(--accent-strong); }
+  h2.chapter-title { font-size: 27px; font-weight: 600; margin-bottom: 8px; }
+  .chapter-purpose { color: var(--text-muted); font-size: 15px; margin-bottom: 22px; max-width: 62ch; }
+
+  h3.sub { font-family: var(--font-body); font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-faint); margin: 26px 0 10px; }
+  h3.sub:first-of-type { margin-top: 0; }
+
+  ul.feature-list { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 9px; }
+  ul.feature-list > li { position: relative; padding-left: 19px; color: var(--text); font-size: 14.6px; }
+  ul.feature-list > li::before {
+    content: ''; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+  }
+  ul.feature-list > li b { font-weight: 600; }
+  ul.feature-list > li .muted { color: var(--text-muted); }
+  ul.feature-list ul { margin: 8px 0 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  ul.feature-list ul > li { padding-left: 15px; font-size: 13.6px; color: var(--text-muted); }
+  ul.feature-list ul > li::before { content: '–'; position: static; background: none; width: auto; height: auto; margin-right: 6px; color: var(--text-faint); }
+
+  .callout {
+    display: flex; gap: 12px; margin: 18px 0; padding: 13px 15px;
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 0 9px 9px 0; box-shadow: var(--shadow);
+  }
+  .callout .icon { flex: none; font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--accent-strong);
+    letter-spacing: .08em; text-transform: uppercase; padding-top: 1px; }
+  .callout p { margin: 0; font-size: 13.6px; color: var(--text-muted); }
+  .callout p b { color: var(--text); font-weight: 600; }
+  .callout.warn { border-left-color: var(--red); }
+  .callout.warn .icon { color: var(--red); }
+
+  .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 16px 0 8px; }
+  .kv-card { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 11px 13px; }
+  .kv-card .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-faint); margin-bottom: 4px; }
+  .kv-card .value { font-family: var(--font-mono); font-size: 13px; color: var(--text); font-weight: 600; }
+
+  .steps { counter-reset: step; margin: 14px 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+  .steps > li { position: relative; padding-left: 34px; counter-increment: step; font-size: 14.4px; }
+  .steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: -1px;
+    width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent-strong); font-family: var(--font-mono); font-size: 11.5px; font-weight: 700;
+  }
+  .steps > li b { display: block; margin-bottom: 2px; }
+  .steps > li span.d { color: var(--text-muted); font-size: 13.6px; }
+
+  table.ref { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.4px; }
+  table.ref th, table.ref td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.ref th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 600; }
+  table.ref td.term { font-family: var(--font-mono); font-weight: 600; color: var(--accent-strong); white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+
+  .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .pill { font-family: var(--font-mono); font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted); }
+
+  .kbd-row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; }
+  .kbd-pair { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); }
+  .kbd { background: var(--code-bg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 2px 7px; font-size: 11.5px; color: var(--text); }
+
+  .end-note { max-width: 700px; margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; }
+
+  @media (max-width: 880px) {
+    .sidebar { display: none; }
+    .content { padding: 28px 20px 90px; }
+  }
+
+  @media print {
+    :root { --shadow: none; }
+    .toolbar { display: none; }
+    .sidebar { display: none; }
+    .page { display: block; max-width: none; }
+    .content { padding: 0 6mm; }
+    .content-inner { max-width: none; }
+    section.chapter, .manual-header { max-width: none; }
+    .callout, .kv-card { box-shadow: none; }
+    section.chapter { break-before: page; border-top: none; padding-top: 8mm; }
+    section.chapter:first-of-type { break-before: auto; }
+    .callout, .kv-grid, table.ref, .pill-row, .steps { break-inside: avoid; }
+    a { color: var(--accent-strong); text-decoration: none; }
+    body { font-size: 12.5px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button type="button" onclick="window.print()">🖨️ Save as PDF / Print</button>
+</div>
+
+<div class="page">
+  <aside class="sidebar" aria-label="Manual contents">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 17L9 11L13 15L21 6" stroke="#14110b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">TradeJournal</div>
+        <div class="brand-sub">User Manual</div>
+      </div>
+    </div>
+
+    <nav>
+      <div class="nav-group">
+        <a class="nav-link" href="#getting-started"><span class="n">00</span> Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Journal</div>
+        <a class="nav-link" href="#dashboard"><span class="n">01</span> Dashboard</a>
+        <a class="nav-link" href="#trades"><span class="n">02</span> Trades</a>
+        <a class="nav-link" href="#calendar"><span class="n">03</span> Calendar</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Analysis</div>
+        <a class="nav-link" href="#analytics"><span class="n">04</span> Analytics</a>
+        <a class="nav-link" href="#performance"><span class="n">05</span> Performance</a>
+        <a class="nav-link" href="#edge-coach"><span class="n">06</span> Edge Coach</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Strategy</div>
+        <a class="nav-link" href="#playbooks"><span class="n">07</span> Playbooks</a>
+        <a class="nav-link" href="#pretrade"><span class="n">08</span> Pre-Trade Analysis</a>
+        <a class="nav-link" href="#knowledge"><span class="n">09</span> Knowledge Base</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Account &amp; data</div>
+        <a class="nav-link" href="#accounts"><span class="n">10</span> Accounts &amp; syncing</a>
+        <a class="nav-link" href="#backup"><span class="n">11</span> Backup &amp; export</a>
+        <a class="nav-link" href="#investor"><span class="n">12</span> Investor mode</a>
+      </div>
+      <div class="nav-group">
+        <a class="nav-link" href="#glossary"><span class="n">—</span> Glossary</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <div class="content-inner">
+
+      <header class="manual-header">
+        <span class="manual-eyebrow">Reference guide</span>
+        <h1>Everything TradeJournal does, page by page.</h1>
+        <p class="lede">TradeJournal is a self-hosted journal that syncs your closed trades from MT5 or cTrader, then helps you turn that history into an edge — through statistics, a chart-annotated pre-trade checklist, and a coach that looks for the psychological patterns behind your P&amp;L.</p>
+        <div class="header-stack">
+          <div class="stack-item"><b>12</b> sections</div>
+          <div class="stack-item"><b>MT5 + cTrader</b> data sources</div>
+          <div class="stack-item"><b>Owner &amp; investor</b> access levels</div>
+        </div>
+      </header>
+
+      <!-- 00 GETTING STARTED -->
+      <section class="chapter" id="getting-started">
+        <div class="chapter-kicker"><span class="chapter-num">00</span></div>
+        <h2 class="chapter-title">Getting started</h2>
+        <p class="chapter-purpose">The shortest path from a fresh account to seeing your first synced trade on the Dashboard.</p>
+
+        <h3 class="sub">The two ways trades get in</h3>
+        <ul class="feature-list">
+          <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>
+          <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader's own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader's API — no desktop app needed.</li>
+        </ul>
+
+        <h3 class="sub">First-time setup</h3>
+        <ol class="steps">
+          <li><b>Create your account</b><span class="d">Sign up with your name, email, and a password (8+ characters). You're taken straight to the Dashboard.</span></li>
+          <li><b>Connect a broker account</b><span class="d">Open Accounts in the sidebar and either add an MT5 login (you'll need its investor/read-only password) or connect cTrader through the OAuth button.</span></li>
+          <li><b>Start syncing</b><span class="d">For MT5: generate your personal sync key, install the Desktop Sync App, paste the key in, and click Start Sync. For cTrader: click Sync Now whenever you want fresh trades.</span></li>
+          <li><b>Watch the Dashboard fill in</b><span class="d">Balance, win rate, and the equity curve populate automatically once trades arrive. Everything else — journaling, playbooks, analytics — builds on top of that history.</span></li>
+        </ol>
+
+        <div class="callout">
+          <span class="icon">Good to know</span>
+          <p>Trades themselves are <b>read-only</b> everywhere in the app — TradeJournal never edits your price, lot size, or P&amp;L. What you add on top (notes, grades, playbook answers, screenshots, tags) is the "journal" part.</p>
+        </div>
+      </section>
+
+      <!-- 01 DASHBOARD -->
+      <section class="chapter" id="dashboard">
+        <div class="chapter-kicker"><span class="chapter-num">01</span><span class="chapter-route">/</span></div>
+        <h2 class="chapter-title">Dashboard</h2>
+        <p class="chapter-purpose">A live, auto-refreshing overview of account health — balance, edge metrics, cash flow, and the equity curve.</p>
+
+        <h3 class="sub">Key metrics</h3>
+        <div class="kv-grid">
+          <div class="kv-card"><div class="label">Account balance</div><div class="value">Live from MT5/cTrader</div></div>
+          <div class="kv-card"><div class="label">Win rate</div><div class="value">+ avg win / avg loss</div></div>
+          <div class="kv-card"><div class="label">Expectancy</div><div class="value">$ per trade</div></div>
+          <div class="kv-card"><div class="label">Avg R</div><div class="value">Trades with a recorded stop</div></div>
+          <div class="kv-card"><div class="label">Streaks</div><div class="value">Current win / loss run</div></div>
+          <div class="kv-card"><div class="label">Drawdown</div><div class="value">Current vs. max</div></div>
+          <div class="kv-card"><div class="label">Profit factor</div><div class="value">Gross profit ÷ gross loss</div></div>
+        </div>
+
+        <h3 class="sub">Controls</h3>
+        <ul class="feature-list">
+          <li><b>Time range</b> <span class="muted">— All Time, Today, 7/30 Days, 3/6 Months.</span></li>
+          <li><b>View: Tickets vs. Setups</b> <span class="muted">— Setups rolls re-entry trades up under their original parent, so a scaled-in position counts as one setup instead of three separate tickets.</span></li>
+          <li><b>Account selector</b> <span class="muted">— appears once you've connected more than one broker account; scopes every number on the page to just that account.</span></li>
+        </ul>
+
+        <h3 class="sub">Cash flow &amp; equity curve</h3>
+        <ul class="feature-list">
+          <li>A running total of <b>Deposits</b>, <b>Withdrawals</b>, and <b>Net Cash Flow</b> for the selected range, with Deposit / Withdrawal buttons for logging manual cash movements (amount, date, note). Manually-logged entries can be deleted; entries synced from your broker cannot.</li>
+          <li>The <b>Equity Curve</b> plots balance over time — hover any point for that day's exact balance and P&amp;L.</li>
+        </ul>
+
+        <h3 class="sub">Maintenance tools</h3>
+        <ul class="feature-list">
+          <li><b>Resync</b> <span class="muted">— requests a fresh pull from your broker (the Desktop Sync App or cTrader connection needs to be active).</span></li>
+          <li><b>Remove duplicates</b> <span class="muted">— de-dupes any doubled-up trade rows, with a confirmation first.</span></li>
+          <li><b>Fix Balances</b> <span class="muted">— re-anchors every trade's running balance from a current MT5 balance you type in. Pick a single account first if you have more than one connected.</span></li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Tip</span>
+          <p>A warning banner appears whenever the numbers on screen are blending more than one broker account — balance and drawdown aren't meaningful mixed together, so switch to the account selector when you see it.</p>
+        </div>
+      </section>
+
+      <!-- 02 TRADES -->
+      <section class="chapter" id="trades">
+        <div class="chapter-kicker"><span class="chapter-num">02</span><span class="chapter-route">/trades</span></div>
+        <h2 class="chapter-title">Trades</h2>
+        <p class="chapter-purpose">Your full trade log — and the place where journaling, playbook answers, and screenshots actually get attached to each trade.</p>
+
+        <h3 class="sub">Finding trades</h3>
+        <ul class="feature-list">
+          <li>Filter by <b>Symbol</b>, <b>Direction</b>, <b>Account type</b> (Live/Demo), <b>Trading account</b>, and a date range — filters are saved in the URL, so a filtered view can be bookmarked or shared.</li>
+          <li><b>Group by session</b> clusters trades under Tokyo / London / London–NY Overlap / New York / Pacific headers, each with its own trade count, net P&amp;L, and win rate.</li>
+          <li>Re-entries appear nested under their parent trade (indented, tagged "RE-ENT of #ticket"); trades sharing a position get a colored stripe down the left edge.</li>
+        </ul>
+
+        <h3 class="sub">The Journal Drawer</h3>
+        <p style="color:var(--text-muted);font-size:14px;margin-bottom:12px">Click any row to open it. This is where a closed trade turns into a journaled one.</p>
+        <ul class="feature-list">
+          <li><b>Post-Trade Review</b> <span class="muted">— Analysis Grade and Execution Grade (A–F), scored separately so you can see when good analysis met poor execution, or vice versa.</span></li>
+          <li><b>Strategy Playbook</b> <span class="muted">— attach a published playbook; your answers to its rule checklist are saved per-trade, organized into phase tabs with an "X / Y answered" counter. Rules that require a screenshot accept a pasted image (Ctrl+V) or file upload.</span></li>
+          <li><b>Inherit From Pre-Trade Analysis</b> <span class="muted">— if you ran a Pre-Trade Analysis for this setup beforehand, one click pulls those answers and notes straight into the trade's journal.</span></li>
+          <li><b>Setup details</b> <span class="muted">— setup type, confirmation tags, planned Risk:Reward, confidence score (1–10), exit reason, and whether you manually intervened on SL/TP.</span></li>
+          <li><b>Re-entry linking</b> <span class="muted">— mark a trade as a re-entry, search for its parent by ticket number, and note why you re-entered. Re-entries skip the full playbook/notes section, since their result rolls into the parent's.</span></li>
+          <li><b>Trade Replay</b> <span class="muted">— opens a candlestick chart of exactly what happened, with Prev/Next buttons to step to the next trade without closing the modal.</span></li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="icon">Not here</span>
+          <p>There's no manual trade entry, price/lot editing, deletion, bulk actions, or CSV export on this page — trades are read-only records from your broker. (Full exports live under Backup.)</p>
+        </div>
+      </section>
+
+      <!-- 03 CALENDAR -->
+      <section class="chapter" id="calendar">
+        <div class="chapter-kicker"><span class="chapter-num">03</span><span class="chapter-route">/calendar</span></div>
+        <h2 class="chapter-title">Calendar</h2>
+        <p class="chapter-purpose">A month grid of daily P&amp;L, for spotting the days and weeks that actually make or break your month.</p>
+
+        <ul class="feature-list">
+          <li>Monthly summary: <b>Net P&amp;L</b>, <b>Consistency Score</b> (% of green days), <b>Best Day</b>, <b>Worst Day</b>.</li>
+          <li>Each day cell shows trade count, net $ (green/red), and either avg R or win rate for that day.</li>
+          <li>Filter by <b>Symbol</b>, <b>Setup Grade</b> (F is labeled "Boredom" setups), and <b>Trading account</b>.</li>
+          <li>A weekly rollup strip below the grid totals each row's P&amp;L and active trading days.</li>
+          <li>Click any day with trades to open a drawer listing that day's trades, each with its own Replay button.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Tip</span>
+          <p>The small <b>"Jump to:"</b> date field does double duty — pick a date and it both flips the calendar to that month <i>and</i> opens that day's trade drawer in one step. Empty days aren't clickable, so nothing happens if you click a blank cell.</p>
+        </div>
+      </section>
+
+      <!-- 04 ANALYTICS -->
+      <section class="chapter" id="analytics">
+        <div class="chapter-kicker"><span class="chapter-num">04</span><span class="chapter-route">/stats</span></div>
+        <h2 class="chapter-title">Analytics</h2>
+        <p class="chapter-purpose">Every dimension your history can be sliced by — instrument, session, direction, mood, grade, and time.</p>
+
+        <h3 class="sub">Breakdowns available</h3>
+        <div class="pill-row">
+          <span class="pill">P&amp;L by session</span>
+          <span class="pill">Buy vs. sell</span>
+          <span class="pill">Setup grade</span>
+          <span class="pill">Emotional state</span>
+          <span class="pill">Strategy tags</span>
+          <span class="pill">P&amp;L by pair</span>
+          <span class="pill">Win rate by pair</span>
+          <span class="pill">Day of week</span>
+          <span class="pill">Monthly P&amp;L</span>
+        </div>
+        <ul class="feature-list">
+          <li><b>Playbook Discipline</b> <span class="muted">— the % of required playbook fields actually completed across your journaled trades; shown as a headline tile alongside Avg Trade Duration, Best Day, and Best Month.</span></li>
+          <li><b>Avg R / Avg Win (R) / Avg Loss (R)</b> <span class="muted">— calculated only from trades where a stop-loss/risk value was recorded.</span></li>
+          <li><b>Psychology &amp; Emotional Mindset Impact</b> <span class="muted">— win rate and P&amp;L broken out by the emotion you logged (Calm, Disciplined, Anxious, Greedy, Fearful, FOMO).</span></li>
+        </ul>
+        <ul class="feature-list">
+          <li><b>View</b>: Tickets vs. Setups, same as the Dashboard.</li>
+          <li><b>Date range</b>: All-Time, Today, 7/30 Days, 3/6 Months.</li>
+          <li><b>Account filter</b>: All accounts or one specific account.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Note</span>
+          <p>Grade, emotion, and tag breakdowns only populate once you've filled that field in on trades — each empty section tells you exactly what to log to unlock it (e.g. "assign a Setup Quality Grade in the journal drawer").</p>
+        </div>
+      </section>
+
+      <!-- 05 PERFORMANCE -->
+      <section class="chapter" id="performance">
+        <div class="chapter-kicker"><span class="chapter-num">05</span><span class="chapter-route">/performance</span></div>
+        <h2 class="chapter-title">Performance</h2>
+        <p class="chapter-purpose">The risk and equity side of the story — where Analytics is categorical, Performance is financial.</p>
+
+        <div class="kv-grid">
+          <div class="kv-card"><div class="label">Net P&amp;L</div><div class="value">+ % account growth</div></div>
+          <div class="kv-card"><div class="label">Profit factor</div><div class="value">Strong / Break-even / Losing</div></div>
+          <div class="kv-card"><div class="label">Expectancy</div><div class="value">Avg $ per trade</div></div>
+          <div class="kv-card"><div class="label">Max drawdown</div><div class="value">Excellent / Acceptable / High risk</div></div>
+        </div>
+
+        <ul class="feature-list">
+          <li><b>Equity Curve</b> <span class="muted">— account balance over time, with a reference line at your starting balance.</span></li>
+          <li><b>Drawdown Chart</b> <span class="muted">— % decline from peak balance, for visualizing losing streaks.</span></li>
+          <li><b>Recent Trade P&amp;L</b> <span class="muted">— bar chart of your last ~40 individual results.</span></li>
+          <li><b>Risk Metrics</b> <span class="muted">— 8 stats: win rate, avg win vs. avg loss, avg R:R, gross profit/loss, largest win/loss, max consecutive wins/losses.</span></li>
+          <li><b>Edge Summary</b> <span class="muted">— an auto-written paragraph summarizing your edge in plain English, ending in a verdict: positive edge, marginal edge, or unprofitable system.</span></li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Tip</span>
+          <p>Long histories are automatically thinned to 300 chart points for readability — the underlying stats still use every trade.</p>
+        </div>
+      </section>
+
+      <!-- 06 EDGE COACH -->
+      <section class="chapter" id="edge-coach">
+        <div class="chapter-kicker"><span class="chapter-num">06</span><span class="chapter-route">/coach</span></div>
+        <h2 class="chapter-title">Edge Coach</h2>
+        <p class="chapter-purpose">Diagnoses the psychology and discipline patterns behind your results — what's actually stopping you from executing your own plan.</p>
+
+        <h3 class="sub">What it surfaces</h3>
+        <ul class="feature-list">
+          <li><b>Early Exits</b> <span class="muted">— how many trades you closed before target, and the R/$ that likely cost you.</span></li>
+          <li><b>Plan Adherence</b> <span class="muted">— % of your own execution checklist you actually followed, shown as a progress ring.</span></li>
+          <li><b>Analysis vs. Execution Grade Gap</b> <span class="muted">— flags when your analysis quality outpaces your execution ("a psychology gap, not a strategy problem").</span></li>
+          <li><b>Manual Intervention</b> <span class="muted">— compares outcomes on trades where you touched SL/TP mid-trade vs. left them alone.</span></li>
+          <li><b>Demo vs. Live Comparison</b>, <b>Strategy Versions</b> <span class="muted">(performance per published playbook version, so edits don't blend with old results), and <b>Lifecycle Stage Compliance</b>.</span></li>
+          <li><b>What Works — Rule Evidence</b> <span class="muted">— win rate per specific playbook answer, tagged strong / developing / insufficient by sample size.</span></li>
+          <li><b>Confidence vs. Actual Win Rate</b> <span class="muted">— tests whether your gut-feel confidence rating actually predicts outcomes.</span></li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Note</span>
+          <p>Almost every panel here only appears once you've logged the field it depends on (exit reason, grades, confidence rating, live/demo tag…). This page rewards thorough journaling more than any other.</p>
+        </div>
+      </section>
+
+      <!-- 07 PLAYBOOKS -->
+      <section class="chapter" id="playbooks">
+        <div class="chapter-kicker"><span class="chapter-num">07</span><span class="chapter-route">/rules</span></div>
+        <h2 class="chapter-title">Playbooks</h2>
+        <p class="chapter-purpose">Build the rulebook your trades get measured against — a versioned checklist spanning a trade's full lifecycle.</p>
+
+        <h3 class="sub">The nine lifecycle stages</h3>
+        <div class="pill-row">
+          <span class="pill">1 Concept</span><span class="pill">2 Market context</span><span class="pill">3 Setup &amp; location</span>
+          <span class="pill">4 Entry confirmation</span><span class="pill">5 Risk plan</span><span class="pill">6 Execution</span>
+          <span class="pill">7 Trade management</span><span class="pill">8 Exit</span><span class="pill">9 Post-trade review</span>
+        </div>
+
+        <h3 class="sub">Building a strategy</h3>
+        <ul class="feature-list">
+          <li><b>New strategy</b> starts a blank draft — nothing saves until you publish.</li>
+          <li>Add a stage via <b>Add recommended stage</b> (pre-filled with 3 starter rules for that category) or <b>Add empty stage</b>. Stages can be renamed, reordered, recategorized, or removed.</li>
+          <li><b>Add rule</b> inside any stage: set its label, answer type (Yes/No, Number, Text, Single/Multiple choice — with sub-formats like Percentage, Currency, R:R, Duration, Rating, Date/Time), and whether it's required.</li>
+          <li>Each rule's <b>More options</b> panel holds: tool role (Observation, Confirmation, Entry trigger, Decision gate, Invalidation, Risk limit, Management action, Exit signal, Review prompt), what happens when it's not satisfied (record only / warn / skip trade / stop session), applicable timeframes, help text, and a <b>trade-screenshot requirement</b> with min/max image counts.</li>
+          <li>Stages and rules can each carry optional reference example images to teach what a "valid" vs. "invalid" setup looks like.</li>
+        </ul>
+
+        <h3 class="sub">Publishing</h3>
+        <ul class="feature-list">
+          <li>Every block/rule needs a name, and you must write a <b>change note of at least 20 characters</b> describing what changed and why — this becomes a permanent part of that version's record.</li>
+          <li>Publishing creates a new <b>immutable version</b>; older versions are never overwritten, so past trades keep pointing at the exact checklist they were judged against.</li>
+          <li><b>Archive</b> retires a strategy without deleting its history. <b>Read playbook</b> opens a clean, read-only view of the published version.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">Tip</span>
+          <p>The strategy panel lists any <b>open Pre-Trade Analyses</b> already started against it, so you can jump back into one mid-setup instead of starting over.</p>
+        </div>
+      </section>
+
+      <!-- 08 PRE-TRADE ANALYSIS -->
+      <section class="chapter" id="pretrade">
+        <div class="chapter-kicker"><span class="chapter-num">08</span><span class="chapter-route">/pretrade</span></div>
+        <h2 class="chapter-title">Pre-Trade Analysis</h2>
+        <p class="chapter-purpose">Run your playbook's checklist <i>before</i> you enter — on a live chart you can draw on — then carry the answers into the real trade once it's taken.</p>
+
+        <h3 class="sub">Starting one</h3>
+        <ul class="feature-list">
+          <li>From Playbooks, click <b>Start Pre-Trade Analysis</b> on any strategy. It locks in that strategy's current published version and shows only its <b>Plan-phase</b> stages — Concept, Market context, Setup, Entry confirmation, and Risk plan — since Execution/Management/Exit/Review can't apply before a trade exists.</li>
+          <li>Answer the same rule checklist you'd fill in on a real trade. Screenshot-required rules simply note that confirmation will be requested later, once inherited into an actual trade.</li>
+        </ul>
+
+        <h3 class="sub">The chart</h3>
+        <p style="color:var(--text-muted);font-size:14px;margin-bottom:10px">A candlestick chart loads for whatever symbol you type — with the same drawing toolset as Trade Replay, so you can mark up key levels yourself instead of the app guessing them for you.</p>
+        <div class="pill-row">
+          <span class="pill">Zone (rectangle)</span><span class="pill">Trend line</span><span class="pill">Price level</span>
+          <span class="pill">Arrow</span><span class="pill">Text note</span><span class="pill">Image evidence</span>
+          <span class="pill">Select / move</span><span class="pill">Undo</span><span class="pill">Delete</span>
+        </div>
+        <ul class="feature-list">
+          <li>Type a symbol and a <b>datalist</b> suggests real names from your connected broker account, so you're not guessing a spelling like "USTEC" vs. "NAS100" vs. "US100" yourself.</li>
+          <li>Choose a <b>timeframe</b> (1m–1D) and <b>lookback window</b> (2–30 days) to bring the right amount of history into view.</li>
+          <li>Use the drawing tools to mark <b>Previous Day High/Low</b>, <b>Previous Week High/Low</b>, and the <b>Asian / London session</b> highs and lows — then look for price to either <b>sweep</b> through one (a liquidity grab that reverses) or <b>continue</b> through it (a breakout).</li>
+          <li>Everything — chart symbol, timeframe, and every annotation — <b>autosaves</b> a moment after you stop drawing.</li>
+        </ul>
+
+        <h3 class="sub">Bringing it into a real trade</h3>
+        <ul class="feature-list">
+          <li>When the trade actually happens and syncs in, open its Journal Drawer and use <b>Inherit From Pre-Trade Analysis</b> to pull the playbook answers and notes across in one click.</li>
+        </ul>
+
+        <div class="callout">
+          <span class="icon">By design</span>
+          <p>TradeJournal never calculates PDH/PDL or session levels for you — marking them is a manual, deliberate act, the same way you'd draw on a chart in your trading platform. The chart just gives you a canvas.</p>
+        </div>
+      </section>
+
+      <!-- 09 KNOWLEDGE BASE -->
+      <section class="chapter" id="knowledge">
+        <div class="chapter-kicker"><span class="chapter-num">09</span><span class="chapter-route">/knowledge</span></div>
+        <h2 class="chapter-title">Knowledge Base</h2>
+        <p class="chapter-purpose">A free-form, searchable notebook for anything that isn't tied to one specific trade — broker quirks, market-structure ideas, session notes.</p>
+
+        <ul class="feature-list">
+          <li><b>New Entry</b> opens a drawer with a Title, free-text Notes body, and comma-separated Tags.</li>
+          <li>A live search box filters entries by title/content as you type.</li>
+          <li>Entries display as cards: title, a short preview, tags, screenshot count, and date.</li>
+          <li>Attach screenshots by uploading a file — or by <b>pasting an image straight from your clipboard</b> (Ctrl+V) while the entry drawer is open.</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="icon">Order matters</span>
+          <p>A brand-new entry has to be saved once before you can attach screenshots to it — the drawer will prompt you to save first.</p>
+        </div>
+      </section>
+
+      <!-- 10 ACCOUNTS -->
+      <section class="chapter" id="accounts">
+        <div class="chapter-kicker"><span class="chapter-num">10</span><span class="chapter-route">/accounts</span></div>
+        <h2 class="chapter-title">Accounts &amp; syncing</h2>
+        <p class="chapter-purpose">Where every broker connection, the Desktop Sync App, and investor access are all managed.</p>
+
+        <h3 class="sub">Connecting MT5</h3>
+        <ol class="steps">
+          <li><b>Add account</b><span class="d">Give it a label, your MT5 login number, broker server, and your MT5 <i>investor</i> (read-only) password — never your trading password. Optionally map journal symbol names to broker-specific ones (e.g. <code>XAUUSD:XAUUSDm</code>) under Advanced symbol mapping.</span></li>
+          <li><b>Generate your sync key</b><span class="d">Under "Your personal sync key," click Generate / rotate. It's shown once — copy it immediately.</span></li>
+          <li><b>Install the Desktop Sync App</b><span class="d">Download it, paste in your sync key, and click Start Sync. This small Windows app is what actually logs into MT5 and pushes trades in the background — the account record alone doesn't sync anything by itself.</span></li>
+        </ol>
+
+        <h3 class="sub">Connecting cTrader</h3>
+        <ul class="feature-list">
+          <li><b>Connect cTrader</b> redirects to cTrader's own OAuth approval page. On return, pick which of your cTrader accounts under that login to actually connect.</li>
+          <li>Each connected account gets <b>Sync Now</b> (pulls new trades and deposits/withdrawals) and <b>Disconnect</b> (stops syncing; already-synced trades stay in your history).</li>
+          <li>cTrader is also what powers <b>Trade Replay's</b> candlestick charts and the Pre-Trade Analysis chart — it matters even if your trade history itself comes from MT5.</li>
+        </ul>
+
+        <h3 class="sub">Account cards</h3>
+        <p style="color:var(--text-muted);font-size:14px">Each card shows connection status (Connected / Needs attention / Waiting for agent / Disabled), trade count, balance, last sync time, and a sync on/off toggle. MT5 cards can be edited or archived directly; cTrader cards are managed through the cTrader section instead.</p>
+
+        <h3 class="sub">Sharing investor access</h3>
+        <p style="color:var(--text-muted);font-size:14px;margin-bottom:10px">Per account, not global — expand the <b>Investor</b> panel on any account card.</p>
+        <ul class="feature-list">
+          <li><b>Enable investor access</b> generates a numeric account code and a one-time password (shown once, like the MT5 investor password).</li>
+          <li><b>Copy investor link</b> gives you a shareable <code>/investor/login</code> URL; copy the password separately and send it through a different channel.</li>
+          <li><b>Rotate password</b> issues a new one (the old one stops working immediately); <b>Revoke access</b> disables the link entirely.</li>
+        </ul>
+      </section>
+
+      <!-- 11 BACKUP -->
+      <section class="chapter" id="backup">
+        <div class="chapter-kicker"><span class="chapter-num">11</span><span class="chapter-route">/archive</span></div>
+        <h2 class="chapter-title">Backup &amp; export</h2>
+        <p class="chapter-purpose">Health-check your stored data and pull a full export — this page reads and downloads, it doesn't restore.</p>
+
+        <ul class="feature-list">
+          <li><b>Database Status</b> — live badge: Database Connected, or Offline (Local Cache) if the app has fallen back to a local copy. Shows total trades, account events, and your oldest/latest trade dates.</li>
+          <li><b>Local JSON Mirror</b> — the server automatically mirrors all trade data to its own disk on startup and every 24 hours, as a safety net if the live database goes down.</li>
+          <li><b>Screenshot redundancy</b> — every screenshot is backed by three layers: metadata embedded in the image itself, a sidecar metadata file, and offline disk storage that auto-uploads once you're back online.</li>
+          <li><b>Download JSON</b> — a full backup (trades, account events, screenshot URLs) suitable for restoring into a fresh database.</li>
+          <li><b>Download CSV</b> — trade fields formatted for Excel or Sheets.</li>
+        </ul>
+
+        <div class="callout warn">
+          <span class="icon">One-way only</span>
+          <p>There's no restore/import button on this page, even though the JSON export is restore-capable. Treat this page as export-only.</p>
+        </div>
+      </section>
+
+      <!-- 12 INVESTOR MODE -->
+      <section class="chapter" id="investor">
+        <div class="chapter-kicker"><span class="chapter-num">12</span><span class="chapter-route">/investor</span></div>
+        <h2 class="chapter-title">Investor mode</h2>
+        <p class="chapter-purpose">A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.</p>
+
+        <h3 class="sub">Logging in as an investor</h3>
+        <p style="color:var(--text-muted);font-size:14px;margin-bottom:10px">Two fields, no email or account needed: the numeric <b>Account Number</b> (the code the owner shared) and the one-time <b>Password</b>. The login page states plainly: read-only, no changes possible.</p>
+
+        <h3 class="sub">What the investor sees</h3>
+        <div class="kv-grid">
+          <div class="kv-card"><div class="label">Balance</div><div class="value">Live</div></div>
+          <div class="kv-card"><div class="label">Win rate</div><div class="value">+ profit factor</div></div>
+          <div class="kv-card"><div class="label">Max drawdown</div><div class="value">Color-coded</div></div>
+          <div class="kv-card"><div class="label">Avg win / loss</div><div class="value">+ expectancy</div></div>
+        </div>
+        <ul class="feature-list">
+          <li>An equity curve chart, and a table of up to 50 recent closed trades.</li>
+          <li>A <b>Replay</b> button per trade opens a candlestick chart with a full playback bar: play/pause, step, jump-to-entry/exit, a 0.5×–10× speed selector, and a scrubbable progress bar.</li>
+        </ul>
+
+        <div class="kbd-row">
+          <div class="kbd-pair"><span class="kbd">Space</span> play / pause</div>
+          <div class="kbd-pair"><span class="kbd">← / →</span> step candle</div>
+          <div class="kbd-pair"><span class="kbd">E</span> jump to entry</div>
+          <div class="kbd-pair"><span class="kbd">X</span> jump to exit</div>
+        </div>
+
+        <div class="callout">
+          <span class="icon">Boundaries</span>
+          <p>An investor session can't reach any other page — no accounts, no playbooks, no journal notes, no other accounts you own — and can't edit or upload anything. It's a separate login token from your own, so it can't be reused to access the owner side of the app.</p>
+        </div>
+      </section>
+
+      <!-- GLOSSARY -->
+      <section class="chapter" id="glossary">
+        <div class="chapter-kicker"><span class="chapter-num">—</span></div>
+        <h2 class="chapter-title">Glossary &amp; quick reference</h2>
+        <p class="chapter-purpose">Terms that show up across the app without much explanation in the moment.</p>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Term</th><th>What it means here</th></tr></thead>
+            <tbody>
+              <tr><td class="term">R / Avg R</td><td>Result measured as a multiple of what you risked. A trade risking $100 that made $250 is "2.5R." Only calculated for trades with a recorded stop.</td></tr>
+              <tr><td class="term">Setup vs. Ticket</td><td>A "ticket" is one broker execution; a "setup" groups a ticket with any of its re-entries so scaled-in positions count once.</td></tr>
+              <tr><td class="term">PDH / PDL</td><td>Previous Day High / Previous Day Low — a key level to watch for a sweep or continuation.</td></tr>
+              <tr><td class="term">PWH / PWL</td><td>Previous Week High / Previous Week Low — the same idea, one timeframe up.</td></tr>
+              <tr><td class="term">Sweep</td><td>Price pushes briefly past a level to grab liquidity, then reverses — as opposed to a genuine breakout.</td></tr>
+              <tr><td class="term">Continuation</td><td>Price breaks a level and keeps going in that direction.</td></tr>
+              <tr><td class="term">Plan Adherence</td><td>% of your own execution checklist you actually followed on a trade.</td></tr>
+              <tr><td class="term">Analysis vs. Execution Grade</td><td>Two separate A–F scores — how good your read was, versus how well you carried it out.</td></tr>
+              <tr><td class="term">Sample status</td><td>Edge Coach tags evidence as strong / developing / insufficient based on how many trades back it up — a built-in caution against small-sample conclusions.</td></tr>
+              <tr><td class="term">Investor password</td><td>A broker or TradeJournal password that only ever grants read access — shown once, never retrievable again after that.</td></tr>
+              <tr><td class="term">Playbook version</td><td>An immutable snapshot of a strategy's rules, created every time you publish — past trades keep pointing at the exact checklist they were judged against.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="end-note">TradeJournal · self-hosted trading journal for MT5 &amp; cTrader</p>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.nav-link'));
+    var sections = links
+      .map(function (link) { return document.querySelector(link.getAttribute('href')); })
+      .filter(Boolean);
+
+    if (!('IntersectionObserver' in window) || !sections.length) return;
+
+    var current = null;
+    function setActive(id) {
+      if (id === current) return;
+      current = id;
+      links.forEach(function (link) {
+        link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+      });
+    }
+
+    var observer = new IntersectionObserver(function (entries) {
+      var visible = entries.filter(function (e) { return e.isIntersecting; });
+      if (visible.length) {
+        visible.sort(function (a, b) { return a.boundingClientRect.top - b.boundingClientRect.top; });
+        setActive(visible[0].target.id);
+      }
+    }, { rootMargin: '-10% 0px -70% 0px', threshold: [0, 1] });
+
+    sections.forEach(function (s) { observer.observe(s); });
+    setActive(sections[0].id);
+
+    links.forEach(function (link) {
+      link.addEventListener('click', function (e) {
+        var target = document.querySelector(link.getAttribute('href'));
+        if (!target) return;
+        e.preventDefault();
+        target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+        history.replaceState(null, '', link.getAttribute('href'));
+      });
+    });
+  })();
+</script>
+</body>
+</html>

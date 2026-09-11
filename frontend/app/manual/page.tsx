@@ -1,0 +1,392 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import { BookMarked, Download } from 'lucide-react';
+import type { ReactNode } from 'react';
+
+interface Section { id: string; num: string; route?: string; group?: string; title: string; }
+
+const SECTIONS: Section[] = [
+  { id: 'getting-started', num: '00', title: 'Getting started' },
+  { id: 'dashboard', num: '01', route: '/', group: 'Journal', title: 'Dashboard' },
+  { id: 'trades', num: '02', route: '/trades', group: 'Journal', title: 'Trades' },
+  { id: 'calendar', num: '03', route: '/calendar', group: 'Journal', title: 'Calendar' },
+  { id: 'analytics', num: '04', route: '/stats', group: 'Analysis', title: 'Analytics' },
+  { id: 'performance', num: '05', route: '/performance', group: 'Analysis', title: 'Performance' },
+  { id: 'edge-coach', num: '06', route: '/coach', group: 'Analysis', title: 'Edge Coach' },
+  { id: 'playbooks', num: '07', route: '/rules', group: 'Strategy', title: 'Playbooks' },
+  { id: 'pretrade', num: '08', route: '/pretrade', group: 'Strategy', title: 'Pre-Trade Analysis' },
+  { id: 'knowledge', num: '09', route: '/knowledge', group: 'Strategy', title: 'Knowledge Base' },
+  { id: 'accounts', num: '10', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
+  { id: 'backup', num: '11', route: '/archive', group: 'Account & data', title: 'Backup & export' },
+  { id: 'investor', num: '12', route: '/investor', group: 'Account & data', title: 'Investor mode' },
+  { id: 'glossary', num: '—', title: 'Glossary' },
+];
+
+function Callout({ icon, warn, children }: { icon: string; warn?: boolean; children: ReactNode }) {
+  return (
+    <div className={`manual-callout${warn ? ' warn' : ''}`}>
+      <span className="icon">{icon}</span>
+      <p>{children}</p>
+    </div>
+  );
+}
+function KvGrid({ items }: { items: { label: string; value: string }[] }) {
+  return (
+    <div className="manual-kv-grid">
+      {items.map(item => (
+        <div className="manual-kv-card" key={item.label}>
+          <div className="label">{item.label}</div>
+          <div className="value">{item.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function Pills({ items }: { items: string[] }) {
+  return (
+    <div className="manual-pill-row">
+      {items.map(item => <span className="manual-pill" key={item}>{item}</span>)}
+    </div>
+  );
+}
+function Chapter({ id, num, route, title, purpose, children }: { id: string; num: string; route?: string; title: string; purpose: string; children: ReactNode }) {
+  return (
+    <section className="manual-chapter" id={id}>
+      <div className="manual-chapter-kicker">
+        <span className="manual-chapter-num">{num}</span>
+        {route && <span className="manual-chapter-route">{route}</span>}
+      </div>
+      <h2>{title}</h2>
+      <p className="manual-chapter-purpose">{purpose}</p>
+      {children}
+    </section>
+  );
+}
+
+export default function ManualPage() {
+  const [active, setActive] = useState('getting-started');
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    const targets = SECTIONS.map(s => document.getElementById(s.id)).filter(Boolean) as HTMLElement[];
+    if (!targets.length) return;
+    observerRef.current = new IntersectionObserver(entries => {
+      const visible = entries.filter(e => e.isIntersecting);
+      if (visible.length) {
+        visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        setActive(visible[0].target.id);
+      }
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: [0, 1] });
+    targets.forEach(t => observerRef.current?.observe(t));
+    return () => observerRef.current?.disconnect();
+  }, []);
+
+  const jump = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const groups = Array.from(new Set(SECTIONS.map(s => s.group).filter(Boolean))) as string[];
+
+  return (
+    <main className="page-content">
+      <header className="page-header">
+        <div className="page-header-inner">
+          <div>
+            <h2><BookMarked size={22} style={{ verticalAlign: 'middle', marginRight: 8 }} />Manual</h2>
+            <p>A complete walkthrough of every page and feature in TradeJournal.</p>
+          </div>
+          <a className="btn-primary" href="/manual/TradeJournal-Manual.pdf" download>
+            <Download size={15} /> Download PDF
+          </a>
+        </div>
+      </header>
+
+      <div className="manual-shell">
+        <nav className="manual-toc" aria-label="Manual contents">
+          <div className="manual-toc-group">
+            <button type="button" className={`manual-toc-link${active === 'getting-started' ? ' active' : ''}`} onClick={() => jump('getting-started')}>
+              <span className="n">00</span> Getting started
+            </button>
+          </div>
+          {groups.map(group => (
+            <div className="manual-toc-group" key={group}>
+              <div className="manual-toc-label">{group}</div>
+              {SECTIONS.filter(s => s.group === group).map(s => (
+                <button type="button" key={s.id} className={`manual-toc-link${active === s.id ? ' active' : ''}`} onClick={() => jump(s.id)}>
+                  <span className="n">{s.num}</span> {s.title}
+                </button>
+              ))}
+            </div>
+          ))}
+          <div className="manual-toc-group">
+            <button type="button" className={`manual-toc-link${active === 'glossary' ? ' active' : ''}`} onClick={() => jump('glossary')}>
+              <span className="n">—</span> Glossary
+            </button>
+          </div>
+        </nav>
+
+        <div className="manual-content">
+          <div className="manual-intro">
+            <span className="manual-eyebrow">Reference guide</span>
+            <h1>Everything TradeJournal does, page by page.</h1>
+            <p className="lede">TradeJournal syncs your closed trades from MT5 or cTrader, then helps you turn that history into an edge — through statistics, a chart-annotated pre-trade checklist, and a coach that looks for the psychological patterns behind your P&amp;L.</p>
+            <div className="manual-intro-stack">
+              <div className="item"><b>12</b> sections</div>
+              <div className="item"><b>MT5 + cTrader</b> data sources</div>
+              <div className="item"><b>Owner &amp; investor</b> access levels</div>
+            </div>
+          </div>
+
+          <Chapter id="getting-started" num="00" title="Getting started" purpose="The shortest path from a fresh account to seeing your first synced trade on the Dashboard.">
+            <div className="manual-sub">The two ways trades get in</div>
+            <ul className="manual-feature-list">
+              <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>
+              <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader&apos;s own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader&apos;s API — no desktop app needed.</li>
+            </ul>
+            <div className="manual-sub">First-time setup</div>
+            <ol className="manual-steps">
+              <li><b>Create your account</b><span className="d">Sign up with your name, email, and a password (8+ characters). You&apos;re taken straight to the Dashboard.</span></li>
+              <li><b>Connect a broker account</b><span className="d">Open Accounts in the sidebar and either add an MT5 login (you&apos;ll need its investor/read-only password) or connect cTrader through the OAuth button.</span></li>
+              <li><b>Start syncing</b><span className="d">For MT5: generate your personal sync key, install the Desktop Sync App, paste the key in, and click Start Sync. For cTrader: click Sync Now whenever you want fresh trades.</span></li>
+              <li><b>Watch the Dashboard fill in</b><span className="d">Balance, win rate, and the equity curve populate automatically once trades arrive. Everything else — journaling, playbooks, analytics — builds on top of that history.</span></li>
+            </ol>
+            <Callout icon="Good to know">Trades themselves are <b>read-only</b> everywhere in the app — TradeJournal never edits your price, lot size, or P&amp;L. What you add on top (notes, grades, playbook answers, screenshots, tags) is the &quot;journal&quot; part.</Callout>
+          </Chapter>
+
+          <Chapter id="dashboard" num="01" route="/" title="Dashboard" purpose="A live, auto-refreshing overview of account health — balance, edge metrics, cash flow, and the equity curve.">
+            <div className="manual-sub">Key metrics</div>
+            <KvGrid items={[
+              { label: 'Account balance', value: 'Live from MT5/cTrader' },
+              { label: 'Win rate', value: '+ avg win / avg loss' },
+              { label: 'Expectancy', value: '$ per trade' },
+              { label: 'Avg R', value: 'Trades with a recorded stop' },
+              { label: 'Streaks', value: 'Current win / loss run' },
+              { label: 'Drawdown', value: 'Current vs. max' },
+              { label: 'Profit factor', value: 'Gross profit ÷ gross loss' },
+            ]} />
+            <div className="manual-sub">Controls</div>
+            <ul className="manual-feature-list">
+              <li><b>Time range</b> <span className="muted">— All Time, Today, 7/30 Days, 3/6 Months.</span></li>
+              <li><b>View: Tickets vs. Setups</b> <span className="muted">— Setups rolls re-entry trades up under their original parent, so a scaled-in position counts as one setup instead of three separate tickets.</span></li>
+              <li><b>Account selector</b> <span className="muted">— appears once you&apos;ve connected more than one broker account; scopes every number on the page to just that account.</span></li>
+            </ul>
+            <div className="manual-sub">Cash flow &amp; equity curve</div>
+            <ul className="manual-feature-list">
+              <li>A running total of <b>Deposits</b>, <b>Withdrawals</b>, and <b>Net Cash Flow</b> for the selected range, with Deposit / Withdrawal buttons for logging manual cash movements. Manually-logged entries can be deleted; entries synced from your broker cannot.</li>
+              <li>The <b>Equity Curve</b> plots balance over time — hover any point for that day&apos;s exact balance and P&amp;L.</li>
+            </ul>
+            <div className="manual-sub">Maintenance tools</div>
+            <ul className="manual-feature-list">
+              <li><b>Resync</b> <span className="muted">— requests a fresh pull from your broker (the Desktop Sync App or cTrader connection needs to be active).</span></li>
+              <li><b>Remove duplicates</b> <span className="muted">— de-dupes any doubled-up trade rows, with a confirmation first.</span></li>
+              <li><b>Fix Balances</b> <span className="muted">— re-anchors every trade&apos;s running balance from a current MT5 balance you type in. Pick a single account first if you have more than one connected.</span></li>
+            </ul>
+            <Callout icon="Tip">A warning banner appears whenever the numbers on screen are blending more than one broker account — balance and drawdown aren&apos;t meaningful mixed together, so switch to the account selector when you see it.</Callout>
+          </Chapter>
+
+          <Chapter id="trades" num="02" route="/trades" title="Trades" purpose="Your full trade log — and the place where journaling, playbook answers, and screenshots actually get attached to each trade.">
+            <div className="manual-sub">Finding trades</div>
+            <ul className="manual-feature-list">
+              <li>Filter by <b>Symbol</b>, <b>Direction</b>, <b>Account type</b> (Live/Demo), <b>Trading account</b>, and a date range — filters are saved in the URL, so a filtered view can be bookmarked or shared.</li>
+              <li><b>Group by session</b> clusters trades under Tokyo / London / London–NY Overlap / New York / Pacific headers, each with its own trade count, net P&amp;L, and win rate.</li>
+              <li>Re-entries appear nested under their parent trade (indented, tagged &quot;RE-ENT of #ticket&quot;); trades sharing a position get a colored stripe down the left edge.</li>
+            </ul>
+            <div className="manual-sub">The Journal Drawer</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 10 }}>Click any row to open it. This is where a closed trade turns into a journaled one.</p>
+            <ul className="manual-feature-list">
+              <li><b>Post-Trade Review</b> <span className="muted">— Analysis Grade and Execution Grade (A–F), scored separately so you can see when good analysis met poor execution, or vice versa.</span></li>
+              <li><b>Strategy Playbook</b> <span className="muted">— attach a published playbook; your answers to its rule checklist are saved per-trade, organized into phase tabs with an &quot;X / Y answered&quot; counter. Rules that require a screenshot accept a pasted image (Ctrl+V) or file upload.</span></li>
+              <li><b>Inherit From Pre-Trade Analysis</b> <span className="muted">— if you ran a Pre-Trade Analysis for this setup beforehand, one click pulls those answers and notes straight into the trade&apos;s journal.</span></li>
+              <li><b>Setup details</b> <span className="muted">— setup type, confirmation tags, planned Risk:Reward, confidence score (1–10), exit reason, and whether you manually intervened on SL/TP.</span></li>
+              <li><b>Re-entry linking</b> <span className="muted">— mark a trade as a re-entry, search for its parent by ticket number, and note why you re-entered.</span></li>
+              <li><b>Trade Replay</b> <span className="muted">— opens a candlestick chart of exactly what happened, with Prev/Next buttons to step to the next trade without closing the modal.</span></li>
+            </ul>
+            <Callout icon="Not here" warn>There&apos;s no manual trade entry, price/lot editing, deletion, bulk actions, or CSV export on this page — trades are read-only records from your broker. (Full exports live under Backup.)</Callout>
+          </Chapter>
+
+          <Chapter id="calendar" num="03" route="/calendar" title="Calendar" purpose="A month grid of daily P&L, for spotting the days and weeks that actually make or break your month.">
+            <ul className="manual-feature-list">
+              <li>Monthly summary: <b>Net P&amp;L</b>, <b>Consistency Score</b> (% of green days), <b>Best Day</b>, <b>Worst Day</b>.</li>
+              <li>Each day cell shows trade count, net $ (green/red), and either avg R or win rate for that day.</li>
+              <li>Filter by <b>Symbol</b>, <b>Setup Grade</b> (F is labeled &quot;Boredom&quot; setups), and <b>Trading account</b>.</li>
+              <li>A weekly rollup strip below the grid totals each row&apos;s P&amp;L and active trading days.</li>
+              <li>Click any day with trades to open a drawer listing that day&apos;s trades, each with its own Replay button.</li>
+            </ul>
+            <Callout icon="Tip">The small &quot;Jump to:&quot; date field does double duty — pick a date and it both flips the calendar to that month <i>and</i> opens that day&apos;s trade drawer in one step. Empty days aren&apos;t clickable.</Callout>
+          </Chapter>
+
+          <Chapter id="analytics" num="04" route="/stats" title="Analytics" purpose="Every dimension your history can be sliced by — instrument, session, direction, mood, grade, and time.">
+            <div className="manual-sub">Breakdowns available</div>
+            <Pills items={['P&L by session', 'Buy vs. sell', 'Setup grade', 'Emotional state', 'Strategy tags', 'P&L by pair', 'Win rate by pair', 'Day of week', 'Monthly P&L']} />
+            <ul className="manual-feature-list">
+              <li><b>Playbook Discipline</b> <span className="muted">— the % of required playbook fields actually completed across your journaled trades.</span></li>
+              <li><b>Avg R / Avg Win (R) / Avg Loss (R)</b> <span className="muted">— calculated only from trades where a stop-loss/risk value was recorded.</span></li>
+              <li><b>Psychology &amp; Emotional Mindset Impact</b> <span className="muted">— win rate and P&amp;L broken out by the emotion you logged (Calm, Disciplined, Anxious, Greedy, Fearful, FOMO).</span></li>
+              <li><b>View</b>: Tickets vs. Setups · <b>Date range</b>: All-Time, Today, 7/30 Days, 3/6 Months · <b>Account filter</b>: all or one specific account.</li>
+            </ul>
+            <Callout icon="Note">Grade, emotion, and tag breakdowns only populate once you&apos;ve filled that field in on trades — each empty section tells you exactly what to log to unlock it.</Callout>
+          </Chapter>
+
+          <Chapter id="performance" num="05" route="/performance" title="Performance" purpose="The risk and equity side of the story — where Analytics is categorical, Performance is financial.">
+            <KvGrid items={[
+              { label: 'Net P&L', value: '+ % account growth' },
+              { label: 'Profit factor', value: 'Strong / Break-even / Losing' },
+              { label: 'Expectancy', value: 'Avg $ per trade' },
+              { label: 'Max drawdown', value: 'Excellent / Acceptable / High risk' },
+            ]} />
+            <ul className="manual-feature-list">
+              <li><b>Equity Curve</b> <span className="muted">— account balance over time, with a reference line at your starting balance.</span></li>
+              <li><b>Drawdown Chart</b> <span className="muted">— % decline from peak balance, for visualizing losing streaks.</span></li>
+              <li><b>Recent Trade P&amp;L</b> <span className="muted">— bar chart of your last ~40 individual results.</span></li>
+              <li><b>Risk Metrics</b> <span className="muted">— win rate, avg win vs. avg loss, avg R:R, gross profit/loss, largest win/loss, max consecutive wins/losses.</span></li>
+              <li><b>Edge Summary</b> <span className="muted">— an auto-written paragraph summarizing your edge, ending in a verdict: positive edge, marginal edge, or unprofitable system.</span></li>
+            </ul>
+            <Callout icon="Tip">Long histories are automatically thinned to 300 chart points for readability — the underlying stats still use every trade.</Callout>
+          </Chapter>
+
+          <Chapter id="edge-coach" num="06" route="/coach" title="Edge Coach" purpose="Diagnoses the psychology and discipline patterns behind your results — what's actually stopping you from executing your own plan.">
+            <ul className="manual-feature-list">
+              <li><b>Early Exits</b> <span className="muted">— how many trades you closed before target, and the R/$ that likely cost you.</span></li>
+              <li><b>Plan Adherence</b> <span className="muted">— % of your own execution checklist you actually followed, shown as a progress ring.</span></li>
+              <li><b>Analysis vs. Execution Grade Gap</b> <span className="muted">— flags when your analysis quality outpaces your execution.</span></li>
+              <li><b>Manual Intervention</b> <span className="muted">— compares outcomes on trades where you touched SL/TP mid-trade vs. left them alone.</span></li>
+              <li><b>Demo vs. Live Comparison</b>, <b>Strategy Versions</b>, and <b>Lifecycle Stage Compliance</b>.</li>
+              <li><b>What Works — Rule Evidence</b> <span className="muted">— win rate per specific playbook answer, tagged strong / developing / insufficient by sample size.</span></li>
+              <li><b>Confidence vs. Actual Win Rate</b> <span className="muted">— tests whether your gut-feel confidence rating actually predicts outcomes.</span></li>
+            </ul>
+            <Callout icon="Note">Almost every panel here only appears once you&apos;ve logged the field it depends on. This page rewards thorough journaling more than any other.</Callout>
+          </Chapter>
+
+          <Chapter id="playbooks" num="07" route="/rules" title="Playbooks" purpose="Build the rulebook your trades get measured against — a versioned checklist spanning a trade's full lifecycle.">
+            <div className="manual-sub">The nine lifecycle stages</div>
+            <Pills items={['1 Concept', '2 Market context', '3 Setup & location', '4 Entry confirmation', '5 Risk plan', '6 Execution', '7 Trade management', '8 Exit', '9 Post-trade review']} />
+            <div className="manual-sub">Building a strategy</div>
+            <ul className="manual-feature-list">
+              <li><b>New strategy</b> starts a blank draft — nothing saves until you publish.</li>
+              <li>Add a stage via <b>Add recommended stage</b> (pre-filled with starter rules) or <b>Add empty stage</b>. Stages can be renamed, reordered, recategorized, or removed.</li>
+              <li><b>Add rule</b> inside any stage: label, answer type (Yes/No, Number, Text, Single/Multiple choice), and whether it&apos;s required.</li>
+              <li>Each rule&apos;s <b>More options</b> panel holds: tool role, what happens when it&apos;s not satisfied (record only / warn / skip trade / stop session), applicable timeframes, help text, and a <b>trade-screenshot requirement</b>.</li>
+            </ul>
+            <div className="manual-sub">Publishing</div>
+            <ul className="manual-feature-list">
+              <li>Every block/rule needs a name, and you must write a <b>change note of at least 20 characters</b> describing what changed and why.</li>
+              <li>Publishing creates a new <b>immutable version</b>; older versions are never overwritten, so past trades keep pointing at the exact checklist they were judged against.</li>
+              <li><b>Archive</b> retires a strategy without deleting its history. <b>Read playbook</b> opens a clean, read-only view of the published version.</li>
+            </ul>
+            <Callout icon="Tip">The strategy panel lists any <b>open Pre-Trade Analyses</b> already started against it, so you can jump back into one mid-setup instead of starting over.</Callout>
+          </Chapter>
+
+          <Chapter id="pretrade" num="08" route="/pretrade" title="Pre-Trade Analysis" purpose="Run your playbook's checklist before you enter — on a live chart you can draw on — then carry the answers into the real trade once it's taken.">
+            <div className="manual-sub">Starting one</div>
+            <ul className="manual-feature-list">
+              <li>From Playbooks, click <b>Start Pre-Trade Analysis</b> on any strategy. It locks in that strategy&apos;s current published version and shows only its <b>Plan-phase</b> stages — Concept, Market context, Setup, Entry confirmation, and Risk plan.</li>
+              <li>Answer the same rule checklist you&apos;d fill in on a real trade. Screenshot-required rules simply note that confirmation will be requested later, once inherited into an actual trade.</li>
+            </ul>
+            <div className="manual-sub">The chart</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>A candlestick chart loads for whatever symbol you type — with the same drawing toolset as Trade Replay, so you can mark up key levels yourself instead of the app guessing them for you.</p>
+            <Pills items={['Zone (rectangle)', 'Trend line', 'Price level', 'Arrow', 'Text note', 'Image evidence', 'Select / move', 'Undo', 'Delete']} />
+            <ul className="manual-feature-list">
+              <li>Type a symbol and a <b>datalist</b> suggests real names from your connected broker account, so you&apos;re not guessing a spelling like &quot;USTEC&quot; vs. &quot;NAS100&quot; vs. &quot;US100&quot; yourself.</li>
+              <li>Choose a <b>timeframe</b> (1m–1D) and <b>lookback window</b> (2–30 days) to bring the right amount of history into view.</li>
+              <li>Use the drawing tools to mark <b>Previous Day High/Low</b>, <b>Previous Week High/Low</b>, and the <b>Asian / London session</b> highs and lows — then look for price to either <b>sweep</b> through one or <b>continue</b> through it.</li>
+              <li>Everything — chart symbol, timeframe, and every annotation — <b>autosaves</b> a moment after you stop drawing.</li>
+            </ul>
+            <div className="manual-sub">Bringing it into a real trade</div>
+            <ul className="manual-feature-list">
+              <li>When the trade actually happens and syncs in, open its Journal Drawer and use <b>Inherit From Pre-Trade Analysis</b> to pull the playbook answers and notes across in one click.</li>
+            </ul>
+            <Callout icon="By design">TradeJournal never calculates PDH/PDL or session levels for you — marking them is a manual, deliberate act, the same way you&apos;d draw on a chart in your trading platform.</Callout>
+          </Chapter>
+
+          <Chapter id="knowledge" num="09" route="/knowledge" title="Knowledge Base" purpose="A free-form, searchable notebook for anything that isn't tied to one specific trade — broker quirks, market-structure ideas, session notes.">
+            <ul className="manual-feature-list">
+              <li><b>New Entry</b> opens a drawer with a Title, free-text Notes body, and comma-separated Tags.</li>
+              <li>A live search box filters entries by title/content as you type.</li>
+              <li>Entries display as cards: title, a short preview, tags, screenshot count, and date.</li>
+              <li>Attach screenshots by uploading a file — or by <b>pasting an image straight from your clipboard</b> (Ctrl+V) while the entry drawer is open.</li>
+            </ul>
+            <Callout icon="Order matters" warn>A brand-new entry has to be saved once before you can attach screenshots to it — the drawer will prompt you to save first.</Callout>
+          </Chapter>
+
+          <Chapter id="accounts" num="10" route="/accounts" title="Accounts & syncing" purpose="Where every broker connection, the Desktop Sync App, and investor access are all managed.">
+            <div className="manual-sub">Connecting MT5</div>
+            <ol className="manual-steps">
+              <li><b>Add account</b><span className="d">Give it a label, your MT5 login number, broker server, and your MT5 <i>investor</i> (read-only) password — never your trading password.</span></li>
+              <li><b>Generate your sync key</b><span className="d">Under &quot;Your personal sync key,&quot; click Generate / rotate. It&apos;s shown once — copy it immediately.</span></li>
+              <li><b>Install the Desktop Sync App</b><span className="d">Download it, paste in your sync key, and click Start Sync. The account record alone doesn&apos;t sync anything by itself.</span></li>
+            </ol>
+            <div className="manual-sub">Connecting cTrader</div>
+            <ul className="manual-feature-list">
+              <li><b>Connect cTrader</b> redirects to cTrader&apos;s own OAuth approval page. On return, pick which of your cTrader accounts under that login to actually connect.</li>
+              <li>Each connected account gets <b>Sync Now</b> and <b>Disconnect</b> (stops syncing; already-synced trades stay in your history).</li>
+              <li>cTrader is also what powers <b>Trade Replay&apos;s</b> candlestick charts and the Pre-Trade Analysis chart — it matters even if your trade history itself comes from MT5.</li>
+            </ul>
+            <div className="manual-sub">Sharing investor access</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Per account, not global — expand the <b>Investor</b> panel on any account card.</p>
+            <ul className="manual-feature-list">
+              <li><b>Enable investor access</b> generates a numeric account code and a one-time password (shown once).</li>
+              <li><b>Copy investor link</b> gives you a shareable <code>/investor/login</code> URL; copy the password separately.</li>
+              <li><b>Rotate password</b> issues a new one; <b>Revoke access</b> disables the link entirely.</li>
+            </ul>
+          </Chapter>
+
+          <Chapter id="backup" num="11" route="/archive" title="Backup & export" purpose="Health-check your stored data and pull a full export — this page reads and downloads, it doesn't restore.">
+            <ul className="manual-feature-list">
+              <li><b>Database Status</b> — live badge: Database Connected, or Offline (Local Cache) if the app has fallen back to a local copy.</li>
+              <li><b>Local JSON Mirror</b> — the server automatically mirrors all trade data to its own disk on startup and every 24 hours.</li>
+              <li><b>Screenshot redundancy</b> — every screenshot is backed by embedded metadata, a sidecar metadata file, and offline disk storage that auto-uploads once you&apos;re back online.</li>
+              <li><b>Download JSON</b> — a full backup suitable for restoring into a fresh database. <b>Download CSV</b> — trade fields for Excel or Sheets.</li>
+            </ul>
+            <Callout icon="One-way only" warn>There&apos;s no restore/import button on this page, even though the JSON export is restore-capable. Treat this page as export-only.</Callout>
+          </Chapter>
+
+          <Chapter id="investor" num="12" route="/investor" title="Investor mode" purpose="A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.">
+            <div className="manual-sub">What the investor sees</div>
+            <KvGrid items={[
+              { label: 'Balance', value: 'Live' },
+              { label: 'Win rate', value: '+ profit factor' },
+              { label: 'Max drawdown', value: 'Color-coded' },
+              { label: 'Avg win / loss', value: '+ expectancy' },
+            ]} />
+            <ul className="manual-feature-list">
+              <li>An equity curve chart, and a table of up to 50 recent closed trades.</li>
+              <li>A <b>Replay</b> button per trade opens a candlestick chart with a full playback bar: play/pause, step, jump-to-entry/exit, a speed selector, and a scrubbable progress bar.</li>
+            </ul>
+            <div className="manual-kbd-row">
+              <div className="manual-kbd-pair"><span className="manual-kbd">Space</span> play / pause</div>
+              <div className="manual-kbd-pair"><span className="manual-kbd">← / →</span> step candle</div>
+              <div className="manual-kbd-pair"><span className="manual-kbd">E</span> jump to entry</div>
+              <div className="manual-kbd-pair"><span className="manual-kbd">X</span> jump to exit</div>
+            </div>
+            <Callout icon="Boundaries">An investor session can&apos;t reach any other page and can&apos;t edit or upload anything. It&apos;s a separate login token from your own.</Callout>
+          </Chapter>
+
+          <section className="manual-chapter" id="glossary">
+            <div className="manual-chapter-kicker"><span className="manual-chapter-num">—</span></div>
+            <h2>Glossary &amp; quick reference</h2>
+            <p className="manual-chapter-purpose">Terms that show up across the app without much explanation in the moment.</p>
+            <div className="manual-table-wrap">
+              <table className="manual-ref">
+                <thead><tr><th>Term</th><th>What it means here</th></tr></thead>
+                <tbody>
+                  <tr><td className="term">R / Avg R</td><td>Result measured as a multiple of what you risked. A trade risking $100 that made $250 is &quot;2.5R.&quot;</td></tr>
+                  <tr><td className="term">Setup vs. Ticket</td><td>A &quot;ticket&quot; is one broker execution; a &quot;setup&quot; groups a ticket with any of its re-entries.</td></tr>
+                  <tr><td className="term">PDH / PDL</td><td>Previous Day High / Previous Day Low.</td></tr>
+                  <tr><td className="term">PWH / PWL</td><td>Previous Week High / Previous Week Low.</td></tr>
+                  <tr><td className="term">Sweep</td><td>Price pushes briefly past a level to grab liquidity, then reverses.</td></tr>
+                  <tr><td className="term">Continuation</td><td>Price breaks a level and keeps going in that direction.</td></tr>
+                  <tr><td className="term">Plan Adherence</td><td>% of your own execution checklist you actually followed on a trade.</td></tr>
+                  <tr><td className="term">Analysis vs. Execution Grade</td><td>Two separate A–F scores — how good your read was, versus how well you carried it out.</td></tr>
+                  <tr><td className="term">Sample status</td><td>Edge Coach tags evidence as strong / developing / insufficient based on sample size.</td></tr>
+                  <tr><td className="term">Investor password</td><td>A password that only ever grants read access — shown once, never retrievable again.</td></tr>
+                  <tr><td className="term">Playbook version</td><td>An immutable snapshot of a strategy&apos;s rules, created every time you publish.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="manual-end-note">TradeJournal · self-hosted trading journal for MT5 &amp; cTrader</p>
+          </section>
+        </div>
+      </div>
+    </main>
+  );
+}

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
@@ -16,6 +16,7 @@ const navItems = [
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
   { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },
   { href: '/accounts',    label: 'Accounts',      icon: Landmark },
+  { href: '/manual',      label: 'Manual',        icon: BookMarked },
 ];
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {

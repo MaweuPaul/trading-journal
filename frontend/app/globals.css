@@ -3421,10 +3421,13 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
 }
 .manual-toc-link {
   display: flex; align-items: baseline; gap: 7px;
-  padding: 6px 9px; border-radius: 7px; text-decoration: none;
-  color: var(--text-muted); font-size: 12.5px; font-weight: 600;
-  border-left: 2px solid transparent; background: transparent; cursor: pointer; width: 100%; text-align: left;
+  padding: 6px 9px; text-decoration: none;
+  color: var(--text-muted); font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
+  border: 0; border-left: 2px solid transparent; border-radius: 7px;
+  background: transparent; appearance: none; -webkit-appearance: none;
+  cursor: pointer; width: 100%; text-align: left; margin: 0;
 }
+.manual-toc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .manual-toc-link .n { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-muted); opacity: .7; }
 .manual-toc-link:hover { background: var(--bg-hover); color: var(--text-primary); }
 .manual-toc-link.active { background: var(--accent-light); color: var(--accent); border-left-color: var(--accent); }

@@ -114,13 +114,11 @@ export default function BacktestChart({ onSaved }: Props) {
   const [annotationEditDraft, setAnnotationEditDraft] = useState<{ text: string; color: string; lineStyle: AnnotationLineStyle }>({ text: '', color: '', lineStyle: 'solid' });
   const [annotationHistoryDepth, setAnnotationHistoryDepth] = useState(0);
 
-  const [placingTrade, setPlacingTrade] = useState(false);
-  const [entryDraft, setEntryDraft] = useState<{ time: number; price: number } | null>(null);
-  const [draftDirection, setDraftDirection] = useState<'long' | 'short'>('long');
-  const [draftStopLoss, setDraftStopLoss] = useState('');
-  const [draftTakeProfit, setDraftTakeProfit] = useState('');
-  const [draftRisk, setDraftRisk] = useState('100');
+  const [placingDirection, setPlacingDirection] = useState<'long' | 'short' | null>(null);
+  const [riskAmountInput, setRiskAmountInput] = useState('100');
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
+  const draggingHandleRef = useRef<'sl' | 'tp' | null>(null);
+  const [hoveredHandle, setHoveredHandle] = useState<'sl' | 'tp' | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -163,7 +161,7 @@ export default function BacktestChart({ onSaved }: Props) {
     setDrawingTool(turningOff ? 'none' : tool);
     setShowDrawingTools(!turningOff && SHAPE_DRAWING_TOOLS.includes(tool as ShapeDrawingTool));
     setSelectedAnnotationId('');
-    setPlacingTrade(false); setEntryDraft(null);
+    setPlacingDirection(null);
   };
   const pushAnnotationHistory = () => {
     annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
@@ -230,7 +228,7 @@ export default function BacktestChart({ onSaved }: Props) {
     const toMs = new Date(toDate).getTime() + 24 * 60 * 60 * 1000;
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) { setError('Pick a valid date range.'); return; }
     setLoading(true); setError(''); setIsSetupError(false);
-    setOpenTrade(null); setClosedTrade(null); setPlacingTrade(false); setEntryDraft(null);
+    setOpenTrade(null); setClosedTrade(null); setPlacingDirection(null);
     fetch(`${API}/backtest-trades/chart?symbol=${encodeURIComponent(trimmed)}&interval=${overrideInterval}&fromMs=${fromMs}&toMs=${toMs}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -344,23 +342,35 @@ export default function BacktestChart({ onSaved }: Props) {
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
   };
   const cancelTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); };
+  useEffect(() => {
+    if (!openTrade || closedTrade) return;
+    const amount = Number(riskAmountInput) || 0;
+    if (amount === openTrade.riskAmount) return;
+    setOpenTrade(cur => cur ? { ...cur, riskAmount: amount } : cur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riskAmountInput]);
   const discardClosedTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); };
 
-  const armTrade = () => {
-    if (!entryDraft) return;
-    const stopLoss = Number(draftStopLoss);
-    const takeProfit = draftTakeProfit.trim() === '' ? null : Number(draftTakeProfit);
-    const riskAmount = Number(draftRisk) || 0;
-    if (!Number.isFinite(stopLoss)) { alert('Enter a stop loss price.'); return; }
-    if (draftDirection === 'long' && stopLoss >= entryDraft.price) { alert('For a long, the stop loss must be below your entry price.'); return; }
-    if (draftDirection === 'short' && stopLoss <= entryDraft.price) { alert('For a short, the stop loss must be above your entry price.'); return; }
-    if (takeProfit != null) {
-      if (draftDirection === 'long' && takeProfit <= entryDraft.price) { alert('For a long, take profit must be above your entry price.'); return; }
-      if (draftDirection === 'short' && takeProfit >= entryDraft.price) { alert('For a short, take profit must be below your entry price.'); return; }
-    }
-    setOpenTrade({ direction: draftDirection, entryTime: entryDraft.time, entryPrice: entryDraft.price, stopLoss, takeProfit, riskAmount });
-    setEntryDraft(null); setPlacingTrade(false);
-    setDraftStopLoss(''); setDraftTakeProfit('');
+  // TradingView-style placement: one click drops a ready-to-drag position box
+  // with sensible default SL/TP (a 1:2 risk:reward box off entry) instead of
+  // asking for typed prices first -- drag the SL/TP lines to adjust.
+  const placeTradeAt = (direction: 'long' | 'short', time: number, price: number) => {
+    const riskDistance = Math.max(price * 0.005, 1e-6);
+    const stopLoss = direction === 'long' ? price - riskDistance : price + riskDistance;
+    const takeProfit = direction === 'long' ? price + riskDistance * 2 : price - riskDistance * 2;
+    setOpenTrade({ direction, entryTime: time, entryPrice: price, stopLoss, takeProfit, riskAmount: Number(riskAmountInput) || 0 });
+    setPlacingDirection(null);
+  };
+  const updateHandlePrice = (handle: 'sl' | 'tp', price: number) => {
+    setOpenTrade(cur => {
+      if (!cur) return cur;
+      if (handle === 'sl') {
+        const clamped = cur.direction === 'long' ? Math.min(price, cur.entryPrice - 1e-6) : Math.max(price, cur.entryPrice + 1e-6);
+        return { ...cur, stopLoss: clamped };
+      }
+      const clamped = cur.direction === 'long' ? Math.max(price, cur.entryPrice + 1e-6) : Math.min(price, cur.entryPrice - 1e-6);
+      return { ...cur, takeProfit: clamped };
+    });
   };
 
   const saveBacktestTrade = async () => {
@@ -471,23 +481,60 @@ export default function BacktestChart({ onSaved }: Props) {
       ctx.restore();
     }
 
-    // ── Trade simulation overlay: entry / SL / TP / exit ─────────────────
+    // ── Trade simulation overlay: a TradingView-style long/short position
+    // box -- shaded risk (red) and reward (green) zones from the entry line
+    // out to the right edge, with draggable SL/TP lines and a live R/$ label.
     const trade = closedTrade || openTrade;
     if (trade) {
-      const drawLevel = (price: number, color: string, label: string, dashed: boolean) => {
-        const y = series.priceToCoordinate(price); if (y == null) return;
-        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash(dashed ? [6, 4] : []);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-        ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '700 10px sans-serif';
-        ctx.fillText(`${label} ${fmtPrice(price)}`, 6, y - 6); ctx.restore();
-      };
-      drawLevel(trade.entryPrice, '#d4af37', 'Entry', false);
-      drawLevel(trade.stopLoss, '#ef4444', 'SL', true);
-      if (trade.takeProfit != null) drawLevel(trade.takeProfit, '#10b981', 'TP', true);
+      const entryY = series.priceToCoordinate(trade.entryPrice);
+      const slY = series.priceToCoordinate(trade.stopLoss);
+      const tpY = trade.takeProfit != null ? series.priceToCoordinate(trade.takeProfit) : null;
       const entryX = chart.timeScale().timeToCoordinate(trade.entryTime as UTCTimestamp);
+      const boxLeft = entryX ?? 0;
+      const riskDistance = Math.abs(trade.entryPrice - trade.stopLoss);
+      const rewardDistance = trade.takeProfit != null ? Math.abs(trade.takeProfit - trade.entryPrice) : 0;
+      const rewardR = riskDistance > 0 ? rewardDistance / riskDistance : 0;
+      const riskUSD = trade.riskAmount;
+      const rewardUSD = trade.riskAmount * rewardR;
+
+      if (entryY != null && slY != null) {
+        ctx.save(); ctx.fillStyle = '#ef444422';
+        ctx.fillRect(boxLeft, Math.min(entryY, slY), canvas.width - boxLeft, Math.abs(slY - entryY));
+        ctx.restore();
+      }
+      if (entryY != null && tpY != null) {
+        ctx.save(); ctx.fillStyle = '#10b98122';
+        ctx.fillRect(boxLeft, Math.min(entryY, tpY), canvas.width - boxLeft, Math.abs(tpY - entryY));
+        ctx.restore();
+      }
+      const drawLevel = (price: number, color: string, label: string, dashed: boolean, handle: boolean) => {
+        const y = series.priceToCoordinate(price); if (y == null) return;
+        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = handle && (hoveredHandle === (label === 'SL' ? 'sl' : 'tp') || draggingHandleRef.current === (label === 'SL' ? 'sl' : 'tp')) ? 2.5 : 1.5;
+        ctx.setLineDash(dashed ? [6, 4] : []);
+        ctx.beginPath(); ctx.moveTo(boxLeft, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+        if (handle) {
+          ctx.setLineDash([]); ctx.fillStyle = color;
+          ctx.fillRect(canvas.width - 14, y - 5, 10, 10);
+        }
+        ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '700 10px sans-serif';
+        ctx.fillText(`${label} ${fmtPrice(price)}`, boxLeft + 6, y - 6); ctx.restore();
+      };
+      drawLevel(trade.entryPrice, '#d4af37', 'Entry', false, false);
+      drawLevel(trade.stopLoss, '#ef4444', 'SL', true, !closedTrade);
+      if (trade.takeProfit != null) drawLevel(trade.takeProfit, '#10b981', 'TP', true, !closedTrade);
       if (entryX != null) {
         ctx.save(); ctx.strokeStyle = '#d4af3799'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(entryX, 0); ctx.lineTo(entryX, canvas.height); ctx.stroke(); ctx.restore();
+      }
+      if (!closedTrade && slY != null) {
+        ctx.save(); ctx.fillStyle = '#fca5a5'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(`Risk ${riskUSD > 0 ? `$${riskUSD.toFixed(0)}` : ''} (1R)`, canvas.width - 18, slY + (slY > (entryY ?? slY) ? 14 : -8));
+        ctx.restore();
+      }
+      if (!closedTrade && tpY != null) {
+        ctx.save(); ctx.fillStyle = '#86efac'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(`Reward ${rewardUSD > 0 ? `$${rewardUSD.toFixed(0)}` : ''} (${rewardR.toFixed(2)}R)`, canvas.width - 18, tpY + (tpY > (entryY ?? tpY) ? 14 : -8));
+        ctx.restore();
       }
       if (closedTrade) {
         const exitX = chart.timeScale().timeToCoordinate(closedTrade.exitTime as UTCTimestamp);
@@ -499,7 +546,7 @@ export default function BacktestChart({ onSaved }: Props) {
         }
       }
     }
-  }, [candles, replayIdx, drawingTool, drawnArrows, drawnHorizontals, drawnLines, drawnRects, drawnTexts, rectColor, resolvedTheme, selectedAnnotationId, openTrade, closedTrade]);
+  }, [candles, replayIdx, drawingTool, drawnArrows, drawnHorizontals, drawnLines, drawnRects, drawnTexts, rectColor, resolvedTheme, selectedAnnotationId, openTrade, closedTrade, hoveredHandle]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas]);
 
@@ -556,18 +603,31 @@ export default function BacktestChart({ onSaved }: Props) {
         : 'solid',
     });
   };
+  const findTradeHandleAt = (y: number): 'sl' | 'tp' | null => {
+    if (!openTrade || closedTrade) return null;
+    const series = seriesRef.current; if (!series) return null;
+    const slY = series.priceToCoordinate(openTrade.stopLoss);
+    if (slY != null && Math.abs(y - slY) <= 6) return 'sl';
+    if (openTrade.takeProfit != null) {
+      const tpY = series.priceToCoordinate(openTrade.takeProfit);
+      if (tpY != null && Math.abs(y - tpY) <= 6) return 'tp';
+    }
+    return null;
+  };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (editingAnnotation) setEditingAnnotation(null);
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (placingTrade) {
+    if (placingDirection) {
       const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
       const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
       if (time == null || price == null) return;
-      setEntryDraft({ time: Number(time), price });
+      placeTradeAt(placingDirection, Number(time), price);
       return;
     }
     if (drawingTool === 'none') {
+      const handle = findTradeHandleAt(y);
+      if (handle) { draggingHandleRef.current = handle; return; }
       const hit = beginAnnotationInteraction(x, y);
       if (hit) { autoSelectModeRef.current = true; setDrawingTool('select'); }
       return;
@@ -610,6 +670,13 @@ export default function BacktestChart({ onSaved }: Props) {
     }
   };
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (draggingHandleRef.current) {
+      const series = seriesRef.current; if (!series) return;
+      const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+      const price = series.coordinateToPrice(e.clientY - r.top);
+      if (price != null) updateHandlePrice(draggingHandleRef.current, price);
+      return;
+    }
     if (drawingTool === 'select' && movingAnnotationRef.current) {
       const move = movingAnnotationRef.current;
       const chart = chartRef.current, series = seriesRef.current;
@@ -634,6 +701,7 @@ export default function BacktestChart({ onSaved }: Props) {
     autoSelectModeRef.current = false; setDrawingTool('none'); setHoveredAnnotationId('');
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (draggingHandleRef.current) { draggingHandleRef.current = null; return; }
     if (movingAnnotationRef.current) {
       const move = movingAnnotationRef.current;
       movingAnnotationRef.current = null;
@@ -664,13 +732,21 @@ export default function BacktestChart({ onSaved }: Props) {
     if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
   };
   const handleChartWrapHoverMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drawingTool !== 'none' || movingAnnotationRef.current || placingTrade) return;
+    if (draggingHandleRef.current) return;
     const canvas = canvasRef.current; if (!canvas) return;
     const r = canvas.getBoundingClientRect();
+    if (drawingTool === 'none' && !placingDirection && openTrade && !closedTrade) {
+      const handle = findTradeHandleAt(e.clientY - r.top);
+      setHoveredHandle(handle);
+      if (handle) { setHoveredAnnotationId(''); return; }
+    } else if (hoveredHandle) {
+      setHoveredHandle(null);
+    }
+    if (drawingTool !== 'none' || movingAnnotationRef.current || placingDirection) return;
     const hit = findAnnotationAt(e.clientX - r.left, e.clientY - r.top);
     setHoveredAnnotationId(hit?.id || '');
   };
-  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); };
+  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); setHoveredHandle(null); };
 
   const totalCandles = candles?.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
@@ -721,13 +797,19 @@ export default function BacktestChart({ onSaved }: Props) {
             <div className="replay-tool-group">
               <span className="replay-tool-group-label">Trade</span>
               {!openTrade && !closedTrade && (
-                <button type="button" aria-pressed={placingTrade} className={`replay-tool-btn replay-tool-primary${placingTrade ? ' active' : ''}`} onClick={() => { setPlacingTrade(p => !p); setEntryDraft(null); setDrawingTool('none'); }} title="Click the chart to mark a hypothetical entry">
-                  <Crosshair size={16} /> Place Trade
-                </button>
+                <>
+                  <button type="button" aria-pressed={placingDirection === 'long'} className={`replay-tool-btn replay-tool-primary${placingDirection === 'long' ? ' active' : ''}`} onClick={() => { setPlacingDirection(d => d === 'long' ? null : 'long'); setDrawingTool('none'); }} title="Click the chart to place a long"><Crosshair size={16} /> Long</button>
+                  <button type="button" aria-pressed={placingDirection === 'short'} className={`replay-tool-btn replay-tool-primary${placingDirection === 'short' ? ' active' : ''}`} onClick={() => { setPlacingDirection(d => d === 'short' ? null : 'short'); setDrawingTool('none'); }} title="Click the chart to place a short"><Crosshair size={16} /> Short</button>
+                  <input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid #303b55', background: '#151b26', color: '#c9d2e8', fontSize: 11.5, padding: '0 8px' }} />
+                </>
               )}
               {openTrade && !closedTrade && (
                 <>
-                  <span className={`badge ${openTrade.direction === 'long' ? 'buy' : 'sell'}`} style={{ marginRight: 6 }}>{openTrade.direction === 'long' ? 'LONG' : 'SHORT'} @ {fmtPrice(openTrade.entryPrice)}</span>
+                  <span className={`badge ${openTrade.direction === 'long' ? 'buy' : 'sell'}`}>{openTrade.direction === 'long' ? 'LONG' : 'SHORT'} @ {fmtPrice(openTrade.entryPrice)}</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    SL {fmtPrice(openTrade.stopLoss)}{openTrade.takeProfit != null && <> · TP {fmtPrice(openTrade.takeProfit)}</>} · R:R 1:{(Math.abs((openTrade.takeProfit ?? openTrade.entryPrice) - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss)).toFixed(2)}
+                  </span>
+                  <input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid #303b55', background: '#151b26', color: '#c9d2e8', fontSize: 11.5, padding: '0 8px' }} />
                   <button type="button" className="replay-tool-btn" onClick={closeTradeNow} title="Close using the current candle's price"><CloseIcon size={16} /> Close Now</button>
                   <button type="button" className="replay-tool-btn replay-delete-tool" onClick={cancelTrade} title="Discard this hypothetical trade">Cancel</button>
                 </>
@@ -773,35 +855,16 @@ export default function BacktestChart({ onSaved }: Props) {
               <button type="button" onClick={stopDrawing}>Cancel</button>
             </div>
           )}
-          {placingTrade && !entryDraft && (
+          {placingDirection && (
             <div className="replay-active-tool" role="status">
-              <strong>Place Trade</strong>
-              <span>Click the chart at the price and candle where you would have entered.</span>
-              <button type="button" onClick={() => setPlacingTrade(false)}>Cancel</button>
+              <strong>{placingDirection === 'long' ? 'Long' : 'Short'}</strong>
+              <span>Click the chart at the price and candle where you would have entered. Drag the SL/TP lines afterward to adjust.</span>
+              <button type="button" onClick={() => setPlacingDirection(null)}>Cancel</button>
             </div>
           )}
 
           <div className="replay-chart-wrap" style={{ height: 440, position: 'relative' }} onMouseMove={handleChartWrapHoverMove} onMouseLeave={handleChartWrapMouseLeave}>
             <div ref={chartContainerRef} className="replay-chart-container" />
-
-            {entryDraft && (
-              <div className="replay-chart-image-placer" role="dialog" aria-label="Confirm trade entry" style={{ maxWidth: 320 }}>
-                <div style={{ display: 'grid', gap: 8, width: '100%' }}>
-                  <strong>Entry @ {fmtPrice(entryDraft.price)}</strong>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" className={`replay-ctrl-btn${draftDirection === 'long' ? ' active' : ''}`} onClick={() => setDraftDirection('long')}>Long</button>
-                    <button type="button" className={`replay-ctrl-btn${draftDirection === 'short' ? ' active' : ''}`} onClick={() => setDraftDirection('short')}>Short</button>
-                  </div>
-                  <input aria-label="Stop loss price" type="number" step="any" placeholder="Stop loss price" value={draftStopLoss} onChange={e => setDraftStopLoss(e.target.value)} />
-                  <input aria-label="Take profit price (optional)" type="number" step="any" placeholder="Take profit price (optional)" value={draftTakeProfit} onChange={e => setDraftTakeProfit(e.target.value)} />
-                  <input aria-label="Risk amount in dollars" type="number" step="any" placeholder="Risk amount ($)" value={draftRisk} onChange={e => setDraftRisk(e.target.value)} />
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                    <button type="button" onClick={() => { setEntryDraft(null); setPlacingTrade(false); }}>Cancel</button>
-                    <button type="button" className="primary" onClick={armTrade}>Arm Trade</button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {drawingTool === 'text' && (
               <div className="replay-chart-text-editor" role="group" aria-label="Write on chart">
@@ -858,7 +921,8 @@ export default function BacktestChart({ onSaved }: Props) {
               );
             })()}
             <canvas ref={canvasRef}
-              className={`replay-canvas-overlay${drawingTool !== 'none' || placingTrade ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId ? ' idle-hover' : ''}`}
+              className={`replay-canvas-overlay${drawingTool !== 'none' || placingDirection ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId && !hoveredHandle ? ' idle-hover' : ''}`}
+              style={(hoveredHandle || draggingHandleRef.current) ? { pointerEvents: 'all', cursor: 'ns-resize' } : placingDirection ? { pointerEvents: 'all', cursor: 'crosshair' } : undefined}
               aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
               onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
               onMouseLeave={() => { movingAnnotationRef.current = null; endAutoSelectMode(); if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />

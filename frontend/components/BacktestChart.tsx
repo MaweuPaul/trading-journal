@@ -84,6 +84,7 @@ export default function BacktestChart({ onSaved }: Props) {
   const annotationInputRef = useRef<HTMLInputElement>(null);
 
   const [symbol, setSymbol] = useState('');
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
   const [interval, setInterval_] = useState('15min');
   const [fromDate, setFromDate] = useState(isoDaysAgo(30));
   const [toDate, setToDate] = useState(isoDaysAgo(0));
@@ -135,6 +136,15 @@ export default function BacktestChart({ onSaved }: Props) {
   useEffect(() => {
     if (drawingTool === 'text') annotationInputRef.current?.focus();
   }, [drawingTool]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/pre-trade-analyses/symbols`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : { symbols: [] })
+      .then(data => setAvailableSymbols(Array.isArray(data.symbols) ? data.symbols : []))
+      .catch(() => {});
+  }, []);
 
   const allAnnotations = useMemo<ChartAnnotation[]>(
     () => toAnnotations(drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts),
@@ -670,7 +680,10 @@ export default function BacktestChart({ onSaved }: Props) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, padding: 14, borderBottom: '1px solid var(--border)' }}>
         <label>
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Symbol</span>
-          <input type="text" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. XAUUSD" style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
+          <input type="text" list="backtest-symbol-options" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. XAUUSD" style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
+          <datalist id="backtest-symbol-options">
+            {availableSymbols.map(s => <option key={s} value={s} />)}
+          </datalist>
         </label>
         <label>
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>From</span>

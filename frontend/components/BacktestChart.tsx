@@ -211,7 +211,7 @@ export default function BacktestChart({ onSaved }: Props) {
   };
 
   // ── Load candles for the chosen symbol/interval/date range ──────────────
-  const loadChart = useCallback(() => {
+  const loadChartWithInterval = useCallback((overrideInterval: string) => {
     const trimmed = symbol.trim();
     if (!trimmed) { setCandles(null); setError(''); return; }
     const token = localStorage.getItem('token');
@@ -221,7 +221,7 @@ export default function BacktestChart({ onSaved }: Props) {
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) { setError('Pick a valid date range.'); return; }
     setLoading(true); setError(''); setIsSetupError(false);
     setOpenTrade(null); setClosedTrade(null); setPlacingTrade(false); setEntryDraft(null);
-    fetch(`${API}/backtest-trades/chart?symbol=${encodeURIComponent(trimmed)}&interval=${interval}&fromMs=${fromMs}&toMs=${toMs}`, {
+    fetch(`${API}/backtest-trades/chart?symbol=${encodeURIComponent(trimmed)}&interval=${overrideInterval}&fromMs=${fromMs}&toMs=${toMs}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async res => {
@@ -233,7 +233,13 @@ export default function BacktestChart({ onSaved }: Props) {
         setLoading(false);
       })
       .catch(e => { setError(e.message || 'Network error'); setLoading(false); });
-  }, [symbol, interval, fromDate, toDate]);
+  }, [symbol, fromDate, toDate]);
+  const loadChart = useCallback(() => loadChartWithInterval(interval), [loadChartWithInterval, interval]);
+  const switchInterval = (tf: string) => {
+    if (tf === interval || openTrade || closedTrade) return;
+    setInterval_(tf);
+    loadChartWithInterval(tf);
+  };
 
   // ── Chart creation ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -690,6 +696,15 @@ export default function BacktestChart({ onSaved }: Props) {
       {candles && (
         <>
           <div className="replay-workspace-toolbar" aria-label="Backtest chart tools">
+            <div className="replay-tool-group timeframe-group">
+              <span className="replay-tool-group-label">Timeframe</span>
+              <div className="replay-timeframes" role="group" aria-label="Chart timeframe" title={openTrade || closedTrade ? 'Close or discard the current trade before changing timeframe' : undefined}>
+                {CHART_INTERVALS.map(tf => (
+                  <button type="button" key={tf.value} aria-pressed={interval === tf.value} disabled={Boolean(openTrade || closedTrade)} className={interval === tf.value ? 'active' : ''} onClick={() => switchInterval(tf.value)}>{tf.label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="replay-toolbar-divider" />
             <div className="replay-tool-group">
               <span className="replay-tool-group-label">Trade</span>
               {!openTrade && !closedTrade && (

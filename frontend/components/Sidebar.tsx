@@ -12,7 +12,9 @@ const navItems = [
   { href: '/stats',       label: 'Analytics',    icon: BarChart2 },
   { href: '/performance', label: 'Performance',  icon: LineChart },
   { href: '/coach',       label: 'Edge Coach',   icon: Brain },
-  { href: '/backtest',    label: 'Backtest',     icon: FlaskConical },
+  // Backtest is still being tested locally -- hidden from the nav until it's
+  // ready, but the /backtest route itself stays reachable directly by URL.
+  // { href: '/backtest', label: 'Backtest', icon: FlaskConical },
   { href: '/knowledge',   label: 'Knowledge Base', icon: BookOpen },
   { href: '/archive',     label: 'Backup',       icon: HardDrive },
   { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },

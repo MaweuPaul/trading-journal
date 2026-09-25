@@ -1,7 +1,8 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { FlaskConical, Plus, Trash2, X } from 'lucide-react';
+import Link from 'next/link';
+import { FlaskConical, Plus, Trash2, X, LineChart } from 'lucide-react';
 import BacktestChart from '@/components/BacktestChart';
 
 interface BacktestTrade {
@@ -74,16 +75,21 @@ export default function BacktestPage() {
             <h2><FlaskConical size={22} style={{ verticalAlign: 'middle', marginRight: 8 }} />Backtest</h2>
             <p>Replay your own historical data and log hypothetical trades — kept separate from your real trade history.</p>
           </div>
-          {!showChart && (
-            <button className="btn-primary" onClick={() => { setChartKey(k => k + 1); setShowChart(true); }}>
-              <Plus size={15} /> New Backtest
-            </button>
-          )}
-          {showChart && (
-            <button className="btn-ghost" onClick={() => setShowChart(false)}>
-              <X size={15} /> Close
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Link href="/backtest/metrics" className="btn-ghost">
+              <LineChart size={15} /> View Metrics
+            </Link>
+            {!showChart && (
+              <button className="btn-primary" onClick={() => { setChartKey(k => k + 1); setShowChart(true); }}>
+                <Plus size={15} /> New Backtest
+              </button>
+            )}
+            {showChart && (
+              <button className="btn-ghost" onClick={() => setShowChart(false)}>
+                <X size={15} /> Close
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

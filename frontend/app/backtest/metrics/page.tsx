@@ -1,4 +1,5 @@
 'use client';
+import '../backtest.css';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -221,13 +222,14 @@ export default function BacktestMetricsPage() {
   const hasCurve = curve.length > 0;
 
   return (
-    <main className="page-content">
-      <header className="page-header">
+    <main className="page-content bt-page">
+      <header className="page-header bt-page-header">
         <div className="page-header-inner">
           <div>
             <Link href="/backtest" className="btn-ghost" style={{ marginBottom: 10, display: 'inline-flex' }}>
               <ArrowLeft size={14} /> Back to Backtest
             </Link>
+            <div className="bt-eyebrow">STRATEGY LAB / BACKTEST</div>
             <h2><FlaskConical size={22} style={{ verticalAlign: 'middle', marginRight: 8 }} />Backtest Metrics</h2>
             <p>Edge stats and equity curve for your hypothetical backtest log — separate from your real trade performance.</p>
           </div>
@@ -245,7 +247,7 @@ export default function BacktestMetricsPage() {
         </div>
       ) : (
         <>
-          <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+          <div className="stats-grid bt-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
             <div className="stat-card blue-card">
               <div className="stat-label">TRADES LOGGED</div>
               <div className="stat-value">{stats.totalTrades}</div>
@@ -326,7 +328,7 @@ export default function BacktestMetricsPage() {
 
           {/* ── Edge stats ────────────────────────────────────────────── */}
           <div className="card" style={{ marginBottom: 20, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+            <div className="bt-metric-grid">
               {[
                 {
                   label: 'Profit Factor', value: stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2),
@@ -366,11 +368,7 @@ export default function BacktestMetricsPage() {
                   good: stats.maxLossStreak <= 3, icon: <TrendingDown size={14} />,
                 },
               ].map((m, i) => (
-                <div key={i} style={{
-                  padding: '18px 20px',
-                  borderRight: i % 3 !== 2 ? '1px solid var(--border)' : 'none',
-                  borderBottom: i < 6 ? '1px solid var(--border)' : 'none',
-                }}>
+                <div key={i} className="bt-metric-cell">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: 'var(--text-muted)' }}>
                     {m.icon}
                     <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase' }}>{m.label}</span>
@@ -387,10 +385,10 @@ export default function BacktestMetricsPage() {
             <div className="card-header">
               <div>
                 <div className="card-title">Quant Stats</div>
-                <div className="card-subtitle">Sharpe/Sortino/Calmar/SQN/Kelly, the same stats backtesting.py reports — computed on R-multiples and annualized by trade frequency, since not every backtest trade has a dollar risk amount set</div>
+                <div className="card-subtitle">Risk-adjusted performance in R-multiples, annualized by trade frequency.</div>
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+            <div className="bt-metric-grid">
               {[
                 {
                   label: 'Sharpe Ratio', value: stats.sharpe.toFixed(2), sub: 'Return / volatility, annualized',
@@ -429,11 +427,7 @@ export default function BacktestMetricsPage() {
                   good: stats.avgDrawdownR >= -1, icon: <Shield size={14} />,
                 },
               ].map((m, i) => (
-                <div key={i} style={{
-                  padding: '18px 20px',
-                  borderRight: i % 3 !== 2 ? '1px solid var(--border)' : 'none',
-                  borderBottom: i < 6 ? '1px solid var(--border)' : 'none',
-                }}>
+                <div key={i} className="bt-metric-cell">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: 'var(--text-muted)' }}>
                     {m.icon}
                     <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase' }}>{m.label}</span>
@@ -446,6 +440,7 @@ export default function BacktestMetricsPage() {
           </div>
 
           {/* ── By strategy ───────────────────────────────────────────── */}
+          <div className="bt-breakdowns">
           {byStrategy.length > 0 && (
             <div className="table-wrap" style={{ marginBottom: 20 }}>
               <div className="card-header" style={{ padding: '14px 16px 0' }}>
@@ -495,6 +490,7 @@ export default function BacktestMetricsPage() {
               </table>
             </div>
           )}
+          </div>
         </>
       )}
     </main>

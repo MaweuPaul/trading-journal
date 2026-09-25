@@ -1,8 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Square, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
-  Undo2, Trash2, MousePointer2, ChevronDown, X,
+  TrendingUp, Minus, ArrowUpRight, MoveUpRight, Layers, List, Square, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
+  Undo2, Trash2, MousePointer2,
   SkipBack, SkipForward, Play, Pause, Crosshair, LogOut as CloseIcon, Ruler,
 } from 'lucide-react';
 import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightweight-charts';
@@ -20,17 +20,16 @@ import { drawMeasureOverlay } from './backtest-tools/measureTool';
 
 const API = '/api';
 
-// A curated subset of the drawing library's 68 tools -- Text gets its own
-// toolbar button (like before), everything else lives in the Draw tray.
-const DRAW_TOOLS: { type: string; label: string }[] = [
-  { type: 'TrendLine', label: 'Trend line' },
-  { type: 'Ray', label: 'Ray' },
-  { type: 'HorizontalLine', label: 'Horizontal line' },
-  { type: 'Rectangle', label: 'Rectangle' },
-  { type: 'ParallelChannel', label: 'Channel' },
-  { type: 'FibRetracement', label: 'Fib retracement' },
-  { type: 'FibExtension', label: 'Fib extension' },
-  { type: 'Arrow', label: 'Arrow' },
+// Frequently used drawing tools in the workspace's persistent icon rail.
+const DRAW_TOOLS: { type: string; label: string; icon: typeof Square }[] = [
+  { type: 'TrendLine', label: 'Trend line', icon: TrendingUp },
+  { type: 'Ray', label: 'Ray', icon: MoveUpRight },
+  { type: 'HorizontalLine', label: 'Horizontal line', icon: Minus },
+  { type: 'Rectangle', label: 'Rectangle', icon: Square },
+  { type: 'ParallelChannel', label: 'Channel', icon: Layers },
+  { type: 'FibRetracement', label: 'Fib retracement', icon: List },
+  { type: 'FibExtension', label: 'Fib extension', icon: Layers },
+  { type: 'Arrow', label: 'Arrow', icon: ArrowUpRight },
 ];
 
 function drawingFactory(type: string, data: SerializedDrawing) {
@@ -65,7 +64,6 @@ export default function BacktestChart({ onSaved }: Props) {
 
   // ── Drawing tools (lightweight-charts-drawing) ───────────────────────────
   const [activeDrawType, setActiveDrawType] = useState<string | null>(null);
-  const [showDrawingTray, setShowDrawingTray] = useState(false);
   const [showDrawingList, setShowDrawingList] = useState(false);
   const [drawColor, setDrawColor] = useState<string>(DRAWING_COLORS[0].value);
   const drawColorRef = useRef(drawColor);
@@ -125,7 +123,6 @@ export default function BacktestChart({ onSaved }: Props) {
   const activateSelectMode = () => {
     managerRef.current?.setActiveTool(null);
     setActiveDrawType(null);
-    setShowDrawingTray(false);
   };
   const activateDrawType = (type: string) => {
     const manager = managerRef.current; if (!manager) return;
@@ -532,8 +529,9 @@ export default function BacktestChart({ onSaved }: Props) {
   const activeDrawLabel = activeDrawType === 'TextAnnotation' ? 'Text' : DRAW_TOOLS.find(t => t.type === activeDrawType)?.label;
 
   return (
-    <div className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, padding: 14, borderBottom: '1px solid var(--border)' }}>
+    <div className="card bt-workspace">
+      <div className="bt-workspace-heading"><span className="bt-eyebrow">REPLAY WORKSPACE</span><span>Historical market simulation</span></div>
+      <div className="bt-setup">
         <label>
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Symbol</span>
           <input type="text" list="backtest-symbol-options" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. XAUUSD" style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
@@ -564,7 +562,7 @@ export default function BacktestChart({ onSaved }: Props) {
 
       {candles && (
         <>
-          <div className="replay-workspace-toolbar" aria-label="Backtest chart tools">
+          <div className="replay-workspace-toolbar bt-execution" aria-label="Backtest chart tools">
             <div className="replay-tool-group timeframe-group">
               <span className="replay-tool-group-label">Timeframe</span>
               <div className="replay-timeframes" role="group" aria-label="Chart timeframe" title={openTrade || closedTrade ? 'Close or discard the current trade before changing timeframe' : undefined}>
@@ -580,7 +578,7 @@ export default function BacktestChart({ onSaved }: Props) {
                 <>
                   <button type="button" aria-pressed={placingDirection === 'long'} className={`replay-tool-btn replay-tool-primary${placingDirection === 'long' ? ' active' : ''}`} onClick={() => { setPlacingDirection(d => d === 'long' ? null : 'long'); activateSelectMode(); setMeasureActive(false); }} title="Click the chart to place a long"><Crosshair size={16} /> Long</button>
                   <button type="button" aria-pressed={placingDirection === 'short'} className={`replay-tool-btn replay-tool-primary${placingDirection === 'short' ? ' active' : ''}`} onClick={() => { setPlacingDirection(d => d === 'short' ? null : 'short'); activateSelectMode(); setMeasureActive(false); }} title="Click the chart to place a short"><Crosshair size={16} /> Short</button>
-                  <input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid #303b55', background: '#151b26', color: '#c9d2e8', fontSize: 11.5, padding: '0 8px' }} />
+                  <label className="bt-risk-input"><span>Risk $</span><input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 11.5, padding: '0 8px' }} /></label>
                 </>
               )}
               {openTrade && !closedTrade && (
@@ -589,45 +587,29 @@ export default function BacktestChart({ onSaved }: Props) {
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                     SL {fmtPrice(openTrade.stopLoss)}{openTrade.takeProfit != null && <> · TP {fmtPrice(openTrade.takeProfit)}</>} · R:R 1:{(Math.abs((openTrade.takeProfit ?? openTrade.entryPrice) - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss)).toFixed(2)}
                   </span>
-                  <input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid #303b55', background: '#151b26', color: '#c9d2e8', fontSize: 11.5, padding: '0 8px' }} />
+                  <label className="bt-risk-input"><span>Risk $</span><input aria-label="Risk amount in dollars" type="number" step="any" min="0" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} placeholder="Risk $" style={{ width: 78, minHeight: 34, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', fontSize: 11.5, padding: '0 8px' }} /></label>
                   <button type="button" className="replay-tool-btn" onClick={closeTradeNow} title="Close using the current candle's price"><CloseIcon size={16} /> Close Now</button>
                   <button type="button" className="replay-tool-btn replay-delete-tool" onClick={cancelTrade} title="Discard this hypothetical trade">Cancel</button>
                 </>
               )}
             </div>
-            <div className="replay-toolbar-divider" />
-            <div className="replay-tool-group">
-              <span className="replay-tool-group-label">Document</span>
-              <button type="button" aria-pressed={activeDrawType === 'TextAnnotation'} className={`replay-tool-btn${activeDrawType === 'TextAnnotation' ? ' active' : ''}`} onClick={() => activateDrawType('TextAnnotation')} title="Place a text note on the chart"><TypeIcon size={16} /> Text</button>
-              <button type="button" aria-expanded={showDrawingTray} aria-controls="backtest-drawing-tray" aria-pressed={Boolean(activeDrawType) && activeDrawType !== 'TextAnnotation'} className={`replay-tool-btn${showDrawingTray || (activeDrawType && activeDrawType !== 'TextAnnotation') ? ' active' : ''}`} onClick={() => setShowDrawingTray(v => !v)} title="Open drawing tools"><Square size={16} /> {activeDrawType && activeDrawType !== 'TextAnnotation' ? activeDrawLabel : 'Draw'} <ChevronDown size={14} /></button>
-              <button type="button" aria-pressed={measureActive} className={`replay-tool-btn${measureActive ? ' active' : ''}`} onClick={toggleMeasure} title="Drag to measure price, percent, and bars between two points"><Ruler size={16} /> Measure</button>
-            </div>
-            <span className="replay-toolbar-spacer" />
-            <div className="replay-tool-group replay-tool-actions">
-              <button type="button" aria-pressed={!activeDrawType && !measureActive} className={`replay-tool-btn${!activeDrawType && !measureActive ? ' active' : ''}`} onClick={activateSelectMode} title="Select and edit existing drawings"><MousePointer2 size={16} /> Select</button>
-              <button type="button" className="replay-tool-btn" disabled={historyDepth === 0} onClick={undoDrawing} title="Undo the last drawing change"><Undo2 size={16} /> Undo</button>
-              <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedDrawingId} onClick={deleteSelectedDrawing} title="Delete the selected drawing"><Trash2 size={16} /> Delete</button>
-              {drawings.length > 0 && <button type="button" aria-pressed={showDrawingList} className={`replay-tool-btn${showDrawingList ? ' active' : ''}`} title="Manage drawings" onClick={() => setShowDrawingList(v => !v)}>Objects ({drawings.length})</button>}
-            </div>
           </div>
 
-          {showDrawingTray && (
-            <div id="backtest-drawing-tray" className="replay-drawing-tray" aria-label="Drawing tools">
-              <div className="replay-tool-group">
-                <span className="replay-tool-group-label">Drawing</span>
-                {DRAW_TOOLS.map(tool => (
-                  <button type="button" key={tool.type} aria-pressed={activeDrawType === tool.type} className={`replay-tool-btn${activeDrawType === tool.type ? ' active' : ''}`} onClick={() => activateDrawType(tool.type)}>{tool.label}</button>
-                ))}
-              </div>
-              <div className="replay-toolbar-divider" />
-              <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
-                <span className="replay-tool-group-label">Color</span>
-                {DRAWING_COLORS.map(color => <button type="button" key={color.value} aria-label={`Use ${color.label.toLowerCase()} drawing color`} title={color.label} aria-pressed={color.value === drawColor} className={color.value === drawColor ? 'active' : ''} onClick={() => setDrawColor(color.value)} style={{ '--replay-swatch': color.value } as React.CSSProperties} />)}
-              </div>
-              <button type="button" className="replay-tool-tray-close" onClick={() => setShowDrawingTray(false)} aria-label="Close drawing tools"><X size={16} /></button>
-            </div>
-          )}
-
+          <div className="bt-chart-layout">
+          <aside className="bt-drawing-rail" aria-label="Drawing tools">
+            <button type="button" title="Select drawings" aria-label="Select drawings" aria-pressed={!activeDrawType && !measureActive} onClick={activateSelectMode}><MousePointer2 size={18} /></button>
+            <div className="bt-rail-divider" />
+            {DRAW_TOOLS.map(tool => <button type="button" key={tool.type} title={tool.label} aria-label={tool.label} aria-pressed={activeDrawType === tool.type} onClick={() => activateDrawType(tool.type)}><tool.icon size={18} /></button>)}
+            <button type="button" title="Text annotation" aria-label="Text annotation" aria-pressed={activeDrawType === 'TextAnnotation'} onClick={() => activateDrawType('TextAnnotation')}><TypeIcon size={18} /></button>
+            <button type="button" title="Measure" aria-label="Measure" aria-pressed={measureActive} onClick={toggleMeasure}><Ruler size={18} /></button>
+            <label className="bt-color-picker" title="Drawing color"><span className="bt-sr-only">Drawing color</span><input type="color" value={drawColor} onChange={e => setDrawColor(e.target.value)} /></label>
+            <div className="bt-rail-divider" />
+            <button type="button" title="Undo drawing" aria-label="Undo drawing" disabled={historyDepth === 0} onClick={undoDrawing}><Undo2 size={18} /></button>
+            <button type="button" title="Delete selected drawing" aria-label="Delete selected drawing" disabled={!selectedDrawingId} onClick={deleteSelectedDrawing}><Trash2 size={18} /></button>
+            <button type="button" title={`Objects (${drawings.length})`} aria-label={`Objects (${drawings.length})`} aria-pressed={showDrawingList} onClick={() => setShowDrawingList(v => !v)}><List size={18} /></button>
+          </aside>
+          <div className="bt-chart-main">
+          <div className="bt-chart-heading"><strong>{symbol} <span>{interval}</span></strong><span>Historical replay · {replayIdx + 1} / {totalCandles} bars</span></div>
           {activeDrawType && (
             <div className="replay-active-tool" role="status">
               <strong>{activeDrawLabel}</strong>
@@ -650,7 +632,7 @@ export default function BacktestChart({ onSaved }: Props) {
             </div>
           )}
 
-          <div className="replay-chart-wrap" style={{ height: 440, position: 'relative' }} onMouseMove={handleChartWrapHoverMove} onMouseLeave={handleChartWrapMouseLeave}>
+          <div className="replay-chart-wrap" style={{ height: 560, position: 'relative' }} onMouseMove={handleChartWrapHoverMove} onMouseLeave={handleChartWrapMouseLeave}>
             <div ref={chartContainerRef} className="replay-chart-container" />
 
             {showDrawingList && drawings.length > 0 && (
@@ -658,7 +640,7 @@ export default function BacktestChart({ onSaved }: Props) {
                 <div className="replay-annotation-manager-head"><strong>Saved drawings</strong><button type="button" onClick={clearAllDrawings}>Clear all</button></div>
                 {drawings.map((d, index) => (
                   <div className={`replay-annotation-row${selectedDrawingId === d.id ? ' selected' : ''}`} key={d.id}>
-                    <button type="button" className="replay-annotation-select" aria-pressed={selectedDrawingId === d.id} onClick={() => { managerRef.current?.selectDrawing(d.id); setShowDrawingTray(false); }}>
+                    <button type="button" className="replay-annotation-select" aria-pressed={selectedDrawingId === d.id} onClick={() => { managerRef.current?.selectDrawing(d.id); }}>
                       <i style={{ background: d.style.lineColor || '#3b82f6' }} />
                       <span><b>{getToolRegistry().get(d.type)?.name ?? d.type}</b> {index + 1}</span>
                     </button>
@@ -676,26 +658,21 @@ export default function BacktestChart({ onSaved }: Props) {
               onMouseLeave={() => { if (measureDragRef.current) { measureDragRef.current = null; redrawCanvas(); } }} />
           </div>
 
-          <div className="replay-bottombar">
-            <button className="replay-ctrl-btn" disabled={replayIdx === 0} onClick={() => jumpToReplayIndex(0)} title="Reset to start"><SkipBack size={14} /></button>
-            <button className="replay-ctrl-btn" disabled={replayIdx === 0} onClick={() => jumpToReplayIndex(replayIdx - 1)} title="Step back">‹</button>
-            <button className={`replay-ctrl-btn play${playing ? ' is-playing' : ''}`} onClick={() => setPlaying(p => !p)} title="Play/Pause">
+          </div>
+          </div>
+          <div className="replay-bottombar bt-playback">
+            <button className="replay-ctrl-btn" disabled={replayIdx === 0} onClick={() => jumpToReplayIndex(0)} aria-label="Reset to start" title="Reset to start"><SkipBack size={14} /></button>
+            <button className="replay-ctrl-btn" disabled={replayIdx === 0} onClick={() => jumpToReplayIndex(replayIdx - 1)} aria-label="Step back" title="Step back">‹</button>
+            <button className={`replay-ctrl-btn play${playing ? ' is-playing' : ''}`} onClick={() => setPlaying(p => !p)} aria-label="Play/Pause" title="Play/Pause">
               {playing ? <Pause size={14} /> : <Play size={14} />}
             </button>
-            <button className="replay-ctrl-btn" disabled={replayIdx >= totalCandles - 1} onClick={() => jumpToReplayIndex(replayIdx + 1)} title="Step forward">›</button>
-            <button className="replay-ctrl-btn" disabled={replayIdx >= totalCandles - 1} onClick={() => jumpToReplayIndex(totalCandles - 1)} title="Jump to end"><SkipForward size={14} /></button>
-            <select className="replay-speed-select" value={speed} onChange={e => setSpeed(Number(e.target.value))}>
+            <button className="replay-ctrl-btn" disabled={replayIdx >= totalCandles - 1} onClick={() => jumpToReplayIndex(replayIdx + 1)} aria-label="Step forward" title="Step forward">›</button>
+            <button className="replay-ctrl-btn" disabled={replayIdx >= totalCandles - 1} onClick={() => jumpToReplayIndex(totalCandles - 1)} aria-label="Jump to end" title="Jump to end"><SkipForward size={14} /></button>
+            <select aria-label="Replay speed" className="replay-speed-select" value={speed} onChange={e => setSpeed(Number(e.target.value))}>
               {SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}
             </select>
-            <div className="replay-progress-wrap" style={{ flex: 1 }}>
-              <div className="replay-progress-track" onClick={event => {
-                const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
-                const ratio = (event.clientX - rect.left) / rect.width;
-                jumpToReplayIndex(Math.round(ratio * (totalCandles - 1)));
-              }}>
-                <div className="replay-progress-fill" style={{ width: `${progressPct}%` }} />
-              </div>
-            </div>
+            <input className="bt-scrubber" type="range" aria-label="Replay progress" min={0} max={Math.max(0, totalCandles - 1)} value={replayIdx} onChange={e => jumpToReplayIndex(Number(e.target.value))} />
+            <span className="bt-playback-count">{Math.round(progressPct)}%</span>
           </div>
         </>
       )}
@@ -719,7 +696,7 @@ export default function BacktestChart({ onSaved }: Props) {
       )}
 
       {closedTrade && (
-        <div style={{ padding: 16, borderTop: '1px solid var(--border)', display: 'grid', gap: 12 }}>
+        <div className="bt-closeout" style={{ padding: 16, borderTop: '1px solid var(--border)', display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
             <span className={`badge ${closedTrade.outcome === 'win' ? 'buy' : closedTrade.outcome === 'loss' ? 'sell' : ''}`}>{closedTrade.outcome.toUpperCase()}</span>
             <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{closedTrade.direction === 'long' ? 'Long' : 'Short'} · Entry {fmtPrice(closedTrade.entryPrice)} → Exit {fmtPrice(closedTrade.exitPrice)}</span>
@@ -739,7 +716,7 @@ export default function BacktestChart({ onSaved }: Props) {
               </datalist>
             </label>
           </div>
-          <textarea className="drawer-textarea" placeholder="What was the setup? What would you do differently?" value={notes} onChange={e => setNotes(e.target.value)} />
+          <label className="bt-notes-label">Trade notes<textarea className="drawer-textarea" placeholder="What was the setup? What would you do differently?" value={notes} onChange={e => setNotes(e.target.value)} /></label>
           {saveError && <div className="account-alert error">{saveError}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button type="button" className="btn-danger" onClick={discardClosedTrade}>Discard</button>

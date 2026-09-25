@@ -13,7 +13,7 @@ import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from '
 import { EMA_CONFIG, ema, rsi, sessionLabel, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
-  CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
+  CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure,
@@ -61,6 +61,36 @@ const DAY = 86_400_000;
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
 
+// Autosaved workspace state -- so leaving mid-backtest (drawings on the
+// chart, maybe an open hypothetical trade) doesn't lose that work. Stored
+// client-side only; nothing here is logged until the trader explicitly
+// saves a closed trade to the Backtest Log.
+const DRAFT_KEY = 'backtest-workspace-draft-v1';
+const DRAFT_MAX_AGE_MS = 7 * 86_400_000;
+interface WorkspaceDraft {
+  symbol: string; fromDate: string; toDate: string; interval: string;
+  replayIdx: number; analysisStartIdx: number;
+  openTrade: OpenTrade | null;
+  backtestName: string; notes: string; tags: string[]; drawColor: string;
+  drawings: SerializedDrawing[];
+  savedAt: number;
+}
+function readDraft(): WorkspaceDraft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as WorkspaceDraft;
+    if (!parsed?.symbol || Date.now() - parsed.savedAt > DRAFT_MAX_AGE_MS) return null;
+    return parsed;
+  } catch { return null; }
+}
+function writeDraft(draft: WorkspaceDraft) {
+  try { window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* storage full/unavailable -- autosave is best-effort */ }
+}
+function clearDraft() {
+  try { window.localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+}
+
 function drawingFactory(type: string, data: SerializedDrawing) {
   return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
 }
@@ -102,6 +132,10 @@ export default function Workspace() {
   const rsiRef = useRef<ISeriesApi<'Line'> | null>(null);
   const alertLinesRef = useRef<Map<number, IPriceLine>>(new Map());
   const managerRef = useRef<DrawingManager | null>(null);
+
+  // ── Session autosave ─────────────────────────────────────────────────────
+  const [draftAvailable, setDraftAvailable] = useState<WorkspaceDraft | null>(null);
+  const pendingRestoreRef = useRef<WorkspaceDraft | null>(null);
 
   // ── Setup ──────────────────────────────────────────────────────────────────
   const [symbol, setSymbol] = useState(() => params.get('symbol') || activeSymbol || 'XAUUSD');
@@ -173,6 +207,43 @@ export default function Workspace() {
       .then(data => setAvailableSymbols(Array.isArray(data.symbols) ? data.symbols : []))
       .catch(() => {});
   }, []);
+
+  // A deep link (from the Log's "Load in Workspace") always wins over a
+  // leftover draft -- only offer to resume when the trader arrived here
+  // with nothing more specific in mind.
+  useEffect(() => {
+    if (params.get('symbol')) return;
+    const draft = readDraft();
+    if (draft) setDraftAvailable(draft);
+  }, [params]);
+
+  const resumeDraft = () => {
+    const draft = draftAvailable; if (!draft) return;
+    pendingRestoreRef.current = draft;
+    setDraftAvailable(null);
+    setSymbol(draft.symbol); setFromDate(draft.fromDate); setToDate(draft.toDate);
+    intervalTouchedRef.current = true; setInterval_(draft.interval);
+    setDrawColor(draft.drawColor);
+    loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
+  };
+  const discardDraft = () => { clearDraft(); setDraftAvailable(null); };
+
+  // Autosave: whatever's currently on screen, so it survives a refresh or
+  // an accidental nav-away. Best-effort and silent -- never blocks the UI.
+  useEffect(() => {
+    if (!candles) return;
+    const t = setTimeout(() => {
+      writeDraft({
+        symbol: symbol.trim().toUpperCase(), fromDate, toDate, interval,
+        replayIdx, analysisStartIdx, openTrade,
+        backtestName, notes, tags, drawColor,
+        drawings: managerRef.current?.exportDrawings() ?? [],
+        savedAt: Date.now(),
+      });
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount]);
 
   // Re-suggest the timeframe when the range changes (cTrader caps a request
   // at 1500 bars) unless the trader picked one explicitly.
@@ -261,12 +332,27 @@ export default function Workspace() {
   };
 
   // ── Load candles ───────────────────────────────────────────────────────────
-  const loadChartWithInterval = useCallback((overrideInterval: string) => {
-    const trimmed = symbol.trim().toUpperCase();
+  // `overrides` lets a caller (session resume) supply symbol/dates directly
+  // instead of reading them off state -- state set just before this is
+  // called (setSymbol etc.) hasn't committed yet, so this closure would
+  // otherwise still see the *previous* render's values.
+  const loadChartWithInterval = useCallback((overrideInterval: string, overrides?: { symbol?: string; fromDate?: string; toDate?: string }) => {
+    const trimmed = (overrides?.symbol ?? symbol).trim().toUpperCase();
     if (!trimmed) { setCandles(null); setError(''); return; }
-    const fromMs = new Date(fromDate).getTime();
-    const toMs = new Date(toDate).getTime() + DAY;
+    let fromMs = new Date(overrides?.fromDate ?? fromDate).getTime();
+    const toMs = new Date(overrides?.toDate ?? toDate).getTime() + DAY;
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) { setError('Pick a valid date range.'); return; }
+    // cTrader caps a request at 1500 bars. Rather than fail with "range too
+    // wide" when the timeframe is too fine for the range, keep "To" and move
+    // "From" forward to the longest window that fits, and say so.
+    const maxMs = maxRangeMs(overrideInterval);
+    if (toMs - fromMs > maxMs) {
+      fromMs = toMs - maxMs;
+      const adjusted = new Date(fromMs).toISOString().slice(0, 10);
+      const span = maxMs >= 2 * DAY ? `${Math.floor(maxMs / DAY)} days` : `${Math.floor(maxMs / 3_600_000)} hours`;
+      setFromDate(adjusted);
+      setToast(`${CHART_INTERVALS.find(t => t.value === overrideInterval)?.label ?? overrideInterval} candles cover up to ${span} — From moved to ${adjusted}`);
+    }
     setLoading(true); setError(''); setIsSetupError(false); setPlaying(false);
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false); setPlacingDirection(null);
     setSelectedDrawingId(null); setActiveDrawType(null); setMeasureActive(false); setMeasureRange(null);
@@ -283,7 +369,18 @@ export default function Workspace() {
         const startIdx = Math.max(0, loaded.findIndex(c => Number(c.time) >= fromMs / 1000));
         setAnalysisStartIdx(startIdx);
         setCandles(loaded);
-        setReplayIdx(Math.min(loaded.length - 1, startIdx + 40));
+        // Note: pendingRestoreRef is deliberately NOT cleared here -- the
+        // chart-creation effect (keyed on `candles`) runs after this state
+        // update commits and still needs it to import the saved drawings.
+        // It clears the ref itself once it's done reading it.
+        const restoring = pendingRestoreRef.current;
+        if (restoring && restoring.symbol === trimmed) {
+          setReplayIdx(Math.max(0, Math.min(loaded.length - 1, restoring.replayIdx)));
+          setOpenTrade(restoring.openTrade);
+          setBacktestName(restoring.backtestName); setNotes(restoring.notes); setTags(restoring.tags);
+        } else {
+          setReplayIdx(Math.min(loaded.length - 1, startIdx + 40));
+        }
         setLoading(false);
       })
       .catch(e => { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
@@ -338,6 +435,11 @@ export default function Workspace() {
     const manager = new DrawingManager();
     manager.attach(chart, series, el);
     managerRef.current = manager;
+    const restoring = pendingRestoreRef.current;
+    if (restoring) {
+      if (restoring.drawings.length) manager.importDrawings(restoring.drawings, drawingFactory);
+      pendingRestoreRef.current = null;
+    }
     const recount = () => setDrawingCount(manager.getAllDrawings().length);
     const unsubscribers = [
       manager.on('drawing:added', event => {
@@ -1167,6 +1269,18 @@ export default function Workspace() {
                   <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">{isSetupError ? 'Chart not configured' : 'Chart data unavailable'}</h3>
                   <p className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:max-w-md">{error}</p>
                   {isSetupError && <a href="/accounts" className="tw:text-primary tw:font-label-action tw:text-label-action tw:underline">Connect cTrader on the Accounts page</a>}
+                </>
+              ) : draftAvailable ? (
+                <>
+                  <Icon name="history" className="tw:text-[32px] tw:text-primary" />
+                  <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">Resume your last session?</h3>
+                  <p className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:max-w-sm">
+                    {draftAvailable.symbol} · {draftAvailable.interval} · {draftAvailable.drawings.length} drawing{draftAvailable.drawings.length === 1 ? '' : 's'}{draftAvailable.openTrade ? ' · an open trade' : ''}, saved {new Date(draftAvailable.savedAt).toLocaleString()}.
+                  </p>
+                  <div className="tw:flex tw:gap-space-sm tw:mt-space-xs">
+                    <button type="button" onClick={resumeDraft} className="tw:px-space-md tw:py-space-xs tw:rounded-full tw:bg-primary tw:text-on-primary tw:font-label-action tw:text-label-action">Resume session</button>
+                    <button type="button" onClick={discardDraft} className="tw:px-space-md tw:py-space-xs tw:rounded-full tw:border tw:border-outline tw:text-on-surface-variant tw:font-label-action tw:text-label-action">Start fresh</button>
+                  </div>
                 </>
               ) : (
                 <>

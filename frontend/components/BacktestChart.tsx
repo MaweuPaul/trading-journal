@@ -4,74 +4,24 @@ import {
   Square, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
   Undo2, Trash2, MousePointer2, ArrowUpRight, MoveHorizontal, ChevronDown, X,
   SkipBack, SkipForward, Play, Pause, Crosshair, LogOut as CloseIcon,
+  Ruler, Percent,
 } from 'lucide-react';
 import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { useTheme } from './ThemeProvider';
+import {
+  Candle, AnnotationLineStyle, DrawnRect, DrawnLine, DrawnText, DrawnHorizontal, DrawnArrow, DrawnFib,
+  ChartAnnotation, DrawingTool, ShapeDrawingTool, AnnotationHistory, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
+  DRAWING_COLORS, SHAPE_DRAWING_TOOLS, TOOL_GUIDANCE, CHART_INTERVALS, SPEEDS,
+  toAnnotations, isoDaysAgo, fmtPrice,
+} from './backtest-tools/types';
+import {
+  DrawCtx, drawRects, drawLines, drawHorizontals, drawArrows, drawFibs, drawTexts, drawShapePreview, findAnnotationAt as findAnnotationAtIn,
+} from './backtest-tools/annotationDrawing';
+import { placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay } from './backtest-tools/positionTool';
+import { drawMeasureOverlay } from './backtest-tools/measureTool';
 
 const API = '/api';
-
-interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; }
-type AnnotationLineStyle = 'solid' | 'dashed';
-interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
-interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
-interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
-interface DrawnHorizontal { id: string; time: number; price: number; color: string; lineStyle?: AnnotationLineStyle; }
-interface DrawnArrow { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
-type ChartAnnotation =
-  | (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' })
-  | (DrawnHorizontal & { type: 'horizontal' }) | (DrawnArrow & { type: 'arrow' })
-  | (DrawnText & { type: 'text' });
-type DrawingTool = 'none' | 'select' | 'rect' | 'line' | 'horizontal' | 'arrow' | 'text';
-type ShapeDrawingTool = Extract<DrawingTool, 'rect' | 'line' | 'horizontal' | 'arrow'>;
-interface AnnotationHistory { rects: DrawnRect[]; lines: DrawnLine[]; horizontals: DrawnHorizontal[]; arrows: DrawnArrow[]; texts: DrawnText[]; }
-
-interface OpenTrade {
-  direction: 'long' | 'short';
-  entryTime: number; entryPrice: number;
-  stopLoss: number; takeProfit: number | null;
-  riskAmount: number;
-}
-interface ClosedTrade extends OpenTrade {
-  exitTime: number; exitPrice: number;
-  outcome: 'win' | 'loss' | 'breakeven';
-  rMultiple: number; pnlUSD: number;
-}
-
-const DRAWING_COLORS = [
-  { value: '#3b82f6', label: 'Blue' }, { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' }, { value: '#ef4444', label: 'Red' },
-  { value: '#8b5cf6', label: 'Purple' }, { value: '#ec4899', label: 'Pink' },
-] as const;
-const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
-const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  select: { label: 'Select', instruction: 'Drag an annotation to move it. Click it (without dragging) to edit its color or line style.' },
-  rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area.' },
-  line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
-  horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
-  arrow: { label: 'Arrow', instruction: 'Drag to point from one place to another.' },
-  text: { label: 'Text note', instruction: 'Write the note, then click the candle and price where it belongs.' },
-};
-const CHART_INTERVALS = [
-  { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
-  { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
-] as const;
-const SPEEDS = [0.5, 1, 2, 5, 10];
-
-function toAnnotations(rects: DrawnRect[], lines: DrawnLine[], horizontals: DrawnHorizontal[], arrows: DrawnArrow[], texts: DrawnText[]): ChartAnnotation[] {
-  return [
-    ...rects.map(a => ({ ...a, type: 'rect' as const })),
-    ...lines.map(a => ({ ...a, type: 'line' as const })),
-    ...horizontals.map(a => ({ ...a, type: 'horizontal' as const })),
-    ...arrows.map(a => ({ ...a, type: 'arrow' as const })),
-    ...texts.map(a => ({ ...a, type: 'text' as const })),
-  ];
-}
-function isoDaysAgo(days: number) {
-  const d = new Date(); d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-function fmtPrice(n: number) { return n.toFixed(n >= 100 ? 2 : 5); }
 
 interface Props { onSaved: () => void; }
 
@@ -105,6 +55,7 @@ export default function BacktestChart({ onSaved }: Props) {
   const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
   const [drawnHorizontals, setDrawnHorizontals] = useState<DrawnHorizontal[]>([]);
   const [drawnArrows, setDrawnArrows] = useState<DrawnArrow[]>([]);
+  const [drawnFibs, setDrawnFibs] = useState<DrawnFib[]>([]);
   const [drawnTexts, setDrawnTexts] = useState<DrawnText[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState('');
   const [annotationText, setAnnotationText] = useState('');
@@ -117,12 +68,15 @@ export default function BacktestChart({ onSaved }: Props) {
   const [placingDirection, setPlacingDirection] = useState<'long' | 'short' | null>(null);
   const [riskAmountInput, setRiskAmountInput] = useState('100');
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
-  const draggingHandleRef = useRef<'sl' | 'tp' | null>(null);
-  const [hoveredHandle, setHoveredHandle] = useState<'sl' | 'tp' | null>(null);
+  const draggingHandleRef = useRef<TradeHandle | null>(null);
+  const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+
+  const [measureRange, setMeasureRange] = useState<MeasureRange | null>(null);
+  const measureDragRef = useRef<MeasureRange & { x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const movingAnnotationRef = useRef<{ annotation: ChartAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
@@ -145,8 +99,8 @@ export default function BacktestChart({ onSaved }: Props) {
   }, []);
 
   const allAnnotations = useMemo<ChartAnnotation[]>(
-    () => toAnnotations(drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts),
-    [drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts],
+    () => toAnnotations(drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts, drawnFibs),
+    [drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts, drawnFibs],
   );
   const activeToolGuidance = TOOL_GUIDANCE[drawingTool];
   const isShapeToolActive = SHAPE_DRAWING_TOOLS.includes(drawingTool as ShapeDrawingTool);
@@ -154,6 +108,7 @@ export default function BacktestChart({ onSaved }: Props) {
   const stopDrawing = () => {
     setDrawingTool('none'); setShowDrawingTools(false);
     setAnnotationText(''); drawStart.current = null; currentPreview.current = null;
+    measureDragRef.current = null; setMeasureRange(null);
     redrawCanvasRef.current();
   };
   const activateDrawingTool = (tool: DrawingTool) => {
@@ -162,12 +117,13 @@ export default function BacktestChart({ onSaved }: Props) {
     setShowDrawingTools(!turningOff && SHAPE_DRAWING_TOOLS.includes(tool as ShapeDrawingTool));
     setSelectedAnnotationId('');
     setPlacingDirection(null);
+    measureDragRef.current = null; setMeasureRange(null);
   };
   const pushAnnotationHistory = () => {
     annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
       rects: drawnRects.map(i => ({ ...i })), lines: drawnLines.map(i => ({ ...i })),
       horizontals: drawnHorizontals.map(i => ({ ...i })), arrows: drawnArrows.map(i => ({ ...i })),
-      texts: drawnTexts.map(i => ({ ...i })),
+      texts: drawnTexts.map(i => ({ ...i })), fibs: drawnFibs.map(i => ({ ...i })),
     }];
     setAnnotationHistoryDepth(annotationHistoryRef.current.length);
   };
@@ -177,7 +133,7 @@ export default function BacktestChart({ onSaved }: Props) {
     annotationHistoryRef.current = annotationHistoryRef.current.slice(0, -1);
     setAnnotationHistoryDepth(annotationHistoryRef.current.length);
     setDrawnRects(last.rects); setDrawnLines(last.lines); setDrawnHorizontals(last.horizontals);
-    setDrawnArrows(last.arrows); setDrawnTexts(last.texts);
+    setDrawnArrows(last.arrows); setDrawnTexts(last.texts); setDrawnFibs(last.fibs);
     setSelectedAnnotationId('');
   };
   const deleteAnnotation = (annotation: ChartAnnotation) => {
@@ -186,6 +142,7 @@ export default function BacktestChart({ onSaved }: Props) {
     else if (annotation.type === 'line') setDrawnLines(cur => cur.filter(i => i.id !== annotation.id));
     else if (annotation.type === 'horizontal') setDrawnHorizontals(cur => cur.filter(i => i.id !== annotation.id));
     else if (annotation.type === 'arrow') setDrawnArrows(cur => cur.filter(i => i.id !== annotation.id));
+    else if (annotation.type === 'fib') setDrawnFibs(cur => cur.filter(i => i.id !== annotation.id));
     else setDrawnTexts(cur => cur.filter(i => i.id !== annotation.id));
     if (selectedAnnotationId === annotation.id) setSelectedAnnotationId('');
   };
@@ -209,12 +166,13 @@ export default function BacktestChart({ onSaved }: Props) {
     else if (annotation.type === 'line') setDrawnLines(cur => cur.map(i => i.id === annotation.id ? { ...i, ...patch, lineStyle: annotationEditDraft.lineStyle } : i));
     else if (annotation.type === 'arrow') setDrawnArrows(cur => cur.map(i => i.id === annotation.id ? { ...i, ...patch, lineStyle: annotationEditDraft.lineStyle } : i));
     else if (annotation.type === 'rect') setDrawnRects(cur => cur.map(i => i.id === annotation.id ? { ...i, ...patch } : i));
+    else if (annotation.type === 'fib') setDrawnFibs(cur => cur.map(i => i.id === annotation.id ? { ...i, ...patch } : i));
     setEditingAnnotation(null);
   };
   const clearAnnotations = () => {
     if (!window.confirm('Remove every annotation from this chart?')) return;
     pushAnnotationHistory();
-    setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]);
+    setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnFibs([]);
     setSelectedAnnotationId(''); setShowAnnotationList(false);
   };
 
@@ -353,24 +311,13 @@ export default function BacktestChart({ onSaved }: Props) {
 
   // TradingView-style placement: one click drops a ready-to-drag position box
   // with sensible default SL/TP (a 1:2 risk:reward box off entry) instead of
-  // asking for typed prices first -- drag the SL/TP lines to adjust.
+  // asking for typed prices first -- drag the SL/TP/Entry lines to adjust.
   const placeTradeAt = (direction: 'long' | 'short', time: number, price: number) => {
-    const riskDistance = Math.max(price * 0.005, 1e-6);
-    const stopLoss = direction === 'long' ? price - riskDistance : price + riskDistance;
-    const takeProfit = direction === 'long' ? price + riskDistance * 2 : price - riskDistance * 2;
-    setOpenTrade({ direction, entryTime: time, entryPrice: price, stopLoss, takeProfit, riskAmount: Number(riskAmountInput) || 0 });
+    setOpenTrade(placeTradeAtPure(direction, time, price, Number(riskAmountInput) || 0));
     setPlacingDirection(null);
   };
-  const updateHandlePrice = (handle: 'sl' | 'tp', price: number) => {
-    setOpenTrade(cur => {
-      if (!cur) return cur;
-      if (handle === 'sl') {
-        const clamped = cur.direction === 'long' ? Math.min(price, cur.entryPrice - 1e-6) : Math.max(price, cur.entryPrice + 1e-6);
-        return { ...cur, stopLoss: clamped };
-      }
-      const clamped = cur.direction === 'long' ? Math.max(price, cur.entryPrice + 1e-6) : Math.min(price, cur.entryPrice - 1e-6);
-      return { ...cur, takeProfit: clamped };
-    });
+  const updateHandlePrice = (handle: TradeHandle, price: number) => {
+    setOpenTrade(cur => cur ? updateHandlePricePure(cur, handle, price) : cur);
   };
 
   const saveBacktestTrade = async () => {
@@ -409,175 +356,37 @@ export default function BacktestChart({ onSaved }: Props) {
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const revealedTime = Number(candles?.[replayIdx]?.time ?? Number.POSITIVE_INFINITY);
-    const selected = (id: string) => id === selectedAnnotationId;
-    const drawSelection = (x: number, y: number, width: number, height: number) => {
-      ctx.save(); ctx.strokeStyle = resolvedTheme === 'dark' ? '#f8fafc' : '#0f172a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
-      ctx.strokeRect(x - 4, y - 4, width + 8, height + 8); ctx.restore();
-    };
-    const drawArrowHead = (x1: number, y1: number, x2: number, y2: number, color: string) => {
-      const angle = Math.atan2(y2 - y1, x2 - x1); const size = 10;
-      ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
-      ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
-      ctx.closePath(); ctx.fill(); ctx.restore();
-    };
-    for (const r of drawnRects) {
-      if (Math.max(r.time1, r.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(r.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(r.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(r.price1); const y2 = series.priceToCoordinate(r.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = r.color; ctx.fillStyle = r.color + '22'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-      ctx.fill(); ctx.stroke(); ctx.restore();
-      if (selected(r.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-    }
-    for (const line of drawnLines) {
-      if (Math.max(line.time1, line.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(line.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(line.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.setLineDash(line.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
-      if (selected(line.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
-    }
-    for (const level of drawnHorizontals) {
-      if (level.time > revealedTime) continue;
-      const x = chart.timeScale().timeToCoordinate(level.time as UTCTimestamp); const y = series.priceToCoordinate(level.price);
-      if (x == null || y == null) continue;
-      ctx.save(); ctx.strokeStyle = level.color; ctx.lineWidth = 1.5; ctx.setLineDash(level.lineStyle === 'solid' ? [] : [7, 4]);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-      ctx.fillStyle = level.color; ctx.font = '700 10px sans-serif'; ctx.fillText(level.price.toFixed(2), x + 6, y - 6); ctx.restore();
-      if (selected(level.id)) drawSelection(x, y - 2, Math.max(2, canvas.width - x), 4);
-    }
-    for (const arrow of drawnArrows) {
-      if (Math.max(arrow.time1, arrow.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(arrow.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(arrow.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(arrow.price1); const y2 = series.priceToCoordinate(arrow.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.setLineDash(arrow.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
-      drawArrowHead(x1, y1, x2, y2, arrow.color);
-      if (selected(arrow.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
-    }
-    for (const note of drawnTexts) {
-      if (note.time > revealedTime) continue;
-      const x = chart.timeScale().timeToCoordinate(note.time as UTCTimestamp);
-      const y = series.priceToCoordinate(note.price);
-      if (x == null || y == null) continue;
-      ctx.save(); ctx.font = '600 12px sans-serif';
-      const width = ctx.measureText(note.text).width;
-      ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0d14dd' : '#ffffffee'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
-      ctx.strokeStyle = note.color; ctx.strokeRect(x - 5, y - 17, width + 10, 23);
-      ctx.fillStyle = note.color; ctx.fillText(note.text, x, y); ctx.restore();
-      if (selected(note.id)) drawSelection(x - 5, y - 17, width + 10, 23);
-    }
-    if (currentPreview.current) {
-      const { x1, y1, x2, y2 } = currentPreview.current;
-      ctx.save(); ctx.strokeStyle = rectColor; ctx.fillStyle = rectColor + '18'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      if (drawingTool === 'line' || drawingTool === 'arrow') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); if (drawingTool === 'arrow') drawArrowHead(x1, y1, x2, y2, rectColor); }
-      else { ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)); ctx.fill(); ctx.stroke(); }
-      ctx.restore();
-    }
+    const dc: DrawCtx = { ctx, chart, series, canvas, revealedTime, selectedId: selectedAnnotationId, resolvedTheme: resolvedTheme === 'dark' ? 'dark' : 'light' };
+
+    drawRects(dc, drawnRects);
+    drawLines(dc, drawnLines);
+    drawHorizontals(dc, drawnHorizontals);
+    drawArrows(dc, drawnArrows);
+    drawFibs(dc, drawnFibs);
+    drawTexts(dc, drawnTexts);
+    if (currentPreview.current) drawShapePreview(ctx, drawingTool, rectColor, currentPreview.current);
 
     // ── Trade simulation overlay: a TradingView-style long/short position
     // box -- shaded risk (red) and reward (green) zones from the entry line
-    // out to the right edge, with draggable SL/TP lines and a live R/$ label.
+    // out to the right edge, with draggable SL/TP/Entry lines and a live R/$ label.
     const trade = closedTrade || openTrade;
     if (trade) {
-      const entryY = series.priceToCoordinate(trade.entryPrice);
-      const slY = series.priceToCoordinate(trade.stopLoss);
-      const tpY = trade.takeProfit != null ? series.priceToCoordinate(trade.takeProfit) : null;
-      const entryX = chart.timeScale().timeToCoordinate(trade.entryTime as UTCTimestamp);
-      const boxLeft = entryX ?? 0;
-      const riskDistance = Math.abs(trade.entryPrice - trade.stopLoss);
-      const rewardDistance = trade.takeProfit != null ? Math.abs(trade.takeProfit - trade.entryPrice) : 0;
-      const rewardR = riskDistance > 0 ? rewardDistance / riskDistance : 0;
-      const riskUSD = trade.riskAmount;
-      const rewardUSD = trade.riskAmount * rewardR;
-
-      if (entryY != null && slY != null) {
-        ctx.save(); ctx.fillStyle = '#ef444422';
-        ctx.fillRect(boxLeft, Math.min(entryY, slY), canvas.width - boxLeft, Math.abs(slY - entryY));
-        ctx.restore();
-      }
-      if (entryY != null && tpY != null) {
-        ctx.save(); ctx.fillStyle = '#10b98122';
-        ctx.fillRect(boxLeft, Math.min(entryY, tpY), canvas.width - boxLeft, Math.abs(tpY - entryY));
-        ctx.restore();
-      }
-      const drawLevel = (price: number, color: string, label: string, dashed: boolean, handle: boolean) => {
-        const y = series.priceToCoordinate(price); if (y == null) return;
-        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = handle && (hoveredHandle === (label === 'SL' ? 'sl' : 'tp') || draggingHandleRef.current === (label === 'SL' ? 'sl' : 'tp')) ? 2.5 : 1.5;
-        ctx.setLineDash(dashed ? [6, 4] : []);
-        ctx.beginPath(); ctx.moveTo(boxLeft, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-        if (handle) {
-          ctx.setLineDash([]); ctx.fillStyle = color;
-          ctx.fillRect(canvas.width - 14, y - 5, 10, 10);
-        }
-        ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '700 10px sans-serif';
-        ctx.fillText(`${label} ${fmtPrice(price)}`, boxLeft + 6, y - 6); ctx.restore();
-      };
-      drawLevel(trade.entryPrice, '#d4af37', 'Entry', false, false);
-      drawLevel(trade.stopLoss, '#ef4444', 'SL', true, !closedTrade);
-      if (trade.takeProfit != null) drawLevel(trade.takeProfit, '#10b981', 'TP', true, !closedTrade);
-      if (entryX != null) {
-        ctx.save(); ctx.strokeStyle = '#d4af3799'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(entryX, 0); ctx.lineTo(entryX, canvas.height); ctx.stroke(); ctx.restore();
-      }
-      if (!closedTrade && slY != null) {
-        ctx.save(); ctx.fillStyle = '#fca5a5'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
-        ctx.fillText(`Risk ${riskUSD > 0 ? `$${riskUSD.toFixed(0)}` : ''} (1R)`, canvas.width - 18, slY + (slY > (entryY ?? slY) ? 14 : -8));
-        ctx.restore();
-      }
-      if (!closedTrade && tpY != null) {
-        ctx.save(); ctx.fillStyle = '#86efac'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
-        ctx.fillText(`Reward ${rewardUSD > 0 ? `$${rewardUSD.toFixed(0)}` : ''} (${rewardR.toFixed(2)}R)`, canvas.width - 18, tpY + (tpY > (entryY ?? tpY) ? 14 : -8));
-        ctx.restore();
-      }
-      if (closedTrade) {
-        const exitX = chart.timeScale().timeToCoordinate(closedTrade.exitTime as UTCTimestamp);
-        const exitY = series.priceToCoordinate(closedTrade.exitPrice);
-        if (exitX != null && exitY != null) {
-          ctx.save();
-          ctx.fillStyle = closedTrade.outcome === 'win' ? '#10b981' : closedTrade.outcome === 'loss' ? '#ef4444' : '#94a3b8';
-          ctx.beginPath(); ctx.arc(exitX, exitY, 5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-        }
-      }
+      drawTradeOverlay({ ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle: draggingHandleRef.current });
     }
-  }, [candles, replayIdx, drawingTool, drawnArrows, drawnHorizontals, drawnLines, drawnRects, drawnTexts, rectColor, resolvedTheme, selectedAnnotationId, openTrade, closedTrade, hoveredHandle]);
+
+    // ── Measure tool: a temporary readout of price/percent/bar distance ─────
+    const activeMeasure = measureDragRef.current || measureRange;
+    if (activeMeasure) {
+      drawMeasureOverlay({ ctx, chart, series, range: activeMeasure, candles, resolvedTheme: resolvedTheme === 'dark' ? 'dark' : 'light' });
+    }
+  }, [candles, replayIdx, drawingTool, drawnArrows, drawnHorizontals, drawnLines, drawnRects, drawnFibs, drawnTexts, rectColor, resolvedTheme, selectedAnnotationId, openTrade, closedTrade, hoveredHandle, measureRange]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas]);
 
   const findAnnotationAt = (x: number, y: number) => {
     const chart = chartRef.current, series = seriesRef.current, canvas = canvasRef.current;
     if (!chart || !series || !canvas) return null;
-    const distanceToSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
-      const dx = x2 - x1, dy = y2 - y1; if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
-      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
-      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
-    };
-    for (const annotation of [...allAnnotations].reverse()) {
-      if (annotation.type === 'text' || annotation.type === 'horizontal') {
-        const ax = chart.timeScale().timeToCoordinate(annotation.time as UTCTimestamp); const ay = series.priceToCoordinate(annotation.price);
-        if (ax == null || ay == null) continue;
-        if (annotation.type === 'horizontal' && x >= ax - 8 && Math.abs(y - ay) <= 8) return annotation;
-        if (annotation.type === 'text') {
-          const ctx = canvas.getContext('2d'); if (!ctx) continue; ctx.font = '600 12px sans-serif'; const width = ctx.measureText(annotation.text).width;
-          if (x >= ax - 9 && x <= ax + width + 9 && y >= ay - 21 && y <= ay + 7) return annotation;
-        }
-        continue;
-      }
-      const x1 = chart.timeScale().timeToCoordinate(annotation.time1 as UTCTimestamp); const x2 = chart.timeScale().timeToCoordinate(annotation.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(annotation.price1); const y2 = series.priceToCoordinate(annotation.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      if (annotation.type === 'rect') {
-        const left = Math.min(x1, x2), right = Math.max(x1, x2), top = Math.min(y1, y2), bottom = Math.max(y1, y2);
-        if (x >= left - 7 && x <= right + 7 && y >= top - 7 && y <= bottom + 7) return annotation;
-      } else if (distanceToSegment(x, y, x1, y1, x2, y2) <= 9) return annotation;
-    }
-    return null;
+    return findAnnotationAtIn({ x, y, chart, series, canvas, annotations: allAnnotations });
   };
 
   const beginAnnotationInteraction = (x: number, y: number) => {
@@ -603,16 +412,8 @@ export default function BacktestChart({ onSaved }: Props) {
         : 'solid',
     });
   };
-  const findTradeHandleAt = (y: number): 'sl' | 'tp' | null => {
-    if (!openTrade || closedTrade) return null;
-    const series = seriesRef.current; if (!series) return null;
-    const slY = series.priceToCoordinate(openTrade.stopLoss);
-    if (slY != null && Math.abs(y - slY) <= 6) return 'sl';
-    if (openTrade.takeProfit != null) {
-      const tpY = series.priceToCoordinate(openTrade.takeProfit);
-      if (tpY != null && Math.abs(y - tpY) <= 6) return 'tp';
-    }
-    return null;
+  const findTradeHandleAt = (y: number): TradeHandle | null => {
+    return findTradeHandleAtIn(y, openTrade, closedTrade, seriesRef.current);
   };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (editingAnnotation) setEditingAnnotation(null);
@@ -654,15 +455,24 @@ export default function BacktestChart({ onSaved }: Props) {
       }
       return;
     }
+    if (drawingTool === 'measure') {
+      const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
+      const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
+      if (time == null || price == null) return;
+      setMeasureRange(null);
+      measureDragRef.current = { x1: x, y1: y, x2: x, y2: y, time1: Number(time), price1: price, time2: Number(time), price2: price };
+      return;
+    }
     drawStart.current = { x, y };
   };
   const applyAnnotationDelta = (original: ChartAnnotation, deltaTime: number, deltaPrice: number) => {
     const id = original.id;
-    if (original.type === 'rect' || original.type === 'line' || original.type === 'arrow') {
+    if (original.type === 'rect' || original.type === 'line' || original.type === 'arrow' || original.type === 'fib') {
       const updated = { ...original, time1: original.time1 + deltaTime, time2: original.time2 + deltaTime, price1: original.price1 + deltaPrice, price2: original.price2 + deltaPrice };
       if (original.type === 'rect') setDrawnRects(cur => cur.map(item => item.id === id ? updated as DrawnRect : item));
       if (original.type === 'line') setDrawnLines(cur => cur.map(item => item.id === id ? updated as DrawnLine : item));
       if (original.type === 'arrow') setDrawnArrows(cur => cur.map(item => item.id === id ? updated as DrawnArrow : item));
+      if (original.type === 'fib') setDrawnFibs(cur => cur.map(item => item.id === id ? updated as DrawnFib : item));
     } else {
       const updated = { ...original, time: original.time + deltaTime, price: original.price + deltaPrice };
       if (original.type === 'horizontal') setDrawnHorizontals(cur => cur.map(item => item.id === id ? updated as DrawnHorizontal : item));
@@ -691,7 +501,17 @@ export default function BacktestChart({ onSaved }: Props) {
       applyAnnotationDelta(move.annotation, Number(time) - move.originTime, price - move.originPrice);
       return;
     }
-    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
+    if (drawingTool === 'measure' && measureDragRef.current) {
+      const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
+      const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+      const x2 = e.clientX - r.left, y2 = e.clientY - r.top;
+      const time2 = chart.timeScale().coordinateToTime(x2); const price2 = series.coordinateToPrice(y2);
+      if (time2 == null || price2 == null) return;
+      measureDragRef.current = { ...measureDragRef.current, x2, y2, time2: Number(time2), price2 };
+      redrawCanvas();
+      return;
+    }
+    if (!['rect', 'line', 'arrow', 'fib'].includes(drawingTool) || !drawStart.current) return;
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
     redrawCanvas();
@@ -709,7 +529,13 @@ export default function BacktestChart({ onSaved }: Props) {
       endAutoSelectMode();
       return;
     }
-    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
+    if (drawingTool === 'measure' && measureDragRef.current) {
+      const { time1, price1, time2, price2 } = measureDragRef.current;
+      setMeasureRange({ time1, price1, time2, price2 });
+      measureDragRef.current = null;
+      return;
+    }
+    if (!['rect', 'line', 'arrow', 'fib'].includes(drawingTool) || !drawStart.current) return;
     const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
     if (!canvas || !chart || !series) return;
     const r = canvas.getBoundingClientRect(); const x2 = e.clientX - r.left; const y2 = e.clientY - r.top;
@@ -724,6 +550,7 @@ export default function BacktestChart({ onSaved }: Props) {
         const shape = { id: `${drawingTool}-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor };
         if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
         else if (drawingTool === 'arrow') setDrawnArrows(prev => [...prev, shape]);
+        else if (drawingTool === 'fib') setDrawnFibs(prev => [...prev, shape]);
         else setDrawnRects(prev => [...prev, shape]);
         placed = true;
       }
@@ -747,6 +574,29 @@ export default function BacktestChart({ onSaved }: Props) {
     setHoveredAnnotationId(hit?.id || '');
   };
   const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); setHoveredHandle(null); };
+
+  // TradingView-style keyboard shortcuts: Esc backs out of whatever's active,
+  // Delete/Backspace removes the selected annotation (ignored while typing).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = Boolean(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+      if (e.key === 'Escape') {
+        if (editingAnnotation) { setEditingAnnotation(null); return; }
+        if (placingDirection) { setPlacingDirection(null); return; }
+        if (drawingTool !== 'none') { stopDrawing(); return; }
+        if (measureRange) setMeasureRange(null);
+        return;
+      }
+      if (typing) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotationId) {
+        e.preventDefault();
+        deleteSelectedAnnotation();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editingAnnotation, placingDirection, drawingTool, selectedAnnotationId, measureRange]);
 
   const totalCandles = candles?.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
@@ -820,6 +670,7 @@ export default function BacktestChart({ onSaved }: Props) {
               <span className="replay-tool-group-label">Document</span>
               <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => activateDrawingTool('text')} title="Write directly on the chart"><TypeIcon size={16} /> Text</button>
               <button type="button" aria-expanded={showDrawingTools} aria-controls="backtest-drawing-tray" aria-pressed={isShapeToolActive} className={`replay-tool-btn${isShapeToolActive || showDrawingTools ? ' active' : ''}`} onClick={() => setShowDrawingTools(current => !current)} title="Open drawing tools"><Square size={16} /> {isShapeToolActive ? TOOL_GUIDANCE[drawingTool]?.label : 'Draw'} <ChevronDown size={14} /></button>
+              <button type="button" aria-pressed={drawingTool === 'measure'} className={`replay-tool-btn${drawingTool === 'measure' ? ' active' : ''}`} onClick={() => activateDrawingTool('measure')} title="Drag to measure price, percent, and bars between two points"><Ruler size={16} /> Measure</button>
             </div>
             <span className="replay-toolbar-spacer" />
             <div className="replay-tool-group replay-tool-actions">
@@ -838,6 +689,7 @@ export default function BacktestChart({ onSaved }: Props) {
                 <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => activateDrawingTool('arrow')}><ArrowUpRight size={16} /> Arrow</button>
                 <button type="button" aria-pressed={drawingTool === 'line'} className={`replay-tool-btn${drawingTool === 'line' ? ' active' : ''}`} onClick={() => activateDrawingTool('line')}>Trend line</button>
                 <button type="button" aria-pressed={drawingTool === 'rect'} className={`replay-tool-btn${drawingTool === 'rect' ? ' active' : ''}`} onClick={() => activateDrawingTool('rect')}>Zone</button>
+                <button type="button" aria-pressed={drawingTool === 'fib'} className={`replay-tool-btn${drawingTool === 'fib' ? ' active' : ''}`} onClick={() => activateDrawingTool('fib')}><Percent size={16} /> Fibonacci</button>
               </div>
               <div className="replay-toolbar-divider" />
               <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
@@ -880,7 +732,7 @@ export default function BacktestChart({ onSaved }: Props) {
                   <div className={`replay-annotation-row${selectedAnnotationId === annotation.id ? ' selected' : ''}`} key={annotation.id}>
                     <button type="button" className="replay-annotation-select" aria-pressed={selectedAnnotationId === annotation.id} onClick={() => { setSelectedAnnotationId(annotation.id); setShowDrawingTools(false); setDrawingTool('select'); }}>
                       <i style={{ background: annotation.color }} />
-                      <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Trend line' : annotation.type === 'horizontal' ? 'Level' : annotation.type === 'arrow' ? 'Arrow' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : ` ${index + 1}`}</span>
+                      <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Trend line' : annotation.type === 'horizontal' ? 'Level' : annotation.type === 'arrow' ? 'Arrow' : annotation.type === 'fib' ? 'Fibonacci' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : ` ${index + 1}`}</span>
                     </button>
                     <button type="button" onClick={click => { click.stopPropagation(); deleteAnnotation(annotation); }} aria-label={`Delete ${annotation.type} annotation`}><Trash2 size={13} /></button>
                   </div>

@@ -13,7 +13,7 @@ function normalizePretradeAnnotations(input) {
   };
   return input.map((annotation, index) => {
     const type = String(annotation?.type || '');
-    if (!['rect', 'line', 'horizontal', 'arrow', 'text', 'image'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
+    if (!['rect', 'line', 'horizontal', 'arrow', 'text', 'image', 'fib'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
     const annotationId = String(annotation.id || '').trim();
     if (!/^[A-Za-z0-9:_-]{1,100}$/.test(annotationId)) throw new Error(`Annotation ${index + 1} has an invalid ID`);
     if (ids.has(annotationId)) throw new Error(`Annotation ID ${annotationId} is duplicated`);

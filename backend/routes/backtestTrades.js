@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
 const { getTrendbars } = require('../lib/ctraderReplay');
@@ -8,6 +9,19 @@ const { normalizePretradeAnnotations } = require('../lib/pretradeAnnotations');
 function ownerOnly(req, res, next) {
   if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
   next();
+}
+
+// Backtest trades have no offline-disk store (unlike real Trades), since
+// they're a nice-to-have hypothetical log, not data worth the complexity of
+// an offline fallback. When MongoDB isn't connected -- readyState off, or
+// the auth middleware handed out the offline placeholder user id, which
+// isn't a real ObjectId and would otherwise crash every query below -- just
+// say so plainly instead of leaking a raw Mongoose CastError to the UI.
+function isOffline(req) {
+  return mongoose.connection.readyState !== 1 || String(req.user.userId) === 'mocked_admin_user_id';
+}
+function offlineResponse(res) {
+  return res.status(503).json({ error: 'Backtest logging needs a connected database. It is unavailable while running offline.' });
 }
 
 const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
@@ -42,6 +56,9 @@ router.get('/backtest-trades/chart', auth, ownerOnly, async (req, res) => {
 
 // List the current user's backtest log. Optional symbol/direction/outcome filters.
 router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
+  // Nothing can have been saved offline (POST is disabled below), so the
+  // honest answer to "what's logged" is an empty list, not a hard error.
+  if (isOffline(req)) return res.json({ trades: [] });
   try {
     const query = { user: req.user.userId };
     if (req.query.symbol) query.symbol = String(req.query.symbol);
@@ -57,6 +74,7 @@ router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
 // A backtest trade is logged once it's already resolved (hit SL/TP or was
 // manually closed) -- there's no draft/open state, unlike Pre-Trade Analysis.
 router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
   try {
     const {
       symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
@@ -104,6 +122,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
 });
 
 router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
   try {
     const { notes, chartAnnotations } = req.body;
     const update = {};
@@ -128,6 +147,7 @@ router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
 });
 
 router.delete('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
   try {
     const result = await BacktestTrade.deleteOne({ _id: req.params.id, user: req.user.userId });
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Backtest trade not found' });

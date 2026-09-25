@@ -13,7 +13,7 @@ import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from '
 import { EMA_CONFIG, ema, rsi, sessionLabel, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
-  CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
+  CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure,
@@ -264,9 +264,20 @@ export default function Workspace() {
   const loadChartWithInterval = useCallback((overrideInterval: string) => {
     const trimmed = symbol.trim().toUpperCase();
     if (!trimmed) { setCandles(null); setError(''); return; }
-    const fromMs = new Date(fromDate).getTime();
+    let fromMs = new Date(fromDate).getTime();
     const toMs = new Date(toDate).getTime() + DAY;
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) { setError('Pick a valid date range.'); return; }
+    // cTrader caps a request at 1500 bars. Rather than fail with "range too
+    // wide" when the timeframe is too fine for the range, keep "To" and move
+    // "From" forward to the longest window that fits, and say so.
+    const maxMs = maxRangeMs(overrideInterval);
+    if (toMs - fromMs > maxMs) {
+      fromMs = toMs - maxMs;
+      const adjusted = new Date(fromMs).toISOString().slice(0, 10);
+      const span = maxMs >= 2 * DAY ? `${Math.floor(maxMs / DAY)} days` : `${Math.floor(maxMs / 3_600_000)} hours`;
+      setFromDate(adjusted);
+      setToast(`${CHART_INTERVALS.find(t => t.value === overrideInterval)?.label ?? overrideInterval} candles cover up to ${span} — From moved to ${adjusted}`);
+    }
     setLoading(true); setError(''); setIsSetupError(false); setPlaying(false);
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false); setPlacingDirection(null);
     setSelectedDrawingId(null); setActiveDrawType(null); setMeasureActive(false); setMeasureRange(null);

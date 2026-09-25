@@ -54,6 +54,13 @@ export function suggestInterval(fromDate: string, toDate: string): string {
 // opens already showing the lead-up to the setup instead of cutting off
 // abruptly right at the date you picked.
 export const LOOKBACK_BARS = 100;
+// cTrader returns at most 1500 bars per request and the request also covers
+// the lookback bars, so the From..To window itself must stay under this.
+const MAX_WINDOW_BARS = 1500 - LOOKBACK_BARS - 50;
+/** Longest From..To window (ms) that fits one request at this timeframe (1m: ~22h). */
+export function maxRangeMs(interval: string): number {
+  return MAX_WINDOW_BARS * (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400000;
+}
 export function lookbackMs(fromMs: number, interval: string): number {
   return fromMs - LOOKBACK_BARS * (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400000;
 }

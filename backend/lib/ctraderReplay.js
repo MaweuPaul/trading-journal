@@ -353,6 +353,8 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
         high: low + Number(bar.deltaHigh || 0) / 100000,
         low,
         close: low + Number(bar.deltaClose || 0) / 100000,
+        // Tick volume (ProtoOATrendbar.volume) -- used by the Backtest chart's volume bars.
+        volume: Number(bar.volume || 0),
       };
     })
     .sort((a, b) => a.time - b.time);

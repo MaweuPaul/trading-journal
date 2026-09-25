@@ -344,6 +344,8 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
 
   // Prices are transmitted as 1/100000ths of a unit, and open/high/close are
   // deltas above the bar's low (see OpenApiModelMessages.proto ProtoOATrendbar).
+  const fromSeconds = Math.floor(fromMs / 1000);
+  const toSeconds = Math.ceil(toMs / 1000);
   const candles = (res.trendbar || [])
     .map(bar => {
       const low = Number(bar.low) / 100000;
@@ -357,6 +359,11 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
         volume: Number(bar.volume || 0),
       };
     })
+    // cTrader's GET_TRENDBARS_REQ ignores fromTimestamp when count is also
+    // set -- it just returns `count` bars ending at toTimestamp, which can
+    // reach years further back than requested. Enforce the requested lower
+    // bound ourselves instead of trusting the broker to honor it.
+    .filter(c => c.time >= fromSeconds && c.time <= toSeconds)
     .sort((a, b) => a.time - b.time);
 
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };

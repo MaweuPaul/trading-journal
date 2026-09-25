@@ -24,6 +24,36 @@ function offlineResponse(res) {
   return res.status(503).json({ error: 'Backtest logging needs a connected database. It is unavailable while running offline.' });
 }
 
+// Strategy tags: "#ICT-SilverBullet" and "ICT-SilverBullet" are the same tag.
+// Up to 10 per trade, de-duplicated case-insensitively, first one wins.
+function normalizeTags(input) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set();
+  const tags = [];
+  for (const raw of input) {
+    const tag = String(raw || '').trim().replace(/^#+/, '').replace(/s+/g, ' ').slice(0, 40);
+    const key = tag.toLowerCase();
+    if (!tag || seen.has(key)) continue;
+    seen.add(key);
+    tags.push(tag);
+    if (tags.length >= 10) break;
+  }
+  return tags;
+}
+// Keep `strategy` (primary) and `tags` consistent: strategy is always tags[0].
+function strategyAndTags(strategy, tags) {
+  const normalized = normalizeTags(tags);
+  const primary = String(strategy || '').trim().slice(0, 80);
+  if (!normalized.length && primary) normalized.push(primary);
+  return { strategy: normalized[0] || '', tags: normalized };
+}
+
+const MAX_SNAPSHOT_CHARS = 400_000; // ~300 KB JPEG
+function normalizeSnapshot(value) {
+  if (typeof value !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(value)) return '';
+  return value.length <= MAX_SNAPSHOT_CHARS ? value : '';
+}
+
 const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
 // cTrader caps each GET_TRENDBARS_REQ response at 1500 bars (ctraderReplay.js),
 // regardless of how wide a fromTimestamp/toTimestamp window is requested. A
@@ -79,8 +109,11 @@ router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
     if (req.query.direction) query.direction = String(req.query.direction);
     if (req.query.outcome) query.outcome = String(req.query.outcome);
     if (req.query.strategy) query.strategy = String(req.query.strategy);
+    if (req.query.tag) query.tags = String(req.query.tag);
     const trades = await BacktestTrade.find(query).sort({ createdAt: -1 }).lean();
-    res.json({ trades });
+    // Flag which trades have a snapshot without shipping every image in the list.
+    const withSnapshot = new Set((await BacktestTrade.find({ ...query, snapshot: { $nin: ['', null] } }).select('_id').lean()).map(t => String(t._id)));
+    res.json({ trades: trades.map(t => ({ ...t, hasSnapshot: withSnapshot.has(String(t._id)) })) });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not load backtest trades' });
   }
@@ -93,8 +126,12 @@ router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
 router.get('/backtest-trades/strategies', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return res.json({ strategies: [] });
   try {
-    const strategies = await BacktestTrade.distinct('strategy', { user: req.user.userId, strategy: { $ne: '' } });
-    res.json({ strategies: strategies.sort((a, b) => a.localeCompare(b)) });
+    const [strategies, tags] = await Promise.all([
+      BacktestTrade.distinct('strategy', { user: req.user.userId, strategy: { $ne: '' } }),
+      BacktestTrade.distinct('tags', { user: req.user.userId }),
+    ]);
+    const merged = normalizeTags([...tags, ...strategies]);
+    res.json({ strategies: merged.sort((a, b) => a.localeCompare(b)) });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not load strategies' });
   }
@@ -106,18 +143,26 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
     const {
-      name, strategy, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
-      stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations,
+      name, strategy, tags, source, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
+      stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
     } = req.body;
+    // Quick logs (from the Backtest Log's "New Backtest" form) carry only a
+    // label, symbol, direction, P&L and R -- no chart, prices or times.
+    const isQuick = source === 'quick';
 
     if (!symbol || typeof symbol !== 'string') return res.status(400).json({ error: 'symbol is required' });
-    if (!CHART_INTERVALS.has(String(interval))) return res.status(400).json({ error: 'Unsupported interval' });
+    if (!isQuick && !CHART_INTERVALS.has(String(interval))) return res.status(400).json({ error: 'Unsupported interval' });
     if (!['long', 'short'].includes(direction)) return res.status(400).json({ error: 'direction must be long or short' });
     if (!['win', 'loss', 'breakeven'].includes(outcome)) return res.status(400).json({ error: 'outcome must be win, loss, or breakeven' });
-    const numbers = { entryTime, entryPrice, exitTime, exitPrice, stopLoss };
-    for (const [key, value] of Object.entries(numbers)) {
-      if (!Number.isFinite(Number(value))) return res.status(400).json({ error: `${key} must be a number` });
+    if (isQuick) {
+      if (!Number.isFinite(Number(rMultiple))) return res.status(400).json({ error: 'rMultiple must be a number' });
+    } else {
+      const numbers = { entryTime, entryPrice, exitTime, exitPrice, stopLoss };
+      for (const [key, value] of Object.entries(numbers)) {
+        if (!Number.isFinite(Number(value))) return res.status(400).json({ error: `${key} must be a number` });
+      }
     }
+    const optionalNumber = value => (value === '' || value == null || !Number.isFinite(Number(value)) ? undefined : Number(value));
 
     let annotations = [];
     if (chartAnnotations !== undefined) {
@@ -131,13 +176,14 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
     const trade = await BacktestTrade.create({
       user: req.user.userId,
       name: String(name || '').trim().slice(0, 100),
-      strategy: String(strategy || '').trim().slice(0, 80),
-      symbol: symbol.trim().slice(0, 40),
-      interval: String(interval),
+      ...strategyAndTags(strategy, tags),
+      source: isQuick ? 'quick' : 'replay',
+      symbol: symbol.trim().toUpperCase().slice(0, 40),
+      interval: CHART_INTERVALS.has(String(interval)) ? String(interval) : '',
       direction,
-      entryTime: Number(entryTime), entryPrice: Number(entryPrice),
-      exitTime: Number(exitTime), exitPrice: Number(exitPrice),
-      stopLoss: Number(stopLoss),
+      entryTime: optionalNumber(entryTime), entryPrice: optionalNumber(entryPrice),
+      exitTime: optionalNumber(exitTime), exitPrice: optionalNumber(exitPrice),
+      stopLoss: optionalNumber(stopLoss),
       takeProfit: takeProfit === '' || takeProfit == null ? null : Number(takeProfit),
       outcome,
       riskAmount: Number.isFinite(Number(riskAmount)) ? Number(riskAmount) : 0,
@@ -145,20 +191,37 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
       rMultiple: Number.isFinite(Number(rMultiple)) ? Number(rMultiple) : 0,
       notes: String(notes || '').slice(0, 5000),
       chartAnnotations: annotations,
+      snapshot: normalizeSnapshot(snapshot),
     });
-    res.status(201).json(trade);
+    const saved = trade.toObject();
+    saved.hasSnapshot = Boolean(saved.snapshot);
+    delete saved.snapshot;
+    res.status(201).json(saved);
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not save backtest trade' });
+  }
+});
+
+router.get('/backtest-trades/:id/snapshot', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Backtest trade not found' });
+    const trade = await BacktestTrade.findOne({ _id: req.params.id, user: req.user.userId }).select('+snapshot').lean();
+    if (!trade) return res.status(404).json({ error: 'Backtest trade not found' });
+    res.json({ snapshot: trade.snapshot || '' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not load snapshot' });
   }
 });
 
 router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
-    const { name, strategy, notes, chartAnnotations } = req.body;
+    const { name, strategy, tags, notes, chartAnnotations } = req.body;
     const update = {};
     if (name !== undefined) update.name = String(name || '').trim().slice(0, 100);
-    if (strategy !== undefined) update.strategy = String(strategy || '').trim().slice(0, 80);
+    if (tags !== undefined) Object.assign(update, strategyAndTags('', tags));
+    else if (strategy !== undefined) Object.assign(update, strategyAndTags(strategy, []));
     if (notes !== undefined) update.notes = String(notes || '').slice(0, 5000);
     if (chartAnnotations !== undefined) {
       try {

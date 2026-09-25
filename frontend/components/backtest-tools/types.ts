@@ -5,7 +5,7 @@
 // and chart-setup helpers.
 import type { UTCTimestamp } from 'lightweight-charts';
 
-export interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; }
+export interface Candle { time: UTCTimestamp; open: number; high: number; low: number; close: number; volume?: number; }
 
 export interface MeasureRange { time1: number; price1: number; time2: number; price2: number; }
 
@@ -32,7 +32,7 @@ export const CHART_INTERVALS = [
   { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
   { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
 ] as const;
-export const SPEEDS = [0.5, 1, 2, 5, 10];
+export const SPEEDS = [0.5, 1, 3, 5, 10];
 
 // cTrader returns at most 1500 bars per request, no matter how wide the
 // requested date range is. Rather than make the trader pick a timeframe that

@@ -1,7 +1,7 @@
 // The TradingView-style Long/Short position tool: rendering the shaded
 // risk/reward box with draggable SL/TP/Entry lines, hit-testing those
 // handles, and the pure price math for placing/dragging a hypothetical trade.
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, Logical, UTCTimestamp } from 'lightweight-charts';
 import { ClosedTrade, OpenTrade, TradeHandle, fmtPrice } from './types';
 
 export function placeTradeAt(direction: 'long' | 'short', time: number, price: number, riskAmount: number): OpenTrade {
@@ -43,70 +43,126 @@ export function findTradeHandleAt(y: number, openTrade: OpenTrade | null, closed
   return null;
 }
 
+/** Design tokens the overlay paints with (read from the page's CSS variables). */
+export interface OverlayPalette { win: string; loss: string; accent: string; label: string; labelBg: string; }
+
+function withAlpha(hex: string, alpha: number) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+function drawTag(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string, bg: string, maxRight: number) {
+  ctx.save();
+  ctx.font = '600 10px "JetBrains Mono", monospace';
+  const w = ctx.measureText(text).width + 12;
+  const left = Math.max(2, Math.min(x, maxRight - w - 2));
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.roundRect(left, y - 8, w, 16, 2); ctx.fill();
+  ctx.fillStyle = color; ctx.textBaseline = 'middle';
+  ctx.fillText(text, left + 6, y + 0.5);
+  ctx.restore();
+}
+
 export function drawTradeOverlay(params: {
   ctx: CanvasRenderingContext2D; chart: IChartApi; series: ISeriesApi<'Candlestick'>; canvas: HTMLCanvasElement;
   trade: OpenTrade | ClosedTrade; closedTrade: ClosedTrade | null;
   hoveredHandle: TradeHandle | null; draggingHandle: TradeHandle | null;
+  palette: OverlayPalette;
 }) {
-  const { ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle } = params;
+  const { ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle, palette } = params;
   const entryY = series.priceToCoordinate(trade.entryPrice);
   const slY = series.priceToCoordinate(trade.stopLoss);
   const tpY = trade.takeProfit != null ? series.priceToCoordinate(trade.takeProfit) : null;
-  const entryX = chart.timeScale().timeToCoordinate(trade.entryTime as UTCTimestamp);
-  const boxLeft = entryX ?? 0;
+  if (entryY == null || slY == null) return;
+
+  // Stop at the right edge of the plot pane so the box never covers the price scale.
+  const timeScale = chart.timeScale();
+  const paneRight = timeScale.width() || canvas.width;
+  const entryX = timeScale.timeToCoordinate(trade.entryTime as UTCTimestamp);
+  const left = Math.max(0, entryX ?? 0);
+  // Like TradingView's position tool the box has its own width: to the exit
+  // candle once closed, otherwise ~24 bars (at least 140px) past entry.
+  let right: number;
+  const exitX = closedTrade ? timeScale.timeToCoordinate(closedTrade.exitTime as UTCTimestamp) : null;
+  if (closedTrade && exitX != null) right = Math.max(exitX, left + 60);
+  else {
+    const entryLogical = entryX != null ? timeScale.coordinateToLogical(entryX) : null;
+    const endX = entryLogical != null ? timeScale.logicalToCoordinate((entryLogical + 24) as Logical) : null;
+    right = Math.max(left + 140, endX ?? left + 140);
+  }
+  right = Math.min(right, paneRight - 2);
+  if (right <= left) return;
+
   const riskDistance = Math.abs(trade.entryPrice - trade.stopLoss);
   const rewardDistance = trade.takeProfit != null ? Math.abs(trade.takeProfit - trade.entryPrice) : 0;
   const rewardR = riskDistance > 0 ? rewardDistance / riskDistance : 0;
   const riskUSD = trade.riskAmount;
-  const rewardUSD = trade.riskAmount * rewardR;
 
-  if (entryY != null && slY != null) {
-    ctx.save(); ctx.fillStyle = '#ef444422';
-    ctx.fillRect(boxLeft, Math.min(entryY, slY), canvas.width - boxLeft, Math.abs(slY - entryY));
-    ctx.restore();
+  // Zones: reward fades toward entry, risk deepens toward the stop (as in the design).
+  if (tpY != null) {
+    const g = ctx.createLinearGradient(0, tpY, 0, entryY);
+    g.addColorStop(0, withAlpha(palette.win, 0.34)); g.addColorStop(1, withAlpha(palette.win, 0.06));
+    ctx.fillStyle = g; ctx.fillRect(left, Math.min(entryY, tpY), right - left, Math.abs(tpY - entryY));
   }
-  if (entryY != null && tpY != null) {
-    ctx.save(); ctx.fillStyle = '#10b98122';
-    ctx.fillRect(boxLeft, Math.min(entryY, tpY), canvas.width - boxLeft, Math.abs(tpY - entryY));
-    ctx.restore();
+  {
+    const g = ctx.createLinearGradient(0, entryY, 0, slY);
+    g.addColorStop(0, withAlpha(palette.loss, 0.08)); g.addColorStop(1, withAlpha(palette.loss, 0.3));
+    ctx.fillStyle = g; ctx.fillRect(left, Math.min(entryY, slY), right - left, Math.abs(slY - entryY));
   }
-  const drawLevel = (price: number, color: string, label: string, dashed: boolean, handle: boolean) => {
-    const y = series.priceToCoordinate(price); if (y == null) return;
-    const handleKey: TradeHandle = label === 'SL' ? 'sl' : label === 'TP' ? 'tp' : 'entry';
-    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = handle && (hoveredHandle === handleKey || draggingHandle === handleKey) ? 2.5 : 1.5;
-    ctx.setLineDash(dashed ? [6, 4] : []);
-    ctx.beginPath(); ctx.moveTo(boxLeft, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    if (handle) {
+
+  const level = (y: number, color: string, dashed: boolean, handle: TradeHandle) => {
+    const active = !closedTrade && (hoveredHandle === handle || draggingHandle === handle);
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = active ? 2.5 : 1.5; ctx.setLineDash(dashed ? [6, 4] : []);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+    if (!closedTrade) {
       ctx.setLineDash([]); ctx.fillStyle = color;
-      ctx.fillRect(canvas.width - 14, y - 5, 10, 10);
+      ctx.beginPath(); ctx.arc(right, y, active ? 5.5 : 4, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '700 10px sans-serif';
-    ctx.fillText(`${label} ${fmtPrice(price)}`, boxLeft + 6, y - 6); ctx.restore();
+    ctx.restore();
   };
-  drawLevel(trade.entryPrice, '#d4af37', 'Entry', false, !closedTrade);
-  drawLevel(trade.stopLoss, '#ef4444', 'SL', true, !closedTrade);
-  if (trade.takeProfit != null) drawLevel(trade.takeProfit, '#10b981', 'TP', true, !closedTrade);
-  if (entryX != null) {
-    ctx.save(); ctx.strokeStyle = '#d4af3799'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(entryX, 0); ctx.lineTo(entryX, canvas.height); ctx.stroke(); ctx.restore();
+  if (tpY != null) level(tpY, palette.win, false, 'tp');
+  level(entryY, palette.accent, true, 'entry');
+  level(slY, palette.loss, false, 'sl');
+
+  const signUSD = (n: number) => `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(0)}`;
+  const labelX = left + 8;
+  if (tpY != null && trade.takeProfit != null) {
+    const tag = `TP: ${fmtPrice(trade.takeProfit)} (+${rewardR.toFixed(2)}R${riskUSD > 0 ? ` / ${signUSD(riskUSD * rewardR)}` : ''})`;
+    drawTag(ctx, tag, labelX, tpY + (tpY < entryY ? 12 : -12), palette.win, palette.labelBg, right);
   }
-  if (!closedTrade && slY != null) {
-    ctx.save(); ctx.fillStyle = '#fca5a5'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(`Risk ${riskUSD > 0 ? `$${riskUSD.toFixed(0)}` : ''} (1R)`, canvas.width - 18, slY + (slY > (entryY ?? slY) ? 14 : -8));
-    ctx.restore();
-  }
-  if (!closedTrade && tpY != null) {
-    ctx.save(); ctx.fillStyle = '#86efac'; ctx.font = '600 10px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(`Reward ${rewardUSD > 0 ? `$${rewardUSD.toFixed(0)}` : ''} (${rewardR.toFixed(2)}R)`, canvas.width - 18, tpY + (tpY > (entryY ?? tpY) ? 14 : -8));
-    ctx.restore();
-  }
-  if (closedTrade) {
-    const exitX = chart.timeScale().timeToCoordinate(closedTrade.exitTime as UTCTimestamp);
+  drawTag(ctx, `Entry: ${fmtPrice(trade.entryPrice)} (${trade.direction === 'long' ? 'Long' : 'Short'})`, labelX, entryY, palette.accent, palette.labelBg, right);
+  drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (-1.00R${riskUSD > 0 ? ` / -$${riskUSD.toFixed(0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
+
+  if (closedTrade && exitX != null) {
     const exitY = series.priceToCoordinate(closedTrade.exitPrice);
-    if (exitX != null && exitY != null) {
+    if (exitY != null) {
       ctx.save();
-      ctx.fillStyle = closedTrade.outcome === 'win' ? '#10b981' : closedTrade.outcome === 'loss' ? '#ef4444' : '#94a3b8';
-      ctx.beginPath(); ctx.arc(exitX, exitY, 5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      ctx.fillStyle = closedTrade.outcome === 'win' ? palette.win : closedTrade.outcome === 'loss' ? palette.loss : palette.label;
+      ctx.strokeStyle = palette.labelBg; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(exitX, exitY, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
     }
   }
+}
+
+/** Dashed vertical marker + "REPLAY FROM" tag at the start of the analysis window. */
+export function drawReplayStartMarker(ctx: CanvasRenderingContext2D, chart: IChartApi, canvas: HTMLCanvasElement, time: number, palette: OverlayPalette) {
+  const x = chart.timeScale().timeToCoordinate(time as UTCTimestamp);
+  const paneRight = chart.timeScale().width() || canvas.width;
+  if (x == null || x < 0 || x > paneRight) return;
+  ctx.save();
+  ctx.strokeStyle = palette.accent; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = '700 9.5px "JetBrains Mono", monospace';
+  const text = 'REPLAY FROM';
+  const w = ctx.measureText(text).width + 14;
+  const tagLeft = Math.min(x + 2, paneRight - w - 2);
+  ctx.fillStyle = palette.accent;
+  ctx.fillRect(tagLeft, 8, w, 15);
+  ctx.fillStyle = '#2a1700'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, tagLeft + 7, 16);
+  ctx.restore();
 }

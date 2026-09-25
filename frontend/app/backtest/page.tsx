@@ -7,6 +7,7 @@ import BacktestChart from '@/components/BacktestChart';
 
 interface BacktestTrade {
   _id: string;
+  name: string;
   symbol: string;
   interval: string;
   direction: 'long' | 'short';
@@ -130,13 +131,14 @@ export default function BacktestPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Symbol</th><th>Direction</th><th>Timeframe</th><th>Entry</th><th>Exit</th>
+                <th>Name</th><th>Symbol</th><th>Direction</th><th>Timeframe</th><th>Entry</th><th>Exit</th>
                 <th>R</th><th>P&amp;L</th><th>Outcome</th><th>Logged</th><th />
               </tr>
             </thead>
             <tbody>
               {trades.map(t => (
                 <tr key={t._id}>
+                  <td>{t.name || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                   <td>{t.symbol}</td>
                   <td><span className={`badge ${t.direction === 'long' ? 'buy' : 'sell'}`}>{t.direction === 'long' ? 'LONG' : 'SHORT'}</span></td>
                   <td>{t.interval}</td>

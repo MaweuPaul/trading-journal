@@ -122,28 +122,84 @@ export default function BacktestMetricsPage() {
 
     const wins = chronological.filter(t => t.outcome === 'win');
     const losses = chronological.filter(t => t.outcome === 'loss');
-    const winRate = chronological.length ? (wins.length / chronological.length) * 100 : 0;
-    const avgR = chronological.length ? cumulativeR / chronological.length : 0;
+    const n = chronological.length;
+    const winRate = n ? (wins.length / n) * 100 : 0;
+    const avgR = n ? cumulativeR / n : 0;
     const avgWinR = wins.length ? wins.reduce((s, t) => s + t.rMultiple, 0) / wins.length : 0;
     const avgLossR = losses.length ? losses.reduce((s, t) => s + t.rMultiple, 0) / losses.length : 0;
     const grossWinR = wins.reduce((s, t) => s + t.rMultiple, 0);
     const grossLossR = Math.abs(losses.reduce((s, t) => s + t.rMultiple, 0));
     const profitFactor = grossLossR > 0 ? grossWinR / grossLossR : grossWinR > 0 ? 999 : 0;
-    const bestR = chronological.length ? Math.max(...chronological.map(t => t.rMultiple)) : 0;
-    const worstR = chronological.length ? Math.min(...chronological.map(t => t.rMultiple)) : 0;
+    const bestR = n ? Math.max(...chronological.map(t => t.rMultiple)) : 0;
+    const worstR = n ? Math.min(...chronological.map(t => t.rMultiple)) : 0;
     const totalPnl = chronological.reduce((s, t) => s + t.pnlUSD, 0);
 
     const bySymbol = Array.from(symbolMap.entries())
       .map(([symbol, v]) => ({ symbol, trades: v.trades, winRate: (v.wins / v.trades) * 100, avgR: v.totalR / v.trades, totalR: v.totalR }))
       .sort((a, b) => b.trades - a.trades);
 
+    // ── backtesting.py-style quant stats, adapted to R-multiples ──────────
+    // A backtest trade only carries riskAmount/pnlUSD optionally, so R is the
+    // one unit every trade always has -- these are computed as the R-based
+    // equivalents of backtesting.py's Sharpe/Sortino/Calmar/SQN/Kelly rather
+    // than exact ports (those need a daily equity series; we only have
+    // discrete trades), annualized by how many trades you logged per year of
+    // market time the trades actually span (entryTime -> exitTime).
+    let sharpe = 0, sortino = 0, calmar = 0, sqn = 0, kellyPct = 0;
+    let annualizedR = 0, volatilityR = 0, maxDrawdownDurationDays = 0, avgDrawdownR = 0, avgDrawdownDurationDays = 0;
+    if (n > 0) {
+      const meanR = avgR;
+      const variance = chronological.reduce((s, t) => s + (t.rMultiple - meanR) ** 2, 0) / n;
+      const stdR = Math.sqrt(variance);
+      const downsideVariance = chronological.reduce((s, t) => s + (t.rMultiple < 0 ? t.rMultiple ** 2 : 0), 0) / n;
+      const downsideStd = Math.sqrt(downsideVariance);
+
+      const minEntryTime = Math.min(...chronological.map(t => t.entryTime));
+      const maxExitTime = Math.max(...chronological.map(t => t.exitTime));
+      const spanYears = Math.max((maxExitTime - minEntryTime) / (365.25 * 24 * 3600), 1 / 365.25);
+      const tradesPerYear = n / spanYears;
+
+      sharpe = stdR > 0 ? (meanR / stdR) * Math.sqrt(tradesPerYear) : 0;
+      sortino = downsideStd > 0 ? (meanR / downsideStd) * Math.sqrt(tradesPerYear) : 0;
+      sqn = stdR > 0 ? Math.sqrt(n) * (meanR / stdR) : 0;
+      annualizedR = cumulativeR / spanYears;
+      volatilityR = stdR * Math.sqrt(tradesPerYear);
+      calmar = maxDrawdownR < 0 ? annualizedR / Math.abs(maxDrawdownR) : annualizedR > 0 ? 999 : 0;
+
+      const winLossRatio = avgLossR < 0 ? avgWinR / Math.abs(avgLossR) : 0;
+      const w = winRate / 100;
+      kellyPct = winLossRatio > 0 ? (w - (1 - w) / winLossRatio) * 100 : 0;
+
+      // Drawdown episodes: each run from a new equity peak down to the next
+      // new peak (or the end of the log), tracking how deep and how long.
+      let peakR = -Infinity, peakTime = 0, inDrawdown = false, episodeDepth = 0;
+      let cum = 0;
+      const episodes: { depthR: number; days: number }[] = [];
+      for (const t of chronological) {
+        cum += t.rMultiple;
+        if (cum >= peakR) {
+          if (inDrawdown) { episodes.push({ depthR: episodeDepth, days: (t.exitTime - peakTime) / 86400 }); inDrawdown = false; }
+          peakR = cum; peakTime = t.exitTime;
+        } else {
+          if (!inDrawdown) { inDrawdown = true; episodeDepth = 0; }
+          episodeDepth = Math.min(episodeDepth, cum - peakR);
+        }
+      }
+      if (inDrawdown) episodes.push({ depthR: episodeDepth, days: (chronological[n - 1].exitTime - peakTime) / 86400 });
+      maxDrawdownDurationDays = episodes.length ? Math.max(...episodes.map(e => e.days)) : 0;
+      avgDrawdownR = episodes.length ? episodes.reduce((s, e) => s + e.depthR, 0) / episodes.length : 0;
+      avgDrawdownDurationDays = episodes.length ? episodes.reduce((s, e) => s + e.days, 0) / episodes.length : 0;
+    }
+
     return {
       curve,
       bySymbol,
       stats: {
-        totalTrades: chronological.length, winRate, avgR, avgWinR, avgLossR,
+        totalTrades: n, winRate, avgR, avgWinR, avgLossR,
         profitFactor, bestR, worstR, maxWinStreak, maxLossStreak, maxDrawdownR,
         totalR: cumulativeR, totalPnl,
+        sharpe, sortino, calmar, sqn, kellyPct, annualizedR, volatilityR,
+        maxDrawdownDurationDays, avgDrawdownR, avgDrawdownDurationDays,
       },
     };
   }, [chronological]);
@@ -294,6 +350,69 @@ export default function BacktestMetricsPage() {
                 {
                   label: 'Max Loss Streak', value: `${stats.maxLossStreak}`, sub: 'Consecutive losses',
                   good: stats.maxLossStreak <= 3, icon: <TrendingDown size={14} />,
+                },
+              ].map((m, i) => (
+                <div key={i} style={{
+                  padding: '18px 20px',
+                  borderRight: i % 3 !== 2 ? '1px solid var(--border)' : 'none',
+                  borderBottom: i < 6 ? '1px solid var(--border)' : 'none',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: 'var(--text-muted)' }}>
+                    {m.icon}
+                    <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase' }}>{m.label}</span>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: m.good ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--font-mono)' }}>{m.value}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{m.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Quant stats (backtesting.py-style, adapted to R) ─────────── */}
+          <div className="card" style={{ marginBottom: 20, overflow: 'hidden' }}>
+            <div className="card-header">
+              <div>
+                <div className="card-title">Quant Stats</div>
+                <div className="card-subtitle">Sharpe/Sortino/Calmar/SQN/Kelly, the same stats backtesting.py reports — computed on R-multiples and annualized by trade frequency, since not every backtest trade has a dollar risk amount set</div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+              {[
+                {
+                  label: 'Sharpe Ratio', value: stats.sharpe.toFixed(2), sub: 'Return / volatility, annualized',
+                  good: stats.sharpe >= 1, icon: <Zap size={14} />,
+                },
+                {
+                  label: 'Sortino Ratio', value: stats.sortino.toFixed(2), sub: 'Return / downside volatility',
+                  good: stats.sortino >= 1, icon: <TrendingUp size={14} />,
+                },
+                {
+                  label: 'Calmar Ratio', value: stats.calmar >= 999 ? '∞' : stats.calmar.toFixed(2), sub: 'Annualized R / max drawdown',
+                  good: stats.calmar >= 1, icon: <Shield size={14} />,
+                },
+                {
+                  label: 'SQN', value: stats.sqn.toFixed(2), sub: stats.sqn >= 2.5 ? 'Good system' : stats.sqn >= 1.6 ? 'Average system' : 'Below average',
+                  good: stats.sqn >= 1.6, icon: <Target size={14} />,
+                },
+                {
+                  label: 'Kelly Criterion', value: `${stats.kellyPct >= 0 ? '+' : ''}${stats.kellyPct.toFixed(1)}%`, sub: 'Suggested risk per trade',
+                  good: stats.kellyPct >= 0, icon: <Zap size={14} />,
+                },
+                {
+                  label: 'Annualized R', value: `${stats.annualizedR >= 0 ? '+' : ''}${stats.annualizedR.toFixed(2)}R`, sub: 'R gained per year of market time',
+                  good: stats.annualizedR >= 0, icon: <TrendingUp size={14} />,
+                },
+                {
+                  label: 'Volatility (Ann.)', value: `${stats.volatilityR.toFixed(2)}R`, sub: 'Annualized std. dev. of R',
+                  good: true, icon: <AlertTriangle size={14} />,
+                },
+                {
+                  label: 'Max DD Duration', value: `${Math.round(stats.maxDrawdownDurationDays)}d`, sub: 'Longest time to recover a new high',
+                  good: stats.maxDrawdownDurationDays <= 30, icon: <TrendingDown size={14} />,
+                },
+                {
+                  label: 'Avg Drawdown', value: `${stats.avgDrawdownR.toFixed(2)}R over ${Math.round(stats.avgDrawdownDurationDays)}d`, sub: 'Typical depth and duration',
+                  good: stats.avgDrawdownR >= -1, icon: <Shield size={14} />,
                 },
               ].map((m, i) => (
                 <div key={i} style={{

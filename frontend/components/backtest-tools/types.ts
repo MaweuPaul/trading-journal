@@ -66,6 +66,22 @@ export const CHART_INTERVALS = [
 ] as const;
 export const SPEEDS = [0.5, 1, 2, 5, 10];
 
+// cTrader returns at most 1500 bars per request, no matter how wide the
+// requested date range is. Rather than make the trader pick a timeframe that
+// happens to fit their date range, pick the finest one that comfortably does
+// -- they can still override it from the dropdown.
+const INTERVAL_DAYS: Record<string, number> = {
+  '1min': 1 / 1440, '5min': 5 / 1440, '15min': 15 / 1440, '1h': 1 / 24, '4h': 4 / 24, '1day': 1,
+};
+export function suggestInterval(fromDate: string, toDate: string): string {
+  const days = (new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000;
+  const SAFE_BARS = 1200;
+  for (const { value } of CHART_INTERVALS) {
+    if (days / INTERVAL_DAYS[value] <= SAFE_BARS) return value;
+  }
+  return '1day';
+}
+
 export function toAnnotations(rects: DrawnRect[], lines: DrawnLine[], horizontals: DrawnHorizontal[], arrows: DrawnArrow[], texts: DrawnText[], fibs: DrawnFib[]): ChartAnnotation[] {
   return [
     ...rects.map(a => ({ ...a, type: 'rect' as const })),

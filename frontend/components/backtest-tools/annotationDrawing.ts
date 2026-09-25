@@ -24,6 +24,40 @@ export function drawSelectionBox(dc: DrawCtx, x: number, y: number, width: numbe
   ctx.strokeRect(x - 4, y - 4, width + 8, height + 8); ctx.restore();
 }
 
+const HANDLE_RADIUS = 5;
+const HANDLE_HIT_RADIUS = 8;
+
+// A small draggable circle at each endpoint of a selected two-point shape
+// (zone/line/arrow/fib), so a trader can grab and resize just one end of it
+// the way TradingView's own drawing tools work, instead of only being able
+// to translate the whole shape.
+export function drawEndpointHandle(dc: DrawCtx, x: number, y: number, color: string) {
+  const { ctx, resolvedTheme } = dc;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0d14' : '#ffffff';
+  ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.stroke();
+  ctx.restore();
+}
+
+export type ResizeHandle = 'p1' | 'p2';
+
+// Only rect/line/arrow/fib have two independent endpoints worth resizing;
+// horizontal/text are single-point and already drag as a whole via move.
+export function findResizeHandleAt(
+  annotation: ChartAnnotation | null, x: number, y: number, chart: IChartApi, series: ISeriesApi<'Candlestick'>,
+): ResizeHandle | null {
+  if (!annotation || annotation.type === 'text' || annotation.type === 'horizontal') return null;
+  const x1 = chart.timeScale().timeToCoordinate(annotation.time1 as UTCTimestamp);
+  const x2 = chart.timeScale().timeToCoordinate(annotation.time2 as UTCTimestamp);
+  const y1 = series.priceToCoordinate(annotation.price1);
+  const y2 = series.priceToCoordinate(annotation.price2);
+  if (x1 != null && y1 != null && Math.hypot(x - x1, y - y1) <= HANDLE_HIT_RADIUS) return 'p1';
+  if (x2 != null && y2 != null && Math.hypot(x - x2, y - y2) <= HANDLE_HIT_RADIUS) return 'p2';
+  return null;
+}
+
 export function drawArrowHead(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, color: string) {
   const angle = Math.atan2(y2 - y1, x2 - x1); const size = 10;
   ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x2, y2);
@@ -43,7 +77,10 @@ export function drawRects(dc: DrawCtx, rects: DrawnRect[]) {
     ctx.save(); ctx.strokeStyle = r.color; ctx.fillStyle = r.color + '22'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
     ctx.fill(); ctx.stroke(); ctx.restore();
-    if (r.id === selectedId) drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+    if (r.id === selectedId) {
+      drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+      drawEndpointHandle(dc, x1, y1, r.color); drawEndpointHandle(dc, x2, y2, r.color);
+    }
   }
 }
 
@@ -56,7 +93,10 @@ export function drawLines(dc: DrawCtx, lines: DrawnLine[]) {
     const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
     if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
     ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.setLineDash(line.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
-    if (line.id === selectedId) drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
+    if (line.id === selectedId) {
+      drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
+      drawEndpointHandle(dc, x1, y1, line.color); drawEndpointHandle(dc, x2, y2, line.color);
+    }
   }
 }
 
@@ -83,7 +123,10 @@ export function drawArrows(dc: DrawCtx, arrows: DrawnArrow[]) {
     if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
     ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.setLineDash(arrow.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
     drawArrowHead(ctx, x1, y1, x2, y2, arrow.color);
-    if (arrow.id === selectedId) drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
+    if (arrow.id === selectedId) {
+      drawSelectionBox(dc, Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
+      drawEndpointHandle(dc, x1, y1, arrow.color); drawEndpointHandle(dc, x2, y2, arrow.color);
+    }
   }
 }
 
@@ -107,7 +150,13 @@ export function drawFibs(dc: DrawCtx, fibs: DrawnFib[]) {
       ctx.fillText(`${(level * 100).toFixed(1)}%  ${fmtPrice(price)}`, leftX + 6, y - 4);
     }
     ctx.restore();
-    if (f.id === selectedId && yTop != null && yBottom != null) drawSelectionBox(dc, leftX, yTop, Math.max(2, canvas.width - leftX), Math.max(2, yBottom - yTop));
+    if (f.id === selectedId) {
+      if (yTop != null && yBottom != null) drawSelectionBox(dc, leftX, yTop, Math.max(2, canvas.width - leftX), Math.max(2, yBottom - yTop));
+      const y1 = series.priceToCoordinate(f.price1); const y2 = series.priceToCoordinate(f.price2);
+      const x1 = chart.timeScale().timeToCoordinate(f.time1 as UTCTimestamp); const x2 = chart.timeScale().timeToCoordinate(f.time2 as UTCTimestamp);
+      if (x1 != null && y1 != null) drawEndpointHandle(dc, x1, y1, f.color);
+      if (x2 != null && y2 != null) drawEndpointHandle(dc, x2, y2, f.color);
+    }
   }
 }
 
@@ -144,6 +193,14 @@ function distanceToSegment(px: number, py: number, x1: number, y1: number, x2: n
   const dx = x2 - x1, dy = y2 - y1; if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
   const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+// Moves just one endpoint of a two-point shape to a new time/price, leaving
+// the other endpoint fixed -- the resize half of drag-to-resize.
+export function resizeAnnotationEndpoint<T extends DrawnRect | DrawnLine | DrawnArrow | DrawnFib>(
+  annotation: T, handle: ResizeHandle, time: number, price: number,
+): T {
+  return handle === 'p1' ? { ...annotation, time1: time, price1: price } : { ...annotation, time2: time, price2: price };
 }
 
 export function findAnnotationAt(params: {

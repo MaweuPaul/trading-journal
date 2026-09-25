@@ -25,7 +25,17 @@ function offlineResponse(res) {
 }
 
 const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
-const MAX_RANGE_MS = 400 * 24 * 60 * 60 * 1000; // 400 days -- cTrader still caps each response at 1500 bars regardless
+// cTrader caps each GET_TRENDBARS_REQ response at 1500 bars (ctraderReplay.js),
+// regardless of how wide a fromTimestamp/toTimestamp window is requested. A
+// flat day-count cap doesn't fit every timeframe -- 400 days of 1min bars is
+// already ~576,000 bars (way over), while 400 days of 1day bars is only 400
+// bars (way under). Scale the cap to the chosen interval instead, so a daily
+// chart can go back years and a 1-minute chart is kept to what cTrader can
+// actually return in one request.
+const INTERVAL_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3 };
+function maxRangeMsFor(interval) {
+  return (INTERVAL_MS[interval] || INTERVAL_MS['15min']) * 1500;
+}
 
 // GET /backtest-trades/chart  candles for an explicit, arbitrary historical
 // window -- unlike Pre-Trade Analysis's "last N days from now", a backtest
@@ -40,7 +50,11 @@ router.get('/backtest-trades/chart', auth, ownerOnly, async (req, res) => {
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
       return res.status(400).json({ error: 'fromMs/toMs must be a valid range' });
     }
-    if (toMs - fromMs > MAX_RANGE_MS) return res.status(400).json({ error: 'That date range is too wide -- narrow it to 400 days or less.' });
+    const maxRangeMs = maxRangeMsFor(interval);
+    if (toMs - fromMs > maxRangeMs) {
+      const maxDays = Math.floor(maxRangeMs / 86400000);
+      return res.status(400).json({ error: `That date range is too wide for ${interval} candles -- narrow it to ${maxDays} days or less, or pick a larger timeframe.` });
+    }
 
     const candleData = await getTrendbars({ userId: req.user.userId, symbol, periodLabel: interval, fromMs, toMs });
     if (!candleData.candles.length) {
@@ -77,7 +91,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
     const {
-      symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
+      name, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
       stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations,
     } = req.body;
 
@@ -101,6 +115,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
 
     const trade = await BacktestTrade.create({
       user: req.user.userId,
+      name: String(name || '').trim().slice(0, 100),
       symbol: symbol.trim().slice(0, 40),
       interval: String(interval),
       direction,
@@ -124,8 +139,9 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
 router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
-    const { notes, chartAnnotations } = req.body;
+    const { name, notes, chartAnnotations } = req.body;
     const update = {};
+    if (name !== undefined) update.name = String(name || '').trim().slice(0, 100);
     if (notes !== undefined) update.notes = String(notes || '').slice(0, 5000);
     if (chartAnnotations !== undefined) {
       try {

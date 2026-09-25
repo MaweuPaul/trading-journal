@@ -13,10 +13,11 @@ import {
   Candle, AnnotationLineStyle, DrawnRect, DrawnLine, DrawnText, DrawnHorizontal, DrawnArrow, DrawnFib,
   ChartAnnotation, DrawingTool, ShapeDrawingTool, AnnotationHistory, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
   DRAWING_COLORS, SHAPE_DRAWING_TOOLS, TOOL_GUIDANCE, CHART_INTERVALS, SPEEDS,
-  toAnnotations, isoDaysAgo, fmtPrice,
+  toAnnotations, isoDaysAgo, fmtPrice, suggestInterval,
 } from './backtest-tools/types';
 import {
   DrawCtx, drawRects, drawLines, drawHorizontals, drawArrows, drawFibs, drawTexts, drawShapePreview, findAnnotationAt as findAnnotationAtIn,
+  ResizeHandle, findResizeHandleAt, resizeAnnotationEndpoint,
 } from './backtest-tools/annotationDrawing';
 import { placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay } from './backtest-tools/positionTool';
 import { drawMeasureOverlay } from './backtest-tools/measureTool';
@@ -35,9 +36,10 @@ export default function BacktestChart({ onSaved }: Props) {
 
   const [symbol, setSymbol] = useState('');
   const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
-  const [interval, setInterval_] = useState('15min');
+  const [interval, setInterval_] = useState(() => suggestInterval(isoDaysAgo(30), isoDaysAgo(0)));
   const [fromDate, setFromDate] = useState(isoDaysAgo(30));
   const [toDate, setToDate] = useState(isoDaysAgo(0));
+  const intervalTouchedRef = useRef(false);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -70,8 +72,10 @@ export default function BacktestChart({ onSaved }: Props) {
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   const draggingHandleRef = useRef<TradeHandle | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
+  const [hoveredResizeHandle, setHoveredResizeHandle] = useState<ResizeHandle | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
   const [notes, setNotes] = useState('');
+  const [backtestName, setBacktestName] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -80,6 +84,7 @@ export default function BacktestChart({ onSaved }: Props) {
 
   const drawStart = useRef<{ x: number; y: number } | null>(null);
   const movingAnnotationRef = useRef<{ annotation: ChartAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
+  const resizingAnnotationRef = useRef<{ annotation: ChartAnnotation; handle: ResizeHandle } | null>(null);
   const autoSelectModeRef = useRef(false);
   const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
@@ -97,6 +102,16 @@ export default function BacktestChart({ onSaved }: Props) {
       .then(data => setAvailableSymbols(Array.isArray(data.symbols) ? data.symbols : []))
       .catch(() => {});
   }, []);
+
+  // Re-suggest the timeframe whenever the date range changes, so the trader
+  // never has to work out by hand which timeframe fits cTrader's 1500-bar
+  // cap for a given range -- unless they've explicitly picked one themselves,
+  // in which case their choice is left alone (they'll see the "too wide"
+  // error and can widen the timeframe or narrow the range from there).
+  useEffect(() => {
+    if (intervalTouchedRef.current || candles) return;
+    setInterval_(suggestInterval(fromDate, toDate));
+  }, [fromDate, toDate, candles]);
 
   const allAnnotations = useMemo<ChartAnnotation[]>(
     () => toAnnotations(drawnRects, drawnLines, drawnHorizontals, drawnArrows, drawnTexts, drawnFibs),
@@ -243,6 +258,16 @@ export default function BacktestChart({ onSaved }: Props) {
     seriesRef.current.setData(candles.slice(0, replayIdx + 1));
   }, [candles, replayIdx]);
 
+  // Fit the view to whatever's revealed right after a fresh load, so the
+  // chart doesn't sit at a leftover zoom level (tiny candle cluster lost in
+  // a mostly-empty pane) -- but only on a fresh load, not on every replay
+  // step, or playback would re-center itself on every single candle.
+  useEffect(() => {
+    if (!candles || !chartRef.current) return;
+    chartRef.current.timeScale().fitContent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles]);
+
   // ── Playback ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candles) return;
@@ -299,7 +324,13 @@ export default function BacktestChart({ onSaved }: Props) {
     const outcome: ClosedTrade['outcome'] = Math.abs(exitPrice - entryPrice) < 1e-9 ? 'breakeven' : rMultiple > 0 ? 'win' : 'loss';
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
   };
-  const cancelTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); };
+  const cancelTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); setBacktestName(''); };
+  useEffect(() => {
+    if (!closedTrade || backtestName) return;
+    const label = closedTrade.direction === 'long' ? 'Long' : 'Short';
+    setBacktestName(`${symbol.trim() || 'Backtest'} ${label} — ${new Date().toLocaleDateString()}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closedTrade]);
   useEffect(() => {
     if (!openTrade || closedTrade) return;
     const amount = Number(riskAmountInput) || 0;
@@ -307,7 +338,7 @@ export default function BacktestChart({ onSaved }: Props) {
     setOpenTrade(cur => cur ? { ...cur, riskAmount: amount } : cur);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [riskAmountInput]);
-  const discardClosedTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); };
+  const discardClosedTrade = () => { setOpenTrade(null); setClosedTrade(null); setNotes(''); setBacktestName(''); };
 
   // TradingView-style placement: one click drops a ready-to-drag position box
   // with sensible default SL/TP (a 1:2 risk:reward box off entry) instead of
@@ -328,6 +359,7 @@ export default function BacktestChart({ onSaved }: Props) {
       const res = await fetch(`${API}/backtest-trades`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
+          name: backtestName.trim(),
           symbol: symbol.trim(), interval,
           direction: closedTrade.direction,
           entryTime: closedTrade.entryTime, entryPrice: closedTrade.entryPrice,
@@ -340,7 +372,7 @@ export default function BacktestChart({ onSaved }: Props) {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save backtest trade');
-      setOpenTrade(null); setClosedTrade(null); setNotes('');
+      setOpenTrade(null); setClosedTrade(null); setNotes(''); setBacktestName('');
       onSaved();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Could not save backtest trade');
@@ -390,9 +422,20 @@ export default function BacktestChart({ onSaved }: Props) {
   };
 
   const beginAnnotationInteraction = (x: number, y: number) => {
+    const chart = chartRef.current, series = seriesRef.current;
+    // A shape that's already selected shows draggable endpoint handles --
+    // grabbing one resizes just that end instead of moving the whole shape.
+    if (chart && series && selectedAnnotationId) {
+      const selected = allAnnotations.find(a => a.id === selectedAnnotationId) || null;
+      const handle = findResizeHandleAt(selected, x, y, chart, series);
+      if (selected && handle) {
+        pushAnnotationHistory();
+        resizingAnnotationRef.current = { annotation: selected, handle };
+        return selected;
+      }
+    }
     const hit = findAnnotationAt(x, y);
     setSelectedAnnotationId(hit?.id || '');
-    const chart = chartRef.current, series = seriesRef.current;
     if (hit && chart && series) {
       const originTime = chart.timeScale().coordinateToTime(x);
       const originPrice = series.coordinateToPrice(y);
@@ -479,7 +522,27 @@ export default function BacktestChart({ onSaved }: Props) {
       if (original.type === 'text') setDrawnTexts(cur => cur.map(item => item.id === id ? updated as DrawnText : item));
     }
   };
+  const applyAnnotationResize = (original: ChartAnnotation, handle: ResizeHandle, time: number, price: number) => {
+    if (original.type === 'text' || original.type === 'horizontal') return;
+    const id = original.id;
+    const updated = resizeAnnotationEndpoint(original, handle, time, price);
+    if (original.type === 'rect') setDrawnRects(cur => cur.map(item => item.id === id ? updated as DrawnRect : item));
+    if (original.type === 'line') setDrawnLines(cur => cur.map(item => item.id === id ? updated as DrawnLine : item));
+    if (original.type === 'arrow') setDrawnArrows(cur => cur.map(item => item.id === id ? updated as DrawnArrow : item));
+    if (original.type === 'fib') setDrawnFibs(cur => cur.map(item => item.id === id ? updated as DrawnFib : item));
+    resizingAnnotationRef.current = { annotation: updated, handle };
+  };
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (resizingAnnotationRef.current) {
+      const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
+      const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+      const time = chart.timeScale().coordinateToTime(e.clientX - r.left);
+      const price = series.coordinateToPrice(e.clientY - r.top);
+      if (time == null || price == null) return;
+      const { annotation, handle } = resizingAnnotationRef.current;
+      applyAnnotationResize(annotation, handle, Number(time), price);
+      return;
+    }
     if (draggingHandleRef.current) {
       const series = seriesRef.current; if (!series) return;
       const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
@@ -521,6 +584,7 @@ export default function BacktestChart({ onSaved }: Props) {
     autoSelectModeRef.current = false; setDrawingTool('none'); setHoveredAnnotationId('');
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (resizingAnnotationRef.current) { resizingAnnotationRef.current = null; return; }
     if (draggingHandleRef.current) { draggingHandleRef.current = null; return; }
     if (movingAnnotationRef.current) {
       const move = movingAnnotationRef.current;
@@ -559,21 +623,31 @@ export default function BacktestChart({ onSaved }: Props) {
     if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
   };
   const handleChartWrapHoverMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (draggingHandleRef.current) return;
+    if (draggingHandleRef.current || resizingAnnotationRef.current) return;
     const canvas = canvasRef.current; if (!canvas) return;
     const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
     if (drawingTool === 'none' && !placingDirection && openTrade && !closedTrade) {
-      const handle = findTradeHandleAt(e.clientY - r.top);
+      const handle = findTradeHandleAt(y);
       setHoveredHandle(handle);
       if (handle) { setHoveredAnnotationId(''); return; }
     } else if (hoveredHandle) {
       setHoveredHandle(null);
     }
+    const chart = chartRef.current, series = seriesRef.current;
+    if (chart && series && selectedAnnotationId && (drawingTool === 'none' || drawingTool === 'select') && !movingAnnotationRef.current) {
+      const selected = allAnnotations.find(a => a.id === selectedAnnotationId) || null;
+      const resizeHandle = findResizeHandleAt(selected, x, y, chart, series);
+      setHoveredResizeHandle(resizeHandle);
+      if (resizeHandle) { setHoveredAnnotationId(''); return; }
+    } else if (hoveredResizeHandle) {
+      setHoveredResizeHandle(null);
+    }
     if (drawingTool !== 'none' || movingAnnotationRef.current || placingDirection) return;
-    const hit = findAnnotationAt(e.clientX - r.left, e.clientY - r.top);
+    const hit = findAnnotationAt(x, y);
     setHoveredAnnotationId(hit?.id || '');
   };
-  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); setHoveredHandle(null); };
+  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); setHoveredHandle(null); setHoveredResizeHandle(null); };
 
   // TradingView-style keyboard shortcuts: Esc backs out of whatever's active,
   // Delete/Backspace removes the selected annotation (ignored while typing).
@@ -620,8 +694,8 @@ export default function BacktestChart({ onSaved }: Props) {
           <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
         </label>
         <label>
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Timeframe</span>
-          <select value={interval} onChange={e => setInterval_(e.target.value)} style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Timeframe <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-muted)' }}>(auto)</span></span>
+          <select value={interval} onChange={e => { intervalTouchedRef.current = true; setInterval_(e.target.value); }} style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }}>
             {CHART_INTERVALS.map(tf => <option key={tf.value} value={tf.value}>{tf.label}</option>)}
           </select>
         </label>
@@ -774,10 +848,10 @@ export default function BacktestChart({ onSaved }: Props) {
             })()}
             <canvas ref={canvasRef}
               className={`replay-canvas-overlay${drawingTool !== 'none' || placingDirection ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId && !hoveredHandle ? ' idle-hover' : ''}`}
-              style={(hoveredHandle || draggingHandleRef.current) ? { pointerEvents: 'all', cursor: 'ns-resize' } : placingDirection ? { pointerEvents: 'all', cursor: 'crosshair' } : undefined}
+              style={(hoveredHandle || draggingHandleRef.current) ? { pointerEvents: 'all', cursor: 'ns-resize' } : (hoveredResizeHandle || resizingAnnotationRef.current) ? { pointerEvents: 'all', cursor: 'move' } : placingDirection ? { pointerEvents: 'all', cursor: 'crosshair' } : undefined}
               aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
               onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
-              onMouseLeave={() => { movingAnnotationRef.current = null; endAutoSelectMode(); if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
+              onMouseLeave={() => { movingAnnotationRef.current = null; resizingAnnotationRef.current = null; endAutoSelectMode(); if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
           </div>
 
           <div className="replay-bottombar">
@@ -830,6 +904,10 @@ export default function BacktestChart({ onSaved }: Props) {
             <strong style={{ fontFamily: 'var(--font-mono)' }}>{closedTrade.rMultiple >= 0 ? '+' : ''}{closedTrade.rMultiple.toFixed(2)}R</strong>
             {closedTrade.riskAmount > 0 && <strong style={{ color: closedTrade.pnlUSD >= 0 ? 'var(--green)' : 'var(--red)' }}>{closedTrade.pnlUSD >= 0 ? '+' : ''}${closedTrade.pnlUSD.toFixed(2)}</strong>}
           </div>
+          <label>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Backtest Name</span>
+            <input type="text" maxLength={100} value={backtestName} onChange={e => setBacktestName(e.target.value)} placeholder="e.g. Gold breakout retest" style={{ width: '100%', minHeight: 36, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }} />
+          </label>
           <textarea className="drawer-textarea" placeholder="What was the setup? What would you do differently?" value={notes} onChange={e => setNotes(e.target.value)} />
           {saveError && <div className="account-alert error">{saveError}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>

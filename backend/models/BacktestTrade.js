@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 const backtestTradeSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
+  name: { type: String, default: '' },
   symbol: { type: String, required: true },
   interval: { type: String, required: true },
   direction: { type: String, enum: ['long', 'short'], required: true },

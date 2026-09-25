@@ -260,11 +260,14 @@ export default function MetricsView() {
       {/* Quant cards */}
       <section className="tw:flex tw:flex-col tw:gap-space-sm">
         <div className="tw:flex tw:items-center tw:justify-between tw:px-space-xs">
-          <h2 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">Statistical Ratios &amp; Edge</h2>
+          <div className="tw:flex tw:items-center tw:gap-space-xs">
+            <Icon name="insights" className="tw:text-primary tw:text-[18px]" />
+            <h2 className="tw:font-label-caps tw:text-label-caps tw:text-on-surface tw:uppercase">Statistical Ratios &amp; Edge</h2>
+          </div>
           <span className="tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase">R-Multiple Basis</span>
         </div>
         <div className="tw:grid tw:grid-cols-2 tw:gap-space-xs tw:sm:grid-cols-3">
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm">
+          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Profit Factor</span>
               <span className={`tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded ${s.profitFactor >= 1 ? 'tw:bg-secondary/15 tw:text-secondary' : 'tw:bg-error/15 tw:text-error'}`}>{profitFactorGrade(s.profitFactor)}</span>
@@ -274,7 +277,7 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">G:L</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm">
+          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Expectancy</span>
               <Icon name={s.avgR >= 0 ? 'verified' : 'error'} className={`tw:text-[16px] ${tone(s.avgR)}`} />
@@ -284,7 +287,7 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">/trade</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1">
+          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">SQN Rating</span>
               <span className="tw:bg-primary/20 tw:text-primary tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded">{sqn.badge}</span>
@@ -294,21 +297,21 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">{sqn.caption}</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm">
+          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Avg Win ({s.wins})</span>
             <div className="tw:mt-2">
               <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-secondary tw:font-bold">{fmtR(s.avgWinR)}</span>
               <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant">{fmtUSD(s.avgWinUSD)}</div>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm">
+          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Avg Loss ({s.losses})</span>
             <div className="tw:mt-2">
               <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-error tw:font-bold">{fmtR(s.avgLossR)}</span>
               <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant">{fmtUSD(s.avgLossUSD)}</div>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1">
+          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Best vs Worst Trade</span>
             <div className="tw:mt-2 tw:flex tw:justify-between tw:items-center">
               <div>
@@ -332,7 +335,7 @@ export default function MetricsView() {
             { label: 'Annualized R', value: fmtR(s.annualizedR, 1), cls: tone(s.annualizedR), hint: 'R per year of market time' },
             { label: 'Volatility', value: `${s.volatilityR.toFixed(2)}R`, cls: 'tw:text-on-surface-variant', hint: 'Std. dev. of R per trade' },
           ].map(m => (
-            <div key={m.label} title={m.hint} className="tw:bg-surface-container-low tw:rounded-lg tw:p-space-sm tw:flex tw:flex-col">
+            <div key={m.label} title={m.hint} className="tw:bg-surface-container-low tw:rounded-lg tw:p-space-sm tw:flex tw:flex-col tw:transition-colors tw:duration-150 tw:hover:bg-surface-container">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">{m.label}</span>
               <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold tw:mt-0.5 ${m.cls}`}>{m.value}</span>
             </div>

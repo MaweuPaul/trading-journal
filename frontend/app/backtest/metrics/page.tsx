@@ -11,6 +11,7 @@ import {
 
 interface BacktestTrade {
   _id: string;
+  strategy: string;
   symbol: string;
   interval: string;
   direction: 'long' | 'short';
@@ -90,13 +91,14 @@ export default function BacktestMetricsPage() {
     [trades],
   );
 
-  const { curve, stats, bySymbol } = useMemo(() => {
+  const { curve, stats, bySymbol, byStrategy } = useMemo(() => {
     let cumulativeR = 0;
     let peakR = 0;
     let maxDrawdownR = 0;
     let winStreak = 0, lossStreak = 0, maxWinStreak = 0, maxLossStreak = 0;
     const curve: EquityPoint[] = [];
     const symbolMap = new Map<string, { trades: number; wins: number; totalR: number }>();
+    const strategyMap = new Map<string, { trades: number; wins: number; totalR: number }>();
 
     for (let i = 0; i < chronological.length; i++) {
       const t = chronological[i];
@@ -118,6 +120,14 @@ export default function BacktestMetricsPage() {
       if (t.outcome === 'win') entry.wins += 1;
       entry.totalR += t.rMultiple;
       symbolMap.set(t.symbol, entry);
+
+      if (t.strategy) {
+        const stratEntry = strategyMap.get(t.strategy) || { trades: 0, wins: 0, totalR: 0 };
+        stratEntry.trades += 1;
+        if (t.outcome === 'win') stratEntry.wins += 1;
+        stratEntry.totalR += t.rMultiple;
+        strategyMap.set(t.strategy, stratEntry);
+      }
     }
 
     const wins = chronological.filter(t => t.outcome === 'win');
@@ -137,6 +147,9 @@ export default function BacktestMetricsPage() {
     const bySymbol = Array.from(symbolMap.entries())
       .map(([symbol, v]) => ({ symbol, trades: v.trades, winRate: (v.wins / v.trades) * 100, avgR: v.totalR / v.trades, totalR: v.totalR }))
       .sort((a, b) => b.trades - a.trades);
+    const byStrategy = Array.from(strategyMap.entries())
+      .map(([strategy, v]) => ({ strategy, trades: v.trades, winRate: (v.wins / v.trades) * 100, avgR: v.totalR / v.trades, totalR: v.totalR }))
+      .sort((a, b) => b.totalR - a.totalR);
 
     // ── backtesting.py-style quant stats, adapted to R-multiples ──────────
     // A backtest trade only carries riskAmount/pnlUSD optionally, so R is the
@@ -194,6 +207,7 @@ export default function BacktestMetricsPage() {
     return {
       curve,
       bySymbol,
+      byStrategy,
       stats: {
         totalTrades: n, winRate, avgR, avgWinR, avgLossR,
         profitFactor, bestR, worstR, maxWinStreak, maxLossStreak, maxDrawdownR,
@@ -430,6 +444,32 @@ export default function BacktestMetricsPage() {
               ))}
             </div>
           </div>
+
+          {/* ── By strategy ───────────────────────────────────────────── */}
+          {byStrategy.length > 0 && (
+            <div className="table-wrap" style={{ marginBottom: 20 }}>
+              <div className="card-header" style={{ padding: '14px 16px 0' }}>
+                <div className="card-title">By Strategy</div>
+                <div className="card-subtitle">Compare edge across the strategies you've tagged your backtests with</div>
+              </div>
+              <table className="data-table">
+                <thead>
+                  <tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>Avg R</th><th>Total R</th></tr>
+                </thead>
+                <tbody>
+                  {byStrategy.map(s => (
+                    <tr key={s.strategy}>
+                      <td>{s.strategy}</td>
+                      <td>{s.trades}</td>
+                      <td>{s.winRate.toFixed(1)}%</td>
+                      <td className={s.avgR >= 0 ? 'positive' : 'negative'}>{s.avgR >= 0 ? '+' : ''}{s.avgR.toFixed(2)}R</td>
+                      <td className={s.totalR >= 0 ? 'positive' : 'negative'}>{s.totalR >= 0 ? '+' : ''}{s.totalR.toFixed(2)}R</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* ── By symbol ─────────────────────────────────────────────── */}
           {bySymbol.length > 0 && (

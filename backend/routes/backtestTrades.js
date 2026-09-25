@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
 const { getTrendbars } = require('../lib/ctraderReplay');
-const { normalizePretradeAnnotations } = require('../lib/pretradeAnnotations');
+const { normalizeBacktestDrawings } = require('../lib/backtestDrawings');
 
 function ownerOnly(req, res, next) {
   if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
@@ -68,7 +68,7 @@ router.get('/backtest-trades/chart', auth, ownerOnly, async (req, res) => {
   }
 });
 
-// List the current user's backtest log. Optional symbol/direction/outcome filters.
+// List the current user's backtest log. Optional symbol/direction/outcome/strategy filters.
 router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
   // Nothing can have been saved offline (POST is disabled below), so the
   // honest answer to "what's logged" is an empty list, not a hard error.
@@ -78,10 +78,25 @@ router.get('/backtest-trades', auth, ownerOnly, async (req, res) => {
     if (req.query.symbol) query.symbol = String(req.query.symbol);
     if (req.query.direction) query.direction = String(req.query.direction);
     if (req.query.outcome) query.outcome = String(req.query.outcome);
+    if (req.query.strategy) query.strategy = String(req.query.strategy);
     const trades = await BacktestTrade.find(query).sort({ createdAt: -1 }).lean();
     res.json({ trades });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not load backtest trades' });
+  }
+});
+
+// Distinct strategy names this user has already used, so the Backtest chart
+// can offer them as a searchable dropdown -- picking an existing one keeps
+// metrics comparable across backtests of the same strategy; typing a new
+// name creates it implicitly the first time it's saved.
+router.get('/backtest-trades/strategies', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return res.json({ strategies: [] });
+  try {
+    const strategies = await BacktestTrade.distinct('strategy', { user: req.user.userId, strategy: { $ne: '' } });
+    res.json({ strategies: strategies.sort((a, b) => a.localeCompare(b)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not load strategies' });
   }
 });
 
@@ -91,7 +106,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
     const {
-      name, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
+      name, strategy, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
       stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations,
     } = req.body;
 
@@ -107,7 +122,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
     let annotations = [];
     if (chartAnnotations !== undefined) {
       try {
-        annotations = normalizePretradeAnnotations(chartAnnotations);
+        annotations = normalizeBacktestDrawings(chartAnnotations);
       } catch (validationErr) {
         return res.status(400).json({ error: validationErr.message });
       }
@@ -116,6 +131,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
     const trade = await BacktestTrade.create({
       user: req.user.userId,
       name: String(name || '').trim().slice(0, 100),
+      strategy: String(strategy || '').trim().slice(0, 80),
       symbol: symbol.trim().slice(0, 40),
       interval: String(interval),
       direction,
@@ -139,13 +155,14 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
 router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
-    const { name, notes, chartAnnotations } = req.body;
+    const { name, strategy, notes, chartAnnotations } = req.body;
     const update = {};
     if (name !== undefined) update.name = String(name || '').trim().slice(0, 100);
+    if (strategy !== undefined) update.strategy = String(strategy || '').trim().slice(0, 80);
     if (notes !== undefined) update.notes = String(notes || '').slice(0, 5000);
     if (chartAnnotations !== undefined) {
       try {
-        update.chartAnnotations = normalizePretradeAnnotations(chartAnnotations);
+        update.chartAnnotations = normalizeBacktestDrawings(chartAnnotations);
       } catch (validationErr) {
         return res.status(400).json({ error: validationErr.message });
       }

@@ -8,6 +8,7 @@ import BacktestChart from '@/components/BacktestChart';
 interface BacktestTrade {
   _id: string;
   name: string;
+  strategy: string;
   symbol: string;
   interval: string;
   direction: 'long' | 'short';
@@ -29,6 +30,7 @@ export default function BacktestPage() {
   const [error, setError] = useState('');
   const [showChart, setShowChart] = useState(false);
   const [chartKey, setChartKey] = useState(0);
+  const [strategyFilter, setStrategyFilter] = useState('');
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -61,12 +63,15 @@ export default function BacktestPage() {
     if (res.ok) setTrades(current => current.filter(t => t._id !== id));
   };
 
-  const wins = trades.filter(t => t.outcome === 'win').length;
-  const losses = trades.filter(t => t.outcome === 'loss').length;
-  const winRate = trades.length ? (wins / trades.length) * 100 : 0;
-  const totalR = trades.reduce((sum, t) => sum + t.rMultiple, 0);
-  const avgR = trades.length ? totalR / trades.length : 0;
-  const totalPnl = trades.reduce((sum, t) => sum + t.pnlUSD, 0);
+  const strategies = Array.from(new Set(trades.map(t => t.strategy).filter(Boolean))).sort();
+  const visibleTrades = strategyFilter ? trades.filter(t => t.strategy === strategyFilter) : trades;
+
+  const wins = visibleTrades.filter(t => t.outcome === 'win').length;
+  const losses = visibleTrades.filter(t => t.outcome === 'loss').length;
+  const winRate = visibleTrades.length ? (wins / visibleTrades.length) * 100 : 0;
+  const totalR = visibleTrades.reduce((sum, t) => sum + t.rMultiple, 0);
+  const avgR = visibleTrades.length ? totalR / visibleTrades.length : 0;
+  const totalPnl = visibleTrades.reduce((sum, t) => sum + t.pnlUSD, 0);
 
   return (
     <main className="page-content">
@@ -76,7 +81,13 @@ export default function BacktestPage() {
             <h2><FlaskConical size={22} style={{ verticalAlign: 'middle', marginRight: 8 }} />Backtest</h2>
             <p>Replay your own historical data and log hypothetical trades — kept separate from your real trade history.</p>
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {strategies.length > 0 && (
+              <select value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)} style={{ minHeight: 38, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)', color: 'var(--text-primary)', padding: '0 9px' }}>
+                <option value="">All strategies</option>
+                {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
             <Link href="/backtest/metrics" className="btn-ghost">
               <LineChart size={15} /> View Metrics
             </Link>
@@ -96,11 +107,11 @@ export default function BacktestPage() {
 
       {showChart && <BacktestChart key={chartKey} onSaved={handleSaved} />}
 
-      {trades.length > 0 && (
+      {visibleTrades.length > 0 && (
         <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
           <div className="stat-card blue-card">
             <div className="stat-label">TRADES LOGGED</div>
-            <div className="stat-value">{trades.length}</div>
+            <div className="stat-value">{visibleTrades.length}</div>
           </div>
           <div className="stat-card green-card">
             <div className="stat-label">WIN RATE</div>
@@ -126,19 +137,20 @@ export default function BacktestPage() {
           <h3>No backtests logged yet</h3>
           <p>Click &quot;New Backtest&quot; to replay a symbol&apos;s history from your own connected broker data and log your first hypothetical trade.</p>
         </div>
-      ) : trades.length > 0 ? (
+      ) : visibleTrades.length > 0 ? (
         <div className="table-wrap">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Name</th><th>Symbol</th><th>Direction</th><th>Timeframe</th><th>Entry</th><th>Exit</th>
+                <th>Name</th><th>Strategy</th><th>Symbol</th><th>Direction</th><th>Timeframe</th><th>Entry</th><th>Exit</th>
                 <th>R</th><th>P&amp;L</th><th>Outcome</th><th>Logged</th><th />
               </tr>
             </thead>
             <tbody>
-              {trades.map(t => (
+              {visibleTrades.map(t => (
                 <tr key={t._id}>
                   <td>{t.name || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                  <td>{t.strategy || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                   <td>{t.symbol}</td>
                   <td><span className={`badge ${t.direction === 'long' ? 'buy' : 'sell'}`}>{t.direction === 'long' ? 'LONG' : 'SHORT'}</span></td>
                   <td>{t.interval}</td>

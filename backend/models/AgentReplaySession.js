@@ -32,6 +32,16 @@ const agentReplaySessionSchema = new mongoose.Schema({
   closedTrade: { type: tradeSchema, default: null }, // resolved, waiting to be logged or discarded
   loggedTrades: { type: Number, default: 0 },
   status: { type: String, enum: ['active', 'ended'], default: 'active' },
+  // Blind mode: the agent never learns where in history it is. The window is
+  // picked at random, times are shifted by whole weeks (weekday and time of
+  // day survive) and prices are multiplied by a random factor. Everything
+  // stored here -- clock, trades -- stays in real time and real prices; only
+  // what goes over the wire is transformed.
+  blind: {
+    enabled: { type: Boolean, default: false },
+    timeShift: { type: Number, default: 0 },   // seconds subtracted from real time
+    priceScale: { type: Number, default: 1 },  // agent price = real price * priceScale
+  },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
 }, { timestamps: true });
 

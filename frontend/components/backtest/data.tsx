@@ -5,13 +5,19 @@ import { useRouter } from 'next/navigation';
 export const SIM_STARTING_BALANCE = 100_000;
 const ACTIVE_SYMBOL_KEY = 'bt-active-symbol';
 const CURRENT_STRATEGY_KEY = 'bt-current-strategy';
+const AGENT_RUNS_KEY = 'bt-agent-runs';
+
+/** Which backtests the views count: your own, AI agents' (MCP), or both. */
+export type AgentRunsView = 'mine' | 'agent' | 'all';
 
 export interface BacktestTrade {
   _id: string;
   name: string;
   strategy: string;
   tags?: string[];
-  source?: 'replay' | 'quick';
+  source?: 'replay' | 'quick' | 'agent';
+  /** Agent run in a blind session: the agent never saw the real dates or prices. */
+  blind?: boolean;
   symbol: string;
   interval: string;
   direction: 'long' | 'short';
@@ -56,10 +62,19 @@ export function fmtDate(iso: string | number) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export interface StrategyInfo { _id?: string; name: string; description: string; trades: number; winRate: number; avgR: number; }
+export interface StrategyInfo {
+  _id?: string; name: string; description: string; trades: number; winRate: number; avgR: number;
+  agentTrades?: number; agentWinRate?: number; agentAvgR?: number;
+}
 
 interface BacktestData {
+  /** The trades the current `agentRuns` view counts -- what every view shows and computes stats from. */
   trades: BacktestTrade[];
+  /** Every logged trade, whatever the view. */
+  allTrades: BacktestTrade[];
+  agentRuns: AgentRunsView;
+  setAgentRuns: (view: AgentRunsView) => void;
+  agentTradeCount: number;
   loading: boolean;
   error: string;
   reload: () => Promise<void>;
@@ -93,6 +108,7 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
   const [activeSymbol, setActiveSymbolState] = useState('XAUUSD');
   const [currentStrategy, setCurrentStrategyState] = useState('');
   const [strategyInfo, setStrategyInfo] = useState<StrategyInfo[]>([]);
+  const [agentRuns, setAgentRunsState] = useState<AgentRunsView>('mine');
 
   const reloadStrategies = useCallback(async () => {
     try {
@@ -126,6 +142,8 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     const storedStrategy = localStorage.getItem(CURRENT_STRATEGY_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage
     if (storedStrategy) setCurrentStrategyState(storedStrategy);
+    const storedRuns = localStorage.getItem(AGENT_RUNS_KEY);
+    if (storedRuns === 'agent' || storedRuns === 'all') setAgentRunsState(storedRuns);
     void reload();
     void reloadStrategies();
   }, [reload, reloadStrategies]);
@@ -144,6 +162,11 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
       if (clean) localStorage.setItem(CURRENT_STRATEGY_KEY, clean);
       else localStorage.removeItem(CURRENT_STRATEGY_KEY);
     } catch { /* storage unavailable */ }
+  }, []);
+
+  const setAgentRuns = useCallback((view: AgentRunsView) => {
+    setAgentRunsState(view);
+    try { localStorage.setItem(AGENT_RUNS_KEY, view); } catch { /* storage unavailable */ }
   }, []);
 
   const removeTrade = useCallback(async (id: string) => {
@@ -198,9 +221,12 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     // Merge backend-defined strategies with any ad-hoc tags used on trades
     // before this feature existed, so older data keeps showing up.
     const strategies = Array.from(new Set([...strategyInfo.map(s => s.name), ...trades.flatMap(tagsOf)])).sort((a, b) => a.localeCompare(b));
-    const simBalance = SIM_STARTING_BALANCE + trades.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    return { trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategies, strategyInfo, createStrategy, removeStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
-  }, [trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategyInfo, createStrategy, removeStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
+    // AI agents' runs (MCP) stay out of your numbers unless the view asks for them.
+    const agentTradeCount = trades.filter(t => t.source === 'agent').length;
+    const visible = agentRuns === 'all' ? trades : trades.filter(t => (t.source === 'agent') === (agentRuns === 'agent'));
+    const simBalance = SIM_STARTING_BALANCE + visible.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
+    return { trades: visible, allTrades: trades, agentRuns, setAgentRuns, agentTradeCount, loading, error, reload, removeTrade, addTrade, updateTrade, strategies, strategyInfo, createStrategy, removeStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
+  }, [trades, agentRuns, setAgentRuns, loading, error, reload, removeTrade, addTrade, updateTrade, strategyInfo, createStrategy, removeStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
 
   return <BacktestContext.Provider value={value}>{children}</BacktestContext.Provider>;
 }

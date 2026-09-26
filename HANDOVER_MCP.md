@@ -12,6 +12,48 @@ The user chose:
 
 ---
 
+## 0. Status: built (sections 3.1–3.4), with these changes to the plan
+
+Everything in section 3 is implemented. Section 3 below still describes the design; these are the deliberate differences from it:
+
+- **Agent trades stay out of the owner's stats by default.**
+  - Frontend: `BacktestProvider` (`components/backtest/data.tsx`) has an `agentRuns` view: `mine` (default), `agent` or `all`, stored in localStorage.
+    - `trades` is the filtered list every view computes from; `allTrades` is everything, used by the detail page and for `#BT-` numbering.
+    - The switch (`components/backtest/AgentRuns.tsx`) sits in the desktop Backtest header and at the top of the mobile Log. It only appears once an agent has logged something.
+    - This replaces the planned "Hide agent runs" toggle.
+  - Backend: `GET /api/backtest-strategies` excludes agent trades from `trades`/`winRate`/`avgR` and reports them separately as `agentTrades`/`agentWinRate`/`agentAvgR`.
+- **Blind mode** (`start_session { blind: true, lengthDays, from?, to? }`).
+  - The server picks a random window (default pool: the last 6 years).
+  - Times are shifted by whole weeks into 1990, so weekday and time of day stay real.
+  - Prices are scaled by a random factor (0.5–0.85 or 1.2–2.0).
+  - Agent inputs are mapped back to real values. Stored data is always real.
+  - Stored in `AgentReplaySession.blind`; logged trades get `BacktestTrade.blind = true`, a "(blind)" name suffix and an AGENT · BLIND badge.
+- **Load caps.**
+  - At most 10 active sessions per user.
+  - cTrader candle fetches run one at a time per user, at most 40 per minute (error code `RATE_LIMITED`).
+  - The candle cache fetches gaps in aligned 3000-bar blocks, so step-by-step replay rarely refetches. It holds about 600k candles, evicting least recently used.
+  - The MCP route is limited to 120 requests per minute per key.
+- **Other changes.**
+  - `get_candles` takes `before` to page further back.
+  - `step` reveals one bar when no `bars`/`untilPrice`/`untilTime` is given. With only an until-condition, it runs up to `maxBars`.
+  - A stop/target is only checked against price after the previous clock. A candle that opened before it (after a timeframe switch) is settled on smaller candles.
+  - The tag helpers (`normalizeTags`, `strategyAndTags`) moved to `backend/lib/backtestTags.js`.
+
+**Verified, without a live cTrader connection or database** (the sandbox couldn't reach MongoDB downloads):
+- Tested the engine against a synthetic candle feed. 60 trades, including ones across timeframe switches, all resolved the same way as a brute-force walk of the 1-minute data.
+- No returned candle ever closed after the clock. Forming candles were built only from revealed data.
+- Blind mode and the session guards behaved as expected.
+- Over HTTP, directly and through the Next.js `/api/[...path]` proxy: `initialize`, `tools/list` (15 tools) and `tools/call` work.
+- Keys get 401 on `/api/backtest-trades` and `/api/api-keys`. JWTs get 401 on `/api/mcp`. Keys in the URL are rejected, and revoked keys get 401.
+- The UI renders at desktop and phone widths.
+
+**Still to do: step 3.5.2 against the real local stack** (test database plus a connected cTrader).
+1. Create a key on the Accounts page.
+2. Run `claude mcp add ...`.
+3. Run a session end to end and confirm the AGENT badge in the Log.
+
+---
+
 ## 1. Repo and conventions (read first)
 
 **Layout**
@@ -52,7 +94,7 @@ The user chose:
 
 ---
 
-## 2. Done so far (uncommitted when this was written)
+## 2. Done before this build
 
 - **Packages:** `backend/package.json` gained **`@modelcontextprotocol/sdk@^1.30`** and **`zod@^4`**. SDK 1.30 accepts zod 4 shapes in `registerTool`.
 - **`backend/models/ApiKey.js`:**
@@ -64,7 +106,7 @@ The user chose:
 
 ---
 
-## 3. Remaining work
+## 3. Design (now built; see section 0 for changes)
 
 ### 3.1 `backend/lib/agentReplay.js`: server-side replay engine
 

@@ -19,6 +19,8 @@ const backtestTradeSchema = new mongoose.Schema({
   // the Backtest Log (label/symbol/direction/P&L/R only -- no prices);
   // 'agent' = placed by an AI agent through the MCP replay tools.
   source: { type: String, enum: ['replay', 'quick', 'agent'], default: 'replay' },
+  // Agent trades placed in a blind session (dates and prices hidden from the agent).
+  blind: { type: Boolean, default: false },
   symbol: { type: String, required: true },
   interval: { type: String, default: '' },
   direction: { type: String, enum: ['long', 'short'], required: true },

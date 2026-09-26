@@ -16,6 +16,8 @@ const knowledgeRouter = require('./routes/knowledge');
 const preTradeAnalysesRouter = require('./routes/preTradeAnalyses');
 const backtestTradesRouter = require('./routes/backtestTrades');
 const backtestStrategiesRouter = require('./routes/backtestStrategies');
+const apiKeysRouter = require('./routes/apiKeys');
+const mcpRouter = require('./routes/mcp');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -59,6 +61,8 @@ app.use('/api', knowledgeRouter);
 app.use('/api', preTradeAnalysesRouter);
 app.use('/api', backtestTradesRouter);
 app.use('/api', backtestStrategiesRouter);
+app.use('/api', apiKeysRouter);
+app.use('/api', mcpRouter);
 app.use('/api', tradesRouter);
 
 // Desktop Sync Agent download — serves the newest built .zip from

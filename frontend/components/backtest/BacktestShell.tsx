@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { AgentRunsToggle } from './AgentRuns';
 import { intervalLabel, useBacktest } from './data';
 import { useActiveSession } from './session';
 
@@ -68,8 +69,8 @@ export default function BacktestShell({ children }: { children: React.ReactNode 
             );
           })}
         </nav>
-        {/* Balances the title so the tabs stay centred. */}
-        <span className="tw:w-16 tw:shrink-0" aria-hidden="true" />
+        {/* Agent-runs view when agents have logged anything; otherwise balances the title so the tabs stay centred. */}
+        <div className="tw:shrink-0 tw:min-w-16 tw:flex tw:justify-end"><AgentRunsToggle /></div>
       </header>
 
       {/* Mobile: compact header */}

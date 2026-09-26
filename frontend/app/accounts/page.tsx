@@ -8,6 +8,7 @@ import {
   Users, Copy, ShieldOff, Check, TerminalSquare,
 } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
+import AgentKeys from '@/components/AgentKeys';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
 
@@ -669,6 +670,8 @@ export default function TradingAccountsPage() {
           {ctraderConnecting ? 'Connecting…' : 'Connect another cTrader account'}
         </button>
       )}
+
+      <AgentKeys />
     </main>
   );
 }

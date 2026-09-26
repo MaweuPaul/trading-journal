@@ -152,8 +152,8 @@ function SnapshotFallback({ trade, reason, loading }: { trade: BacktestTrade; re
 
 export default function BacktestDetail({ id }: { id: string }) {
   const router = useRouter();
-  const { trades, loading, removeTrade, updateTrade, strategies } = useBacktest();
-  const trade = trades.find(t => t._id === id);
+  const { allTrades, loading, removeTrade, updateTrade, strategies } = useBacktest();
+  const trade = allTrades.find(t => t._id === id);
   const chartRef = useRef<IChartApi | null>(null);
   const [stats, setStats] = useState<Excursion | null>(null);
   const [showLevels, setShowLevels] = useState(true);
@@ -163,7 +163,7 @@ export default function BacktestDetail({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
-  const ordered = useMemo(() => [...trades].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()), [trades]);
+  const ordered = useMemo(() => [...allTrades].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()), [allTrades]);
   const seq = ordered.findIndex(t => t._id === id);
   const prev = seq > 0 ? ordered[seq - 1] : null;
   const next = seq >= 0 && seq < ordered.length - 1 ? ordered[seq + 1] : null;
@@ -318,7 +318,7 @@ export default function BacktestDetail({ id }: { id: string }) {
           <div className={box}>
             <div className="tw:flex tw:items-center tw:justify-between tw:pb-2 tw:mb-2 tw:border-b tw:border-surface-container-highest">
               <div className="tw:flex tw:items-center tw:gap-1.5"><Icon name="calculate" className="tw:text-primary tw:text-[16px]" /><span className="tw:text-body-md tw:font-semibold tw:text-on-surface">Quant Metrics Matrix</span></div>
-              <span className="tw:px-1.5 tw:py-0.5 tw:rounded tw:bg-surface-container-highest tw:font-label-caps tw:text-label-caps tw:text-primary">{trade.source === 'quick' ? 'QUICK LOG' : 'SIM RECORD'}</span>
+              <span className="tw:px-1.5 tw:py-0.5 tw:rounded tw:bg-surface-container-highest tw:font-label-caps tw:text-label-caps tw:text-primary">{trade.source === 'quick' ? 'QUICK LOG' : trade.source === 'agent' ? `AGENT RUN${trade.blind ? ' · BLIND' : ''}` : 'SIM RECORD'}</span>
             </div>
             <div className="tw:grid tw:grid-cols-2 tw:gap-2">
               <div className={tile}><span className={capsLabel}>Direction</span><div className="tw:flex tw:items-center tw:gap-1.5 tw:mt-0.5"><span className={`tw:w-2 tw:h-2 tw:rounded-full ${trade.direction === 'long' ? 'tw:bg-secondary' : 'tw:bg-error'}`} /><span className={`tw:font-mono-metric-md tw:font-bold ${trade.direction === 'long' ? 'tw:text-secondary' : 'tw:text-error'}`}>{trade.direction.toUpperCase()}</span></div></div>

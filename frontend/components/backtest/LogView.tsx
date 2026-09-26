@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { AgentBadge, AgentRunsToggle } from './AgentRuns';
 import { Icon } from './BacktestShell';
 import { downloadLogCsv, downloadLogJson } from './exporting';
 import { useIsDesktop } from './layout';
@@ -32,7 +33,7 @@ function rChip(n: number) {
 
 export default function LogView() {
   const router = useRouter();
-  const { trades, loading, error, removeTrade, addTrade, strategies, setActiveSymbol } = useBacktest();
+  const { trades, allTrades, loading, error, removeTrade, addTrade, strategies, setActiveSymbol } = useBacktest();
   const [strategy, setStrategy] = useState('ALL');
   const [symbol, setSymbol] = useState('ALL');
   const [outcome, setOutcome] = useState<Outcome>('ALL');
@@ -85,9 +86,9 @@ export default function LogView() {
   const intervals = useMemo(() => Array.from(new Set(trades.map(t => t.interval).filter(Boolean))), [trades]);
   // Stable "#BT-0007" ids: numbered in the order backtests were logged.
   const seqById = useMemo(() => {
-    const ordered = [...trades].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const ordered = [...allTrades].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     return new Map(ordered.map((t, i) => [t._id, `#BT-${String(i + 1).padStart(4, '0')}`]));
-  }, [trades]);
+  }, [allTrades]);
   const thisWeek = useMemo(() => trades.filter(t => Date.now() - new Date(t.createdAt).getTime() < 7 * 86_400_000).length, [trades]);
 
   // KPIs follow the strategy/symbol/outcome filters, like the trade list.
@@ -277,6 +278,7 @@ export default function LogView() {
                         {isNew && <span className="tw:w-1.5 tw:h-1.5 tw:rounded-full tw:bg-primary tw:animate-pulse" title="Logged in the last 24h" />}
                         <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold ${isNew ? 'tw:text-primary' : 'tw:text-on-surface-variant'}`}>{seqById.get(t._id)}</span>
                         <span className="tw:text-on-surface tw:font-medium tw:truncate tw:max-w-[220px]" title={t.name}>{t.name || 'Untitled setup'}</span>
+                        <AgentBadge trade={t} />
                       </div>
                     </td>
                     {show('strategy') && (
@@ -382,6 +384,8 @@ export default function LogView() {
           </div>
         </div>
 
+        {/* On desktop this sits in the Backtest header instead. */}
+        <AgentRunsToggle size="lg" />
         {/* Filter ribbon */}
         <div className="tw:grid tw:grid-cols-2 tw:sm:grid-cols-4 tw:gap-space-xs">
           <div className="tw:relative">
@@ -518,6 +522,7 @@ export default function LogView() {
                     <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold tw:text-on-surface">{t.symbol}</span>
                     {t.interval && <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase tw:bg-surface-container-highest tw:px-space-xs tw:py-0.5 tw:rounded">{intervalLabel(t.interval)}</span>}
                     <span className="tw:font-body-md tw:text-body-md tw:font-semibold tw:text-on-surface tw:truncate">{t.name || 'Untitled setup'}</span>
+                    <AgentBadge trade={t} />
                   </div>
                   <div className="tw:flex tw:items-center tw:gap-space-sm tw:flex-shrink-0">
                     <span className={`tw:px-space-xs tw:py-0.5 tw:rounded tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${rChip(t.rMultiple)}`}>{fmtR(t.rMultiple)}</span>

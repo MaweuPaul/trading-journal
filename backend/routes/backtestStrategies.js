@@ -26,24 +26,31 @@ router.get('/backtest-strategies', auth, ownerOnly, async (req, res) => {
     const strategies = await BacktestStrategy.find({ user: req.user.userId }).sort({ name: 1 }).lean();
     const stats = await BacktestTrade.aggregate([
       { $match: { user: new mongoose.Types.ObjectId(req.user.userId), strategy: { $ne: '' } } },
-      { $group: { _id: '$strategy', trades: { $sum: 1 }, wins: { $sum: { $cond: [{ $eq: ['$outcome', 'win'] }, 1, 0] } }, totalR: { $sum: '$rMultiple' } } },
+      // Trades logged by AI agents (MCP) are counted separately, so they never
+      // move the owner's own numbers for a strategy.
+      { $group: {
+        _id: { strategy: '$strategy', agent: { $eq: ['$source', 'agent'] } },
+        trades: { $sum: 1 }, wins: { $sum: { $cond: [{ $eq: ['$outcome', 'win'] }, 1, 0] } }, totalR: { $sum: '$rMultiple' },
+      } },
     ]);
-    const statByName = new Map(stats.map(s => [s._id, s]));
-    const merged = strategies.map(s => {
-      const stat = statByName.get(s.name);
+    const own = new Map(stats.filter(s => !s._id.agent).map(s => [s._id.strategy, s]));
+    const agent = new Map(stats.filter(s => s._id.agent).map(s => [s._id.strategy, s]));
+    const statsFor = name => {
+      const stat = own.get(name), agentStat = agent.get(name);
       return {
-        ...s,
         trades: stat?.trades ?? 0,
         winRate: stat?.trades ? (stat.wins / stat.trades) * 100 : 0,
         avgR: stat?.trades ? stat.totalR / stat.trades : 0,
+        agentTrades: agentStat?.trades ?? 0,
+        agentWinRate: agentStat?.trades ? (agentStat.wins / agentStat.trades) * 100 : 0,
+        agentAvgR: agentStat?.trades ? agentStat.totalR / agentStat.trades : 0,
       };
-    });
+    };
+    const merged = strategies.map(s => ({ ...s, ...statsFor(s.name) }));
     // Strategies that only exist as trade tags (created the old way, before
     // this endpoint existed) still show up, just without a description.
-    for (const stat of stats) {
-      if (!strategies.some(s => s.name === stat._id)) {
-        merged.push({ _id: stat._id, name: stat._id, description: '', trades: stat.trades, winRate: (stat.wins / stat.trades) * 100, avgR: stat.totalR / stat.trades });
-      }
+    for (const name of new Set(stats.map(s => s._id.strategy))) {
+      if (!strategies.some(s => s.name === name)) merged.push({ _id: name, name, description: '', ...statsFor(name) });
     }
     merged.sort((a, b) => a.name.localeCompare(b.name));
     res.json({ strategies: merged });

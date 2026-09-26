@@ -35,7 +35,7 @@ function SessionLine({ d }: { d: WorkspaceDraft }) {
 
 /** Every strategy with its results, and a one-click way to continue testing it. */
 export default function StrategiesView() {
-  const { trades, strategies, strategyInfo, createStrategy, removeStrategy } = useBacktest();
+  const { trades, allTrades, strategies, strategyInfo, createStrategy, removeStrategy } = useBacktest();
   const sessions = useSessions();
   const [name, setName] = useState('');
   const [idea, setIdea] = useState('');
@@ -56,10 +56,17 @@ export default function StrategiesView() {
     setBusy(false);
     if (res.ok) { setName(''); setIdea(''); } else setError(res.error || 'Could not create the strategy');
   };
-  const remove = async (id: string, label: string) => {
-    if (!window.confirm(`Delete the strategy "${label}"? Backtests already logged with it keep their tag.`)) return;
-    const res = await removeStrategy(id);
-    if (!res.ok) setError(res.error || 'Could not delete the strategy');
+  const remove = async (label: string) => {
+    // Every logged backtest carrying the tag, whichever runs view is selected.
+    const tagged = allTrades.filter(t => tagsOf(t).includes(label)).length;
+    const message = tagged
+      ? `Delete the strategy "${label}"?\n\n${tagged} logged backtest${tagged === 1 ? ' is' : 's are'} tagged with it. The tag will be removed from ${tagged === 1 ? 'it' : 'them'}; the backtests themselves are kept.`
+      : `Delete the strategy "${label}"?`;
+    if (!window.confirm(message)) return;
+    setError('');
+    const res = await removeStrategy(label);
+    if (!res.ok) { setError(res.error || 'Could not delete the strategy'); return; }
+    clearDraft(sessionIdFor(label)); // its saved replay on this device
   };
 
   return (
@@ -96,10 +103,8 @@ export default function StrategiesView() {
                 <h2 className="tw:font-semibold tw:text-on-surface tw:truncate">{r.name}</h2>
                 {r.info?.description && <p className="tw:text-body-sm tw:text-on-surface-variant tw:mt-0.5">{r.info.description}</p>}
               </div>
-              {r.info?._id && r.info._id !== r.name && (
-                <button type="button" onClick={() => void remove(r.info!._id!, r.name)} title="Delete strategy" aria-label={`Delete ${r.name}`}
-                  className="tw:p-1 tw:rounded tw:text-on-surface-variant tw:hover:text-error tw:hover:bg-error/10"><Icon name="delete" className="tw:text-[18px]" /></button>
-              )}
+              <button type="button" onClick={() => void remove(r.name)} title="Delete strategy" aria-label={`Delete ${r.name}`}
+                className="tw:p-1 tw:rounded tw:text-on-surface-variant tw:hover:text-error tw:hover:bg-error/10"><Icon name="delete" className="tw:text-[18px]" /></button>
             </div>
 
             <div className="tw:grid tw:grid-cols-3 tw:gap-2 tw:text-center">

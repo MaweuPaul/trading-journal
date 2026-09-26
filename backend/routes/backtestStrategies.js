@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const BacktestStrategy = require('../models/BacktestStrategy');
 const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
+const { strategyAndTags } = require('../lib/backtestTags');
 
 function ownerOnly(req, res, next) {
   if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
@@ -83,6 +84,34 @@ router.delete('/backtest-strategies/:id', auth, ownerOnly, async (req, res) => {
     const result = await BacktestStrategy.deleteOne({ _id: req.params.id, user: req.user.userId });
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Strategy not found' });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not delete strategy' });
+  }
+});
+
+// Delete a strategy by name, whether or not it has a saved definition. Names
+// that only exist as tags on logged backtests keep reappearing in the list,
+// so with ?untag=1 the tag is also removed from every backtest carrying it
+// (the backtests themselves stay; their primary strategy becomes their next
+// tag, or none).
+router.delete('/backtest-strategies/by-name/:name', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
+  try {
+    const name = String(req.params.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Strategy name is required' });
+    const definition = await BacktestStrategy.deleteOne({ user: req.user.userId, name });
+    let untagged = 0;
+    if (req.query.untag === '1') {
+      const trades = await BacktestTrade.find({ user: req.user.userId, $or: [{ tags: name }, { strategy: name }] }).select('tags strategy').lean();
+      const ops = trades.map(t => {
+        const remaining = (t.tags && t.tags.length ? t.tags : [t.strategy]).filter(tag => tag && tag !== name);
+        return { updateOne: { filter: { _id: t._id, user: req.user.userId }, update: { $set: strategyAndTags('', remaining) } } };
+      });
+      if (ops.length) await BacktestTrade.bulkWrite(ops);
+      untagged = ops.length;
+    }
+    if (!definition.deletedCount && !untagged) return res.status(404).json({ error: 'Strategy not found' });
+    res.json({ ok: true, deletedDefinition: definition.deletedCount > 0, untagged });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not delete strategy' });
   }

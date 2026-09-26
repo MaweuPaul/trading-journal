@@ -52,6 +52,7 @@ require.cache[require.resolve('../lib/ctraderReplay')] = {
 function memoryModel(Model) {
   const store = new Map();
   const matches = (doc, query) => Object.entries(query).every(([key, want]) => {
+    if (key === '$or') return want.some(q => matches(doc, q));
     const val = doc[key];
     if (want && typeof want === 'object' && !(want instanceof mongoose.Types.ObjectId)) {
       if ('$in' in want) return want.$in.some(x => (x === null ? val == null : String(val) === String(x)));
@@ -96,6 +97,10 @@ function memoryModel(Model) {
     return hydrate(doc);
   };
   Model.aggregate = async () => [];
+  Model.bulkWrite = async ops => {
+    for (const { updateOne } of ops) { const doc = find(updateOne.filter)[0]; if (doc) Object.assign(doc, updateOne.update.$set); }
+    return {};
+  };
   Model.deleteOne = async query => { const doc = find(query)[0]; if (doc) store.delete(String(doc._id)); return { deletedCount: doc ? 1 : 0 }; };
   Model.store = store;
   return Model;

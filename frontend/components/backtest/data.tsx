@@ -85,7 +85,8 @@ interface BacktestData {
   strategyInfo: StrategyInfo[];
   createStrategy: (name: string, description?: string) => Promise<{ ok: boolean; error?: string }>;
   /** Deletes the strategy definition; logged backtests keep their tag. */
-  removeStrategy: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Deletes the strategy (its definition, if any) and removes its tag from every backtest carrying it. */
+  removeStrategy: (name: string) => Promise<{ ok: boolean; error?: string; untagged?: number }>;
   simBalance: number;
   activeSymbol: string;
   setActiveSymbol: (symbol: string) => void;
@@ -205,17 +206,18 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     }
   }, [reloadStrategies]);
 
-  const removeStrategy = useCallback(async (id: string) => {
+  const removeStrategy = useCallback(async (name: string) => {
     try {
-      const res = await fetch(`/api/backtest-strategies/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+      const res = await fetch(`/api/backtest-strategies/by-name/${encodeURIComponent(name)}?untag=1`, { method: 'DELETE', headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, error: data.error || 'Could not delete strategy' };
-      await reloadStrategies();
-      return { ok: true };
+      if (currentStrategy === name) setCurrentStrategy('');
+      await Promise.all([reloadStrategies(), data.untagged ? reload() : Promise.resolve()]);
+      return { ok: true, untagged: Number(data.untagged) || 0 };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'Could not delete strategy' };
     }
-  }, [reloadStrategies]);
+  }, [reloadStrategies, reload, currentStrategy, setCurrentStrategy]);
 
   const value = useMemo<BacktestData>(() => {
     // Merge backend-defined strategies with any ad-hoc tags used on trades

@@ -1105,27 +1105,6 @@ export default function Workspace() {
               </div>
             )}
           </section>
-
-          {/* 3. Drawing tools strip */}
-          <section className="tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:px-gutter tw:py-1 tw:bg-surface-container-low tw:text-body-sm tw:text-on-surface-variant tw:gap-space-xs">
-            <div className="tw:flex tw:items-center tw:gap-space-xs tw:overflow-x-auto tw:no-scrollbar" role="toolbar" aria-label="Drawing tools">
-              {WORKSPACE_TOOLS.map(t => railTool(t, 'tw:p-1 tw:rounded', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:text-on-surface'))}
-            </div>
-            <div className="tw:flex tw:items-center tw:gap-space-xs">
-              <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Style</span>
-              <div className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:p-1 tw:rounded" role="radiogroup" aria-label="Drawing color">
-                {STYLE_SWATCHES.map(s => (
-                  <button key={s.color} type="button" role="radio" aria-checked={drawColor === s.color} aria-label={s.label} title={s.label} onClick={() => pickColor(s.color)}
-                    className={`tw:w-3 tw:h-3 tw:rounded-full ${s.cls} ${drawColor === s.color ? 'tw:ring-2 tw:ring-primary/40' : ''}`} />
-                ))}
-              </div>
-              {selectedDrawingId && (
-                <button type="button" onClick={deleteSelectedDrawing} title="Delete selected drawing" aria-label="Delete selected drawing" className="tw:p-1 tw:rounded tw:text-on-surface-variant tw:hover:text-error"><Icon name="delete" className="tw:text-[16px]" /></button>
-              )}
-              <button type="button" onClick={undoDrawing} disabled={!historyDepth} title="Undo" aria-label="Undo drawing" className="tw:p-1 tw:rounded tw:text-on-surface-variant tw:hover:text-on-surface tw:disabled:opacity-40"><Icon name="undo" className="tw:text-[16px]" /></button>
-              <button type="button" onClick={clearAllDrawings} disabled={!drawingCount} title="Clear shapes" aria-label="Clear all drawings" className="tw:p-1 tw:rounded tw:text-on-surface-variant tw:hover:text-on-surface tw:disabled:opacity-40"><Icon name="delete_sweep" className="tw:text-[16px]" /></button>
-            </div>
-          </section>
         </>
       ) : (
         <>
@@ -1207,20 +1186,35 @@ export default function Workspace() {
 
       {/* Chart canvas dock -- same element in both views so the chart survives tab switches. */}
       <div className="tw:relative tw:w-full tw:flex tw:bg-surface-container-lowest">
-        {view === 'chart' && (
-          <aside className="tw:w-9 tw:bg-surface-container-low tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-space-xs tw:shrink-0 tw:z-20 tw:shadow-md" aria-label="Drawing tools">
-            {RAIL_TOOLS.map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
-            <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1" />
-            <button type="button" onClick={() => setMagnet(m => !m)} aria-pressed={magnet} title="Magnet mode (snap to OHLC)" aria-label="Magnet mode"
-              className={`tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center ${magnet ? 'tw:bg-surface-container-high tw:text-primary' : 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'}`}>
-              <Icon name="all_inclusive" className="tw:text-[16px]" />
-            </button>
-            <button type="button" onClick={clearAllDrawings} disabled={!drawingCount} title="Clear canvas markups" aria-label="Clear all drawings"
-              className="tw:w-7 tw:h-7 tw:rounded tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:flex tw:items-center tw:justify-center tw:disabled:opacity-40">
+        <aside className="tw:w-9 tw:bg-surface-container-low tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-space-xs tw:shrink-0 tw:z-20 tw:shadow-md tw:overflow-y-auto tw:no-scrollbar" aria-label="Drawing tools">
+          {(view === 'chart' ? RAIL_TOOLS : WORKSPACE_TOOLS).map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
+          <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1 tw:shrink-0" />
+          <button type="button" onClick={() => setMagnet(m => !m)} aria-pressed={magnet} title="Magnet mode (snap to OHLC)" aria-label="Magnet mode"
+            className={`tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 ${magnet ? 'tw:bg-surface-container-high tw:text-primary' : 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'}`}>
+            <Icon name="all_inclusive" className="tw:text-[16px]" />
+          </button>
+          {selectedDrawingId && (
+            <button type="button" onClick={deleteSelectedDrawing} title="Delete selected drawing" aria-label="Delete selected drawing"
+              className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error">
               <Icon name="delete" className="tw:text-[16px]" />
             </button>
-          </aside>
-        )}
+          )}
+          <button type="button" onClick={undoDrawing} disabled={!historyDepth} title="Undo" aria-label="Undo drawing"
+            className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface tw:disabled:opacity-40">
+            <Icon name="undo" className="tw:text-[16px]" />
+          </button>
+          <button type="button" onClick={clearAllDrawings} disabled={!drawingCount} title="Clear canvas markups" aria-label="Clear all drawings"
+            className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:disabled:opacity-40">
+            <Icon name="delete_sweep" className="tw:text-[16px]" />
+          </button>
+          <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1 tw:shrink-0" />
+          <div className="tw:flex tw:flex-col tw:items-center tw:gap-1 tw:p-1 tw:bg-surface-container-lowest tw:rounded" role="radiogroup" aria-label="Drawing color">
+            {STYLE_SWATCHES.map(s => (
+              <button key={s.color} type="button" role="radio" aria-checked={drawColor === s.color} aria-label={s.label} title={s.label} onClick={() => pickColor(s.color)}
+                className={`tw:w-3 tw:h-3 tw:rounded-full tw:shrink-0 ${s.cls} ${drawColor === s.color ? 'tw:ring-2 tw:ring-primary/40' : ''}`} />
+            ))}
+          </div>
+        </aside>
         <div className={`tw:relative tw:flex-1 tw:min-w-0 ${view === 'chart' ? 'tw:h-[clamp(360px,calc(100dvh-400px),860px)]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
           onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />

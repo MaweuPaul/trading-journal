@@ -8,7 +8,7 @@ import {
 import {
   DollarSign, TrendingUp, TrendingDown, Activity,
   Award, AlertTriangle, Percent, BarChart2, ShieldAlert, Zap, Calendar,
-  Database, RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
+  RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
@@ -502,19 +502,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-actions">
-            {/* 'Recover Screenshots' and 'Clear database' are intentionally not
-               exposed as buttons — rarely needed day-to-day and, in the case
-               of Clear database, the most destructive action on this page.
-               Both callMaintenance('recoverscreenshots'/'clear') handlers and
-               their backend routes are still fully intact if needed again. */}
-            <button className="btn btn-ghost" onClick={() => callMaintenance('dedupe')} disabled={Boolean(maintenanceBusy)}>
-              <Database size={14} />
-              {maintenanceBusy === 'dedupe' ? 'Cleaning...' : 'Remove duplicates'}
-            </button>
-            <button className="btn btn-ghost" onClick={() => callMaintenance('fixbalances')} disabled={Boolean(maintenanceBusy)} title="Re-calculate running balance for all trades from your actual MT5 balance">
-              <Wallet size={14} />
-              {maintenanceBusy === 'fixbalances' ? 'Fixing...' : 'Fix Balances'}
-            </button>
+            {/* 'Remove duplicates', 'Fix Balances', 'Recover Screenshots' and 'Clear
+               database' are intentionally not exposed as buttons — rarely needed
+               day-to-day and, in the case of Clear database, the most destructive
+               action on this page. Their callMaintenance(...) handlers and backend
+               routes are still fully intact if needed again. */}
             <button className="btn btn-primary" onClick={() => callMaintenance('resync')} disabled={Boolean(maintenanceBusy)}>
               <RefreshCw size={14} />
               {maintenanceBusy === 'resync' ? 'Requesting...' : 'Resync'}

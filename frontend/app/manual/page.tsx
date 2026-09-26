@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BookMarked, Download } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -17,7 +17,7 @@ const SECTIONS: Section[] = [
   { id: 'pretrade', num: '08', route: '/pretrade', group: 'Strategy', title: 'Pre-Trade Analysis' },
   { id: 'knowledge', num: '09', route: '/knowledge', group: 'Strategy', title: 'Knowledge Base' },
   { id: 'backtest', num: '10', route: '/backtest', group: 'Strategy', title: 'Backtest' },
-  { id: 'ai-agents', num: '11', route: '/api/mcp', group: 'Strategy', title: 'AI agent backtesting' },
+  { id: 'ai-agents', num: '11', route: '/api/mcp', group: 'Strategy', title: 'AI agents (experimental)' },
   { id: 'accounts', num: '12', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
   { id: 'backup', num: '13', route: '/archive', group: 'Account & data', title: 'Backup & export' },
   { id: 'investor', num: '14', route: '/investor', group: 'Account & data', title: 'Investor mode' },
@@ -55,19 +55,26 @@ function Code({ children }: { children: string }) {
   return <pre className="manual-code"><code>{children}</code></pre>;
 }
 
-const CLAUDE_CODE_CMD = `claude mcp add --transport http tradejournal \\
-  https://YOUR-JOURNAL-ADDRESS/api/mcp \\
+// The manual is served by the same site the MCP endpoint lives on, so the
+// snippets show this installation's real address.
+const noSubscribe = () => () => {};
+function useMcpUrl() {
+  return useSyncExternalStore(noSubscribe, () => `${window.location.origin}/api/mcp`, () => 'https://YOUR-JOURNAL-ADDRESS/api/mcp');
+}
+const claudeCodeCmd = (url: string) => `claude mcp add --transport http tradejournal \\
+  ${url} \\
   --header "Authorization: Bearer tjk_YOUR_KEY"`;
-const DESKTOP_CONFIG = `{
+const desktopConfig = (url: string) => `{
   "mcpServers": {
     "tradejournal": {
       "command": "npx",
       "args": [
         "-y",
         "mcp-remote",
-        "https://YOUR-JOURNAL-ADDRESS/api/mcp",
+        "${url}",
         "--transport",
-        "http-only",
+        "http-only",${url.startsWith('http://') ? `
+        "--allow-http",` : ''}
         "--header",
         "Authorization:\${TJ_AUTH}"
       ],
@@ -77,7 +84,7 @@ const DESKTOP_CONFIG = `{
     }
   }
 }`;
-const AGENT_HEADERS = `POST https://YOUR-JOURNAL-ADDRESS/api/mcp
+const agentHeaders = (url: string) => `POST ${url}
 Authorization: Bearer tjk_YOUR_KEY
 Content-Type: application/json
 Accept: application/json, text/event-stream`;
@@ -101,6 +108,7 @@ function Chapter({ id, num, route, title, purpose, children }: { id: string; num
 }
 
 export default function ManualPage() {
+  const mcpUrl = useMcpUrl();
   const [active, setActive] = useState('getting-started');
   const observerRef = useRef<IntersectionObserver | null>(null);
 
@@ -370,12 +378,13 @@ export default function ManualPage() {
             <Callout icon="Note">Backtest trades never touch your real account balance or history — they&apos;re entirely separate from the synced trades everywhere else in the app.</Callout>
           </Chapter>
 
-          <Chapter id="ai-agents" num="11" route="/api/mcp" title="AI agent backtesting" purpose="Connect Claude Code, Claude Desktop or your own AI agent so it can backtest a strategy for you: replaying cTrader history bar by bar with the future hidden, placing simulated trades, and logging them to your Backtest Log.">
+          <Chapter id="ai-agents" num="11" route="/api/mcp" title="AI agent backtesting (experimental)" purpose="Connect Claude Code, Claude Desktop or your own AI agent so it can backtest a strategy for you: replaying cTrader history bar by bar with the future hidden, placing simulated trades, and logging them to your Backtest Log.">
+            <Callout icon="Experimental" warn>This is an <b>experimental feature</b>. It works, but it&apos;s new and may change: tool names, limits and behaviour can shift between updates, and you may hit rough edges. Treat agent results as a second opinion to check, not a verdict. They&apos;re kept out of your own stats for exactly that reason.</Callout>
             <div className="manual-sub">Before you start</div>
             <ul className="manual-feature-list">
               <li><b>cTrader connected</b> on the Accounts page. It supplies the historical candles; without it every session fails with &quot;cTrader is not connected&quot;.</li>
               <li><b>At least one strategy with a description</b> (Backtest → Strategies). The agent reads the description as the rules it must follow, so write it the way you&apos;d explain the setup to another trader: entry trigger, stop placement, target, and when not to trade.</li>
-              <li><b>Your journal&apos;s address.</b> The MCP address is the address you open the journal at, plus <code>/api/mcp</code>. For example <code>https://my-journal.example.com/api/mcp</code>, or <code>http://localhost:3000/api/mcp</code> when running it on your own computer.</li>
+              <li><b>This journal&apos;s MCP address</b> is <code>{mcpUrl}</code>. It&apos;s already filled into every example below, so you only need to swap in your key. (Claude runs on your own computer, so it has to be told where your journal lives; that&apos;s why the address appears in the setup at all.)</li>
             </ul>
 
             <div className="manual-sub">Step 1 · Create an access key</div>
@@ -389,9 +398,9 @@ export default function ManualPage() {
             <div className="manual-sub">Step 2a · Connect Claude Code</div>
             <ol className="manual-steps">
               <li><b>Open a terminal</b><span className="d">Any folder works; the connection is saved to your Claude Code settings.</span></li>
-              <li><b>Run the command from the Accounts card</b><span className="d">It looks like this, with your address and key in place:</span></li>
+              <li><b>Run the command from the Accounts card</b><span className="d">The Accounts card shows it with your key filled in. It looks like this (<code>tjk_YOUR_KEY</code> is where your key goes):</span></li>
             </ol>
-            <Code>{CLAUDE_CODE_CMD}</Code>
+            <Code>{claudeCodeCmd(mcpUrl)}</Code>
             <ol className="manual-steps" start={3} style={{ counterReset: 'mstep 2' }}>
               <li><b>Check the connection</b><span className="d">Start <code>claude</code> and type <code>/mcp</code>. <code>tradejournal</code> should be listed as connected, with 15 tools.</span></li>
             </ol>
@@ -403,7 +412,7 @@ export default function ManualPage() {
               <li><b>Open Claude Desktop&apos;s config file</b><span className="d">In Claude Desktop go to <b>Settings → Developer → Edit Config</b>. This opens <code>claude_desktop_config.json</code>. On a Mac it lives in <code>~/Library/Application Support/Claude/</code>; on Windows in <code>%APPDATA%\Claude\</code>.</span></li>
               <li><b>Paste the config from the Accounts card</b><span className="d">Use the <b>Copy config</b> button: your address and key are already filled in. It looks like this. If the file already has an <code>mcpServers</code> section, add the <code>&quot;tradejournal&quot;: {'{ … }'}</code> part inside it rather than pasting a second one.</span></li>
             </ol>
-            <Code>{DESKTOP_CONFIG}</Code>
+            <Code>{desktopConfig(mcpUrl)}</Code>
             <ol className="manual-steps" start={4} style={{ counterReset: 'mstep 3' }}>
               <li><b>Save the file and restart Claude Desktop</b><span className="d">Fully quit it (on Mac, Claude → Quit; on Windows, right-click the tray icon → Quit), then open it again. Closing the window isn&apos;t enough.</span></li>
               <li><b>Check the connection</b><span className="d">In a new chat, open the tools menu (the sliders icon under the message box). <b>tradejournal</b> should be listed with its tools. The first time the agent uses a tool, Claude asks for permission: choose <b>Allow always</b> to avoid being asked on every step.</span></li>
@@ -412,7 +421,7 @@ export default function ManualPage() {
 
             <div className="manual-sub">Step 2c · Connect your own agent</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Any MCP client that supports the Streamable HTTP transport can connect. Send JSON-RPC requests with these headers, starting with <code>initialize</code>, then <code>tools/list</code> and <code>tools/call</code>:</p>
-            <Code>{AGENT_HEADERS}</Code>
+            <Code>{agentHeaders(mcpUrl)}</Code>
             <ul className="manual-feature-list">
               <li>The key is only accepted in the <code>Authorization</code> header, never in the address (addresses end up in server logs).</li>
               <li>claude.ai in the browser can&apos;t connect yet: its custom connectors need an OAuth sign-in, which the journal doesn&apos;t offer.</li>

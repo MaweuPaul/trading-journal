@@ -43,7 +43,7 @@ const cfg = {
 const RULES = `Daily FVG Retracement (smc-strategy-lab). Long only. Bullish D1 fair value gap: low[i+1] > high[i-1], known once bar i+1 closes. `
   + `Buy the first later D1 bar whose range trades back into the gap (one shot per gap; gaps touched during an open trade are used up)`
   + `${cfg.bias ? `, only while ${cfg.biasTf.toUpperCase()} BOS/CHoCH structure (LuxAlgo, pivot size ${cfg.biasSize}) is bullish` : ''}. `
-  + `Stop: gap bottom minus ${cfg.atrMult} x D1 ATR14 as of gap formation. Target: ${cfg.rr}R. One trade at a time.`;
+  + `Stop: gap bottom minus the symbol's ATR buffer x D1 ATR14 as of gap formation (1.0 for metals, 0.25 for indices; --atr-mult). Target: ${cfg.rr}R. One trade at a time.`;
 
 // ── MCP client (same as orb_ny_open_mcp.js) ────────────────────────────────
 let rpcId = 0;
@@ -209,7 +209,7 @@ function structureTrend(bars, len) {
         await call('log_trade', {
           sessionId: sid,
           name: `Daily FVG ${bars[k].time.slice(0, 10)} ${cfg.symbol} Long`,
-          notes: `Bullish D1 FVG ${trigger.bottom}-${trigger.top} formed ${trigger.formedTime.slice(0, 10)} (ATR14 ${trigger.atr.toFixed(2)}). `
+          notes: `Bullish D1 FVG ${trigger.bottom}-${trigger.top} formed ${trigger.formedTime.slice(0, 10)} (ATR14 ${trigger.atr.toFixed(2)}, stop buffer ${cfg.atrMult} ATR). `
             + `Price traded back into it on ${bars[k].time.slice(0, 10)} (low ${bars[k].low}). ${cfg.bias ? `${cfg.biasTf.toUpperCase()} structure bullish. ` : ''}`
             + `Stop = gap bottom - ${cfg.atrMult} ATR, target ${cfg.rr}R.`,
           planFollowed: true,

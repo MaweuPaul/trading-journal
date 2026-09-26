@@ -16,9 +16,10 @@ const SECTIONS: Section[] = [
   { id: 'playbooks', num: '07', route: '/rules', group: 'Strategy', title: 'Playbooks' },
   { id: 'pretrade', num: '08', route: '/pretrade', group: 'Strategy', title: 'Pre-Trade Analysis' },
   { id: 'knowledge', num: '09', route: '/knowledge', group: 'Strategy', title: 'Knowledge Base' },
-  { id: 'accounts', num: '10', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
-  { id: 'backup', num: '11', route: '/archive', group: 'Account & data', title: 'Backup & export' },
-  { id: 'investor', num: '12', route: '/investor', group: 'Account & data', title: 'Investor mode' },
+  { id: 'backtest', num: '10', route: '/backtest', group: 'Strategy', title: 'Backtest' },
+  { id: 'accounts', num: '11', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
+  { id: 'backup', num: '12', route: '/archive', group: 'Account & data', title: 'Backup & export' },
+  { id: 'investor', num: '13', route: '/investor', group: 'Account & data', title: 'Investor mode' },
   { id: 'glossary', num: '—', title: 'Glossary' },
 ];
 
@@ -131,7 +132,7 @@ export default function ManualPage() {
             <h1>Everything TradeJournal does, page by page.</h1>
             <p className="lede">TradeJournal syncs your closed trades from MT5 or cTrader, then helps you turn that history into an edge — through statistics, a chart-annotated pre-trade checklist, and a coach that looks for the psychological patterns behind your P&amp;L.</p>
             <div className="manual-intro-stack">
-              <div className="item"><b>12</b> sections</div>
+              <div className="item"><b>13</b> sections</div>
               <div className="item"><b>MT5 + cTrader</b> data sources</div>
               <div className="item"><b>Owner &amp; investor</b> access levels</div>
             </div>
@@ -206,10 +207,10 @@ export default function ManualPage() {
 
           <Chapter id="calendar" num="03" route="/calendar" title="Calendar" purpose="A month grid of daily P&L, for spotting the days and weeks that actually make or break your month.">
             <ul className="manual-feature-list">
-              <li>Monthly summary: <b>Net P&amp;L</b>, <b>Consistency Score</b> (% of green days), <b>Best Day</b>, <b>Worst Day</b>.</li>
-              <li>Each day cell shows trade count, net $ (green/red), and either avg R or win rate for that day.</li>
+              <li>Each day cell shows net $ (colored by win/loss), trade count, and either <b>avg R</b> or <b>win rate</b> for that day — avg R is shown whenever at least one of that day&apos;s trades has a recorded stop-loss (so a real R-multiple can be computed); otherwise the cell falls back to that day&apos;s win rate (winning trades ÷ total trades for the day).</li>
+              <li>A <b>Weekly P&amp;L</b> column runs down the right edge of the grid — each box sits in the exact same row as the 7 days it summarizes, so Week 3&apos;s box is always beside Week 3&apos;s row, not just listed in order.</li>
+              <li>Below the grid, a flat stats line totals the month: <b>Month P&amp;L</b>, <b>Total Trades</b>, <b>Profit Days</b>, <b>Loss Days</b>, <b>Day Win Rate</b> (% of trading days that closed net positive).</li>
               <li>Filter by <b>Symbol</b>, <b>Setup Grade</b> (F is labeled &quot;Boredom&quot; setups), and <b>Trading account</b>.</li>
-              <li>A weekly rollup strip below the grid totals each row&apos;s P&amp;L and active trading days.</li>
               <li>Click any day with trades to open a drawer listing that day&apos;s trades, each with its own Replay button.</li>
             </ul>
             <Callout icon="Tip">The small &quot;Jump to:&quot; date field does double duty — pick a date and it both flips the calendar to that month <i>and</i> opens that day&apos;s trade drawer in one step. Empty days aren&apos;t clickable.</Callout>
@@ -308,7 +309,31 @@ export default function ManualPage() {
             <Callout icon="Order matters" warn>A brand-new entry has to be saved once before you can attach screenshots to it — the drawer will prompt you to save first.</Callout>
           </Chapter>
 
-          <Chapter id="accounts" num="10" route="/accounts" title="Accounts & syncing" purpose="Where every broker connection, the Desktop Sync App, and investor access are all managed.">
+          <Chapter id="backtest" num="10" route="/backtest" title="Backtest" purpose="Replay historical candles, practice entries against a strategy without risking real money, and see whether the setup actually has an edge.">
+            <div className="manual-sub">Workspace</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>One unified view — chart, indicators, and trade execution live together; there&apos;s no separate &quot;Chart&quot; tab to switch to.</p>
+            <ul className="manual-feature-list">
+              <li>Pick a <b>symbol</b>, a past <b>date range</b>, and a <b>timeframe</b>, then Load Chart. The Historical Bar Replay bar steps candle-by-candle (or auto-plays at 0.5x–10x) up to that point in history.</li>
+              <li><b>+ Long</b> / <b>+ Short</b> places a hypothetical position at a clicked price with a risk amount you set; <b>Log Setup</b> saves the outcome once it&apos;s closed.</li>
+              <li><b>Indicators</b> — EMA 20/50/200, RSI (14), and Volume, toggled independently — plus a candlestick/line chart-type switch and price alerts.</li>
+              <li>Full drawing toolset: trend line, ray, horizontal line, rectangle/zone, parallel channel, Fibonacci retracement/extension, arrow, measure, and text notes, with undo/clear and a color picker.</li>
+              <li>A session — chart position, drawings, and any open hypothetical trade — <b>autosaves</b> locally; leaving mid-backtest offers to resume it next time.</li>
+            </ul>
+            <div className="manual-sub">Strategies</div>
+            <ul className="manual-feature-list">
+              <li>A card grid of every strategy you&apos;ve named, each showing its trade count, win rate, and avg R.</li>
+              <li>Clicking a strategy sets it as the <b>active strategy</b> (shown as a badge in the header) and drops you into Workspace with it pre-applied — every trade you log from there tags itself with that strategy automatically, until you pick a different one.</li>
+              <li><b>New Strategy</b> names a setup once, with optional rules/notes, so it exists before you&apos;ve logged a single trade against it.</li>
+            </ul>
+            <div className="manual-sub">Log &amp; Metrics</div>
+            <ul className="manual-feature-list">
+              <li><b>Log</b> lists every saved backtest, filterable by strategy, symbol, and outcome, with search and sort; each row opens an inspector with its snapshot and a &quot;Load in Workspace&quot; button.</li>
+              <li><b>Metrics</b> — Profit Factor, Expectancy, SQN Rating, Avg Win/Loss, plus Sharpe, Sortino, Calmar, Half Kelly, Annualized R, and Volatility, all computed from your backtest log.</li>
+            </ul>
+            <Callout icon="Note">Backtest trades never touch your real account balance or history — they&apos;re entirely separate from the synced trades everywhere else in the app.</Callout>
+          </Chapter>
+
+          <Chapter id="accounts" num="11" route="/accounts" title="Accounts & syncing" purpose="Where every broker connection, the Desktop Sync App, and investor access are all managed.">
             <div className="manual-sub">Connecting MT5</div>
             <ol className="manual-steps">
               <li><b>Add account</b><span className="d">Give it a label, your MT5 login number, broker server, and your MT5 <i>investor</i> (read-only) password — never your trading password.</span></li>
@@ -330,17 +355,16 @@ export default function ManualPage() {
             </ul>
           </Chapter>
 
-          <Chapter id="backup" num="11" route="/archive" title="Backup & export" purpose="Health-check your stored data and pull a full export — this page reads and downloads, it doesn't restore.">
+          <Chapter id="backup" num="12" route="/archive" title="Backup & export" purpose="Confirm your data is safe and pull a full export — this page reads and downloads, it doesn't restore.">
             <ul className="manual-feature-list">
-              <li><b>Database Status</b> — live badge: Database Connected, or Offline (Local Cache) if the app has fallen back to a local copy.</li>
-              <li><b>Local JSON Mirror</b> — the server automatically mirrors all trade data to its own disk on startup and every 24 hours.</li>
-              <li><b>Screenshot redundancy</b> — every screenshot is backed by embedded metadata, a sidecar metadata file, and offline disk storage that auto-uploads once you&apos;re back online.</li>
+              <li>A single status strip confirms your trade count is backed up, with a Refresh button and the last-updated time — the account-level and database-internal detail behind that lives on the server, not in front of you.</li>
+              <li>If any screenshots are still uploading from an earlier offline moment, a banner shows how many are pending; they finish syncing automatically once you&apos;re back online.</li>
               <li><b>Download JSON</b> — a full backup suitable for restoring into a fresh database. <b>Download CSV</b> — trade fields for Excel or Sheets.</li>
             </ul>
             <Callout icon="One-way only" warn>There&apos;s no restore/import button on this page, even though the JSON export is restore-capable. Treat this page as export-only.</Callout>
           </Chapter>
 
-          <Chapter id="investor" num="12" route="/investor" title="Investor mode" purpose="A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.">
+          <Chapter id="investor" num="13" route="/investor" title="Investor mode" purpose="A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.">
             <div className="manual-sub">What the investor sees</div>
             <KvGrid items={[
               { label: 'Balance', value: 'Live' },

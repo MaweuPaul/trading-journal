@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -111,11 +112,20 @@ if (!process.env.MONGODB_URI) {
     ' MONGODB_URI is not set or is empty. Operating in OFFLINE mode using local_trades.json.',
   );
 } else {
-  console.log(' Connecting to MongoDB...');
+  // Same cluster/credentials, different database, opt-in only: nothing
+  // changes for any existing deployment (dev or production) unless it sets
+  // USE_TEST_DATABASE=true (or NODE_ENV=test) -- switching the default the
+  // other way (test unless NODE_ENV=production) would silently strand a
+  // production deployment that doesn't happen to set NODE_ENV at all.
+  const useTestDatabase = process.env.NODE_ENV === 'test' || String(process.env.USE_TEST_DATABASE || '').toLowerCase() === 'true';
+  const dbName = useTestDatabase
+    ? (process.env.MONGODB_TEST_DB_NAME || 'tradejournal_test')
+    : (process.env.MONGODB_DB_NAME || undefined);
+  console.log(` Connecting to MongoDB${dbName ? ` (database: ${dbName})` : ''}...`);
   mongoose
-    .connect(process.env.MONGODB_URI)
+    .connect(process.env.MONGODB_URI, dbName ? { dbName } : {})
     .then(async () => {
-      console.log(' MongoDB connected');
+      console.log(` MongoDB connected — using database "${mongoose.connection.name}"${useTestDatabase ? ' (TEST -- USE_TEST_DATABASE is set)' : ''}`);
 
       // Optionally seed the very first account from environment variables
       // (useful for a scripted first deploy); otherwise the database starts

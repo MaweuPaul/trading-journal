@@ -17,6 +17,8 @@
 //
 // Options: --atr-mult 1.0 --rr 2 --bias on|off --bias-tf 4h --bias-size 5
 //          --risk 100 --rpm 110 --no-log
+//          --skip-close-below-gap   (v2 rule: no entry when the trigger day
+//                                    closes below the gap's bottom)
 // Node 18+; no dependencies.
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -38,6 +40,9 @@ const cfg = {
   risk: Number(args.risk || 100),
   rpm: Number(args.rpm || 110),
   log: !args['no-log'],
+  // v2: skip the setup when the trigger day closes below the gap's bottom
+  // (the gap failed to hold; found on gold, silver and USTEC).
+  skipCloseBelowGap: Boolean(args['skip-close-below-gap']),
   strategy: args.strategy || 'Daily FVG Retracement',
 };
 const RULES = `Daily FVG Retracement (smc-strategy-lab). Long only. Bullish D1 fair value gap: low[i+1] > high[i-1], known once bar i+1 closes. `
@@ -127,15 +132,19 @@ function structureTrend(bars, len) {
 // ── The strategy ───────────────────────────────────────────────────────────
 (async () => {
   await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'daily-fvg', version: '1' } });
-  console.log(`Daily FVG Retracement on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ atrMult: cfg.atrMult, rr: cfg.rr, bias: cfg.bias ? `${cfg.biasTf} size ${cfg.biasSize}` : 'off' }));
-  if (cfg.log) await call('create_strategy', { name: cfg.strategy, description: RULES.slice(0, 500) });
+  console.log(`Daily FVG Retracement on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ atrMult: cfg.atrMult, rr: cfg.rr, bias: cfg.bias ? `${cfg.biasTf} size ${cfg.biasSize}` : 'off', rules: cfg.skipCloseBelowGap ? 'v2 (skip close below gap)' : 'v1' }));
+  // Create the strategy on first use only; later rule versions are managed with update_strategy_rules.
+  if (cfg.log) {
+    const existing = (await call('list_strategies')).strategies.find(s => s.name === cfg.strategy);
+    if (!existing) await call('create_strategy', { name: cfg.strategy, description: RULES.slice(0, 500) });
+  }
 
   const session = await call('start_session', { symbol: cfg.symbol, interval: '1day', from: cfg.from, to: cfg.to, strategy: cfg.log ? cfg.strategy : undefined, context: 300 });
   const sid = session.sessionId;
   const bars = session.candles.map(c => ({ ...c, t: toSec(c.time) }));
   const gaps = []; // { bottom, top, formedAt (index), atr, formedTime }
   const results = [];
-  const stats = { gaps: 0, triggers: 0, biasBlocked: 0, invalidStop: 0, usedDuringTrade: 0 };
+  const stats = { gaps: 0, triggers: 0, biasBlocked: 0, closedBelowGap: 0, invalidStop: 0, usedDuringTrade: 0 };
   let processed = 0;
 
   // Detect/consume gaps on bars [processed, bars.length). Returns the gap the
@@ -175,6 +184,7 @@ function structureTrend(bars, len) {
       stats.triggers++;
 
       const k = bars.length - 1, entry = bars[k].close;
+      if (cfg.skipCloseBelowGap && entry < trigger.bottom) { stats.closedBelowGap++; continue; }
       if (cfg.bias) {
         const h = await call('get_candles', { sessionId: sid, timeframe: cfg.biasTf, count: 500 });
         const trend = structureTrend(h.candles, cfg.biasSize);
@@ -189,6 +199,7 @@ function structureTrend(bars, len) {
         retraceDepth: +((trigger.top - bars[k].low) / (trigger.top - trigger.bottom)).toFixed(3), // 0 = just touched the top, 1+ = through the bottom
         stopDistAtr: +((entry - stop) / trigger.atr).toFixed(3),
         closeInGap: bars[k].close <= trigger.top,
+        closedBelowGap: bars[k].close < trigger.bottom,
       };
       await call('open_trade', { sessionId: sid, direction: 'long', stopLoss: stop, takeProfit: target, riskAmount: cfg.risk, features });
       const run = await call('step', { sessionId: sid, bars: 5000 });

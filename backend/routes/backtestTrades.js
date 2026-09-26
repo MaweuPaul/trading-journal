@@ -31,7 +31,7 @@ function normalizeTags(input) {
   const seen = new Set();
   const tags = [];
   for (const raw of input) {
-    const tag = String(raw || '').trim().replace(/^#+/, '').replace(/s+/g, ' ').slice(0, 40);
+    const tag = String(raw || '').trim().replace(/^#+/, '').replace(/\s+/g, ' ').slice(0, 40);
     const key = tag.toLowerCase();
     if (!tag || seen.has(key)) continue;
     seen.add(key);

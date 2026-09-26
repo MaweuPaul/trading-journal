@@ -39,7 +39,7 @@ Everything in section 3 is implemented. Section 3 below still describes the desi
   - A stop/target is only checked against price after the previous clock. A candle that opened before it (after a timeframe switch) is settled on smaller candles.
   - The tag helpers (`normalizeTags`, `strategyAndTags`) moved to `backend/lib/backtestTags.js`.
 
-**Verified, without a live cTrader connection or database** (the sandbox couldn't reach MongoDB downloads):
+**Verified, without a live cTrader connection or database** (the sandbox couldn't reach MongoDB downloads). These checks now live in `backend/test/agentReplay.test.js` and `backend/test/mcpRoute.test.js` (run `npm test` in `backend/`), using the stub harness in `backend/fixtures/agentReplayHarness.js`:
 - Tested the engine against a synthetic candle feed. 60 trades, including ones across timeframe switches, all resolved the same way as a brute-force walk of the 1-minute data.
 - No returned candle ever closed after the clock. Forming candles were built only from revealed data.
 - Blind mode and the session guards behaved as expected.

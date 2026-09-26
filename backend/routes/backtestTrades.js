@@ -5,6 +5,7 @@ const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
 const { getTrendbars } = require('../lib/ctraderReplay');
 const { normalizeBacktestDrawings } = require('../lib/backtestDrawings');
+const { normalizeTags, strategyAndTags } = require('../lib/backtestTags');
 
 function ownerOnly(req, res, next) {
   if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
@@ -22,30 +23,6 @@ function isOffline(req) {
 }
 function offlineResponse(res) {
   return res.status(503).json({ error: 'Backtest logging needs a connected database. It is unavailable while running offline.' });
-}
-
-// Strategy tags: "#ICT-SilverBullet" and "ICT-SilverBullet" are the same tag.
-// Up to 10 per trade, de-duplicated case-insensitively, first one wins.
-function normalizeTags(input) {
-  if (!Array.isArray(input)) return [];
-  const seen = new Set();
-  const tags = [];
-  for (const raw of input) {
-    const tag = String(raw || '').trim().replace(/^#+/, '').replace(/\s+/g, ' ').slice(0, 40);
-    const key = tag.toLowerCase();
-    if (!tag || seen.has(key)) continue;
-    seen.add(key);
-    tags.push(tag);
-    if (tags.length >= 10) break;
-  }
-  return tags;
-}
-// Keep `strategy` (primary) and `tags` consistent: strategy is always tags[0].
-function strategyAndTags(strategy, tags) {
-  const normalized = normalizeTags(tags);
-  const primary = String(strategy || '').trim().slice(0, 80);
-  if (!normalized.length && primary) normalized.push(primary);
-  return { strategy: normalized[0] || '', tags: normalized };
 }
 
 const MAX_SNAPSHOT_CHARS = 400_000; // ~300 KB JPEG

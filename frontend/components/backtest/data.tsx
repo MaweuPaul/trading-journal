@@ -53,6 +53,8 @@ export function fmtDate(iso: string | number) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+export interface StrategyInfo { name: string; description: string; trades: number; winRate: number; avgR: number; }
+
 interface BacktestData {
   trades: BacktestTrade[];
   loading: boolean;
@@ -61,6 +63,8 @@ interface BacktestData {
   removeTrade: (id: string) => Promise<boolean>;
   addTrade: (trade: BacktestTrade) => void;
   strategies: string[];
+  strategyInfo: StrategyInfo[];
+  createStrategy: (name: string, description?: string) => Promise<{ ok: boolean; error?: string }>;
   simBalance: number;
   activeSymbol: string;
   setActiveSymbol: (symbol: string) => void;
@@ -79,6 +83,15 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeSymbol, setActiveSymbolState] = useState('XAUUSD');
+  const [strategyInfo, setStrategyInfo] = useState<StrategyInfo[]>([]);
+
+  const reloadStrategies = useCallback(async () => {
+    try {
+      const res = await fetch('/api/backtest-strategies', { headers: authHeaders() });
+      const data = await res.json();
+      if (res.ok) setStrategyInfo(Array.isArray(data.strategies) ? data.strategies : []);
+    } catch { /* strategies are a nice-to-have list; a failed fetch just leaves it empty */ }
+  }, []);
 
   const reload = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -102,7 +115,8 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage
     if (stored) setActiveSymbolState(stored);
     void reload();
-  }, [reload]);
+    void reloadStrategies();
+  }, [reload, reloadStrategies]);
 
   const setActiveSymbol = useCallback((symbol: string) => {
     const clean = symbol.trim().toUpperCase();
@@ -118,11 +132,30 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const addTrade = useCallback((trade: BacktestTrade) => setTrades(current => [trade, ...current]), []);
 
+  const createStrategy = useCallback(async (name: string, description = '') => {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, error: 'Strategy name is required' };
+    try {
+      const res = await fetch('/api/backtest-strategies', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ name: trimmed, description }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, error: data.error || 'Could not create strategy' };
+      await reloadStrategies();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Could not create strategy' };
+    }
+  }, [reloadStrategies]);
+
   const value = useMemo<BacktestData>(() => {
-    const strategies = Array.from(new Set(trades.flatMap(tagsOf))).sort((a, b) => a.localeCompare(b));
+    // Merge backend-defined strategies with any ad-hoc tags used on trades
+    // before this feature existed, so older data keeps showing up.
+    const strategies = Array.from(new Set([...strategyInfo.map(s => s.name), ...trades.flatMap(tagsOf)])).sort((a, b) => a.localeCompare(b));
     const simBalance = SIM_STARTING_BALANCE + trades.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    return { trades, loading, error, reload, removeTrade, addTrade, strategies, simBalance, activeSymbol, setActiveSymbol };
-  }, [trades, loading, error, reload, removeTrade, addTrade, activeSymbol, setActiveSymbol]);
+    return { trades, loading, error, reload, removeTrade, addTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol };
+  }, [trades, loading, error, reload, removeTrade, addTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol]);
 
   return <BacktestContext.Provider value={value}>{children}</BacktestContext.Provider>;
 }

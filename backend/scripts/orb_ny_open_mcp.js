@@ -57,11 +57,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function rpc(method, params) {
   for (let attempt = 0; ; attempt++) {
     await throttle();
-    const res = await fetch(URL_, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
-    });
+    let res;
+    try {
+      res = await fetch(URL_, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      // A dropped connection shouldn't end a long run. Note: a retried step may
+      // already have run on the server; the replay then just continues from there.
+      if (attempt < 6) { process.stdout.write(` [network error: ${err.cause?.code || err.message}; retrying]`); await sleep(5_000 * 2 ** attempt); continue; }
+      throw err;
+    }
+    // Server restarts / gateway hiccups (e.g. a redeploy) are retried too.
+    if ([502, 503, 504].includes(res.status) && attempt < 6) { await sleep(5_000 * 2 ** attempt); continue; }
     if (res.status === 429 && attempt < 10) { await sleep(20_000); continue; }
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body.error) throw new Error(`${method}: HTTP ${res.status} ${JSON.stringify(body.error || body).slice(0, 300)}`);

@@ -54,6 +54,12 @@ const DAY = 86_400_000;
 // replay gets within PREFETCH_BARS of the end of what's loaded.
 const CHUNK_BARS = 1500;
 const PREFETCH_BARS = 300;
+// A timeframe switch only needs a small window around the replay clock
+// (history before it streams in on scroll, the future as the replay runs),
+// and the other timeframes around the clock are prefetched in the background
+// so switching is usually served straight from the cache.
+const SWITCH_BACK_BARS = 300;
+const SWITCH_AHEAD_BARS = 400;
 const barMsOf = (tf: string) => (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * DAY;
 
 /** Did this candle trade through the trade's stop / target? */
@@ -63,6 +69,20 @@ function levelsHit(c: Candle, t: OpenTrade) {
     sl: long ? c.low <= t.stopLoss : c.high >= t.stopLoss,
     tp: t.takeProfit != null && (long ? c.high >= t.takeProfit : c.low <= t.takeProfit),
   };
+}
+/**
+ * Quietly cache the window a timeframe switch would need, for every other
+ * timeframe, one request at a time -- so switching is usually instant.
+ */
+let prefetchToken = 0;
+async function prefetchOtherTimeframes(symbol: string, current: string, clockMs: number) {
+  const token = ++prefetchToken;
+  for (const { value: tf } of CHART_INTERVALS) {
+    if (tf === current) continue;
+    if (token !== prefetchToken) return; // a newer prefetch superseded this one
+    const bar = barMsOf(tf);
+    try { await getCandles(symbol, tf, clockMs - SWITCH_BACK_BARS * bar, clockMs + SWITCH_AHEAD_BARS * bar, authHeaders()); } catch { /* best effort */ }
+  }
 }
 const FINER: Record<string, string> = { '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
 /**
@@ -151,8 +171,12 @@ export default function Workspace() {
   const candlesRef = useRef<Candle[] | null>(null);
   useEffect(() => { candlesRef.current = candles; }, [candles]);
   // What the loaded candles belong to, and how far ahead they reach.
-  const sessionRef = useRef<{ symbol: string; interval: string; fromMs: number; toMs: number; loadedToMs: number } | null>(null);
+  const sessionRef = useRef<{ symbol: string; interval: string; fromMs: number; toMs: number; loadedFromMs: number; loadedToMs: number; olderDone?: boolean } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Older history loaded on scroll: in-flight flag, and the loader the
+  // chart's scroll handler calls.
+  const loadingOlderRef = useRef(false);
+  const loadOlderRef = useRef<() => void>(() => undefined);
   const [analysisStartIdx, setAnalysisStartIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -372,21 +396,24 @@ export default function Workspace() {
       .then(loaded => {
         if (!loaded.length) { setError(`cTrader returned no ${trimmed} candles for that range.`); setLoading(false); return; }
         const startIdx = Math.max(0, loaded.findIndex(c => Number(c.time) >= fromMs / 1000));
-        sessionRef.current = { ...target, loadedToMs: firstPageToMs };
+        sessionRef.current = { ...target, loadedFromMs: fetchFromMs, loadedToMs: firstPageToMs };
         setAnalysisStartIdx(startIdx);
         setCandles(loaded);
         setChartEpoch(e => e + 1);
         // pendingRestoreRef is deliberately NOT cleared here -- the chart-creation
         // effect runs after this commits and still needs it to import drawings.
+        let at: number;
         if (restoring) {
           const idx = resumeAtMs != null ? nearestCandleIndex(loaded, resumeAtMs / 1000) : restoring.replayIdx;
-          setReplayIdx(Math.max(0, Math.min(loaded.length - 1, idx)));
+          at = Math.max(0, Math.min(loaded.length - 1, idx));
           setOpenTrade(restoring.openTrade);
           setBacktestName(restoring.backtestName); setNotes(restoring.notes); setTags(restoring.tags);
         } else {
-          setReplayIdx(Math.min(loaded.length - 1, startIdx + 40));
+          at = Math.min(loaded.length - 1, startIdx + 40);
         }
+        setReplayIdx(at);
         setLoading(false);
+        void prefetchOtherTimeframes(trimmed, overrideInterval, Number(loaded[at].time) * 1000 + bar);
       })
       .catch(e => {
         setError(e instanceof Error ? e.message : 'Network error');
@@ -412,8 +439,10 @@ export default function Workspace() {
     const sessionToMs = new Date(toDate).getTime() + DAY;
     // Window: 300 candles of context before the clock and a page ahead; more
     // streams in as the replay advances.
-    const fetchFromMs = clock * 1000 - 300 * newSec * 1000;
-    const fetchToMs = Math.min(sessionToMs, clock * 1000 + CHUNK_BARS * newSec * 1000);
+    const fetchFromMs = clock * 1000 - SWITCH_BACK_BARS * newSec * 1000;
+    // Only what's needed to show the chart now; the candles ahead stream in
+    // through auto-load (usually straight from the prefetch cache).
+    const fetchToMs = Math.min(sessionToMs, clock * 1000 + 2 * newSec * 1000);
     const drawings = managerRef.current?.exportDrawings() ?? [];
     const sym = symbol.trim().toUpperCase();
     setLoading(true); setPlaying(false); setPlacingDirection(null); setMeasureRange(null);
@@ -441,7 +470,7 @@ export default function Workspace() {
         }
         if (idx < 0) { setToast('No candles for that timeframe at this point in the replay'); setLoading(false); return; }
         pendingRestoreRef.current = { drawings } as unknown as WorkspaceDraft;
-        sessionRef.current = { symbol: sym, interval: tf, fromMs: sessionFromMs, toMs: sessionToMs, loadedToMs: fetchToMs };
+        sessionRef.current = { symbol: sym, interval: tf, fromMs: sessionFromMs, toMs: sessionToMs, loadedFromMs: fetchFromMs, loadedToMs: fetchToMs };
         setInterval_(tf);
         setAnalysisStartIdx(Math.max(0, loaded.findIndex(c => Number(c.time) * 1000 >= sessionFromMs)));
         setCandles(loaded);
@@ -449,6 +478,7 @@ export default function Workspace() {
         setPartial(built);
         setReplayIdx(idx);
         setLoading(false);
+        void prefetchOtherTimeframes(sym, tf, clock * 1000);
       })
       .catch(e => { setToast(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
   };
@@ -545,14 +575,17 @@ export default function Workspace() {
     const redraw = () => requestAnimationFrame(() => redrawCanvasRef.current());
     const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); syncCanvas(); redraw(); });
     ro.observe(el);
-    chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
+    // Scrolling near the left edge pulls in older history (the past is open;
+    // only the future is hidden).
+    const onRange = (r: { from: number; to: number } | null) => { redraw(); if (r && r.from < 30) loadOlderRef.current(); };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
     return () => {
       unsubscribers.forEach(unsub => unsub());
       chart.unsubscribeCrosshairMove(onCrosshair);
       manager.detach();
       managerRef.current = null;
       ro.disconnect();
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
     };
@@ -611,7 +644,57 @@ export default function Workspace() {
       const v = indicatorData.rsi[i];
       return v == null ? [] : [{ time: c.time, value: v }];
     }));
+    // The chart keeps its zoom as a fixed number of bar slots anchored to the
+    // latest candle, so with fewer candles revealed than that (after stepping
+    // or scrubbing back) the left of the chart would sit empty. Pull the view
+    // back so it starts at the first candle.
+    const ts = chartRef.current?.timeScale();
+    const range = ts?.getVisibleLogicalRange();
+    // (Older candles added in front need no adjustment: the chart keeps the
+    // view anchored to the latest candle when data changes.)
+    if (ts && range && range.from < 0) {
+      const span = range.to - range.from;
+      if (shown.length <= span) ts.fitContent();
+      else ts.setVisibleLogicalRange({ from: 0, to: span });
+    }
   }, [candles, replayIdx, partial, indicatorData, resolvedTheme, indicators.rsi]);
+
+  // Right-click menu on the chart.
+  const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
+  /** Back to the default zoom, scrolled to the current candle, with price auto-scaling. */
+  const resetChartView = () => {
+    const chart = chartRef.current; if (!chart) return;
+    chart.timeScale().resetTimeScale();
+    chart.priceScale('right').applyOptions({ autoScale: true });
+  };
+  const fitAllCandles = () => chartRef.current?.timeScale().fitContent();
+  const menuItem = 'tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left';
+
+  // ── Older history on demand: prepend the page before what's loaded ────────
+  useEffect(() => {
+    loadOlderRef.current = () => {
+      const s = sessionRef.current;
+      if (!s || s.olderDone || loadingOlderRef.current || loading) return;
+      loadingOlderRef.current = true;
+      const to = s.loadedFromMs, from = to - CHUNK_BARS * barMsOf(s.interval);
+      getCandles(s.symbol, s.interval, from, to, authHeaders())
+        .then(older => {
+          if (sessionRef.current !== s) return; // switched away meanwhile
+          s.loadedFromMs = from;
+          const first = candlesRef.current?.[0];
+          const fresh = first ? older.filter(c => Number(c.time) < Number(first.time)) : older;
+          // A whole page with no candles means we've reached the start of the broker's history.
+          if (!fresh.length) { if (!older.length) s.olderDone = true; return; }
+          const n = fresh.length;
+          setCandles(prev => (prev ? [...fresh, ...prev] : prev));
+          setReplayIdx(i => i + n);
+          setAnalysisStartIdx(i => i + n);
+          setPartial(p => (p ? { ...p, idx: p.idx + n } : p));
+        })
+        .catch(() => { /* scrolling back again retries */ })
+        .finally(() => { loadingOlderRef.current = false; });
+    };
+  }, [loading]);
 
   // Fit to the revealed data on a fresh load only (not on every replay step),
   // so the chart ends on the current candle with nothing hanging off the right.
@@ -1007,14 +1090,15 @@ export default function Workspace() {
   // ── Derived display values ─────────────────────────────────────────────────
   const total = candles?.length ?? 0;
   const current = barAt(replayIdx) ?? null;
-  const legendCandle = candles && hoverIdx != null && hoverIdx <= replayIdx ? barAt(hoverIdx) ?? null : current;
-  const legendPrev = candles && legendCandle ? candles[Math.max(0, candles.indexOf(legendCandle) - 1)] : null;
+  // Work by index: the rebuilt forming candle isn't an element of `candles`.
+  const legendIdx = candles ? (hoverIdx != null && hoverIdx <= replayIdx ? hoverIdx : replayIdx) : -1;
+  const legendCandle = legendIdx >= 0 ? barAt(legendIdx) ?? null : null;
+  const legendPrev = candles && legendIdx > 0 ? barAt(legendIdx - 1) ?? null : null;
   const progressPct = total ? ((replayIdx + 1) / total) * 100 : 0;
   const analysisBars = total ? replayIdx - analysisStartIdx + 1 : 0;
   const analysisTotal = total ? total - analysisStartIdx : 0;
   const desc = symbolDescription(symbol);
   const sessionChangePct = candles && current && candles[analysisStartIdx] ? ((current.close - candles[analysisStartIdx].open) / candles[analysisStartIdx].open) * 100 : 0;
-  const legendIdx = legendCandle && candles ? candles.indexOf(legendCandle) : -1;
   const emaValues = indicatorData && legendIdx >= 0 ? indicatorData.emas.map(v => v[legendIdx]) : [];
   const rsiValue = indicatorData && legendIdx >= 0 ? indicatorData.rsi[legendIdx] : null;
   const rr = openTrade?.takeProfit != null ? Math.abs(openTrade.takeProfit - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss) : 0;
@@ -1536,8 +1620,28 @@ export default function Workspace() {
         <div className="tw:relative tw:flex-1 tw:min-w-0 tw:flex tw:flex-col">
           {isDesktop && desktopLegend}
           <div className={`tw:relative tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
-            onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
+            onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}
+            onContextMenu={e => {
+              if (!candles) return;
+              e.preventDefault();
+              const r = e.currentTarget.getBoundingClientRect();
+              setChartMenu({ x: e.clientX - r.left, y: e.clientY - r.top });
+            }}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />
+          {chartMenu && (
+            <>
+              <div className="tw:fixed tw:inset-0 tw:z-40" onMouseDown={() => setChartMenu(null)} onContextMenu={e => { e.preventDefault(); setChartMenu(null); }} />
+              <div role="menu" aria-label="Chart" className="tw:absolute tw:z-50 tw:min-w-44 tw:py-1 tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded-lg tw:shadow-lg"
+                style={{ left: chartMenu.x, top: chartMenu.y }}>
+                <button type="button" role="menuitem" onClick={() => { resetChartView(); setChartMenu(null); }} className={menuItem}>
+                  <Icon name="restart_alt" className="tw:text-[16px] tw:text-on-surface-variant" />Reset chart
+                </button>
+                <button type="button" role="menuitem" onClick={() => { fitAllCandles(); setChartMenu(null); }} className={menuItem}>
+                  <Icon name="fit_screen" className="tw:text-[16px] tw:text-on-surface-variant" />Fit all candles
+                </button>
+              </div>
+            </>
+          )}
           {candles && indicators.ema && !isDesktop && (
             <div className="tw:absolute tw:top-2 tw:right-2 tw:z-10 tw:flex tw:flex-wrap tw:items-center tw:gap-space-sm tw:bg-surface-container-lowest/80 tw:backdrop-blur-md tw:px-space-sm tw:py-1 tw:rounded tw:pointer-events-none">
               {EMA_CONFIG.map((cfg, k) => (

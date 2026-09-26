@@ -345,20 +345,6 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* Monthly Performance Summary Bar */}
-      <div className="stat-grid" style={{ marginBottom: 20 }}>
-        {metricCards.map(c => (
-          <div className={`stat-card ${c.cardCls}`} key={c.label}>
-            <div className={`stat-icon ${c.iconCls}`}>
-              <c.icon size={14} />
-            </div>
-            <div className="stat-label">{c.label}</div>
-            <div className={`stat-value ${c.cls}`}>{c.value}</div>
-            <div className="stat-sub">{c.sub}</div>
-          </div>
-        ))}
-      </div>
-
       {/* Calendar Filter Tools Row */}
       <div className="filters-bar">
         <div className="filter-group">
@@ -412,100 +398,124 @@ export default function CalendarPage() {
 
       {/* Monthly Grid Card */}
       <div className="calendar-card">
-        {/* Calendar Navigation Toolbar */}
-        <div className="calendar-toolbar">
-          <div className="calendar-month-title">
-            {MONTHS[month]} {year}
-          </div>
-          
-          <div className="calendar-controls" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            {/* Jump to Specific Date Picker Tool */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px' }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Jump to:</span>
-              <input
-                type="date"
-                onChange={e => handleJumpToDate(e.target.value)}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: 'var(--text-secondary)',
-                  outline: 'none',
-                  cursor: 'pointer',
-                  padding: 0
-                }}
-              />
+        <div className="calendar-body-flex">
+          <div className="calendar-main">
+            {/* Calendar Navigation Toolbar */}
+            <div className="calendar-toolbar">
+              <div className="calendar-month-title">
+                {MONTHS[month]} {year}
+              </div>
+
+              <div className="calendar-controls" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {/* Jump to Specific Date Picker Tool */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Jump to:</span>
+                  <input
+                    type="date"
+                    onChange={e => handleJumpToDate(e.target.value)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  />
+                </div>
+
+                <button className="page-btn" onClick={prevMonth}>
+                  <ChevronLeft size={16} />
+                </button>
+                <button className="page-btn" onClick={() => { setCurrentDate(new Date()); setSelectedDateStr(null); }} style={{ fontSize: 11, fontWeight: 600 }}>
+                  Today
+                </button>
+                <button className="page-btn" onClick={nextMonth}>
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
 
-            <button className="page-btn" onClick={prevMonth}>
-              <ChevronLeft size={16} />
-            </button>
-            <button className="page-btn" onClick={() => { setCurrentDate(new Date()); setSelectedDateStr(null); }} style={{ fontSize: 11, fontWeight: 600 }}>
-              Today
-            </button>
-            <button className="page-btn" onClick={nextMonth}>
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        </div>
+            {/* Days of week header */}
+            <div className="calendar-weekday-row">
+              {WEEKDAYS.map(day => <div key={day}>{day}</div>)}
+            </div>
 
-        {/* Days of week header */}
-        <div className="calendar-weekday-row">
-          {WEEKDAYS.map(day => <div key={day}>{day}</div>)}
-        </div>
+            {/* Grid Cells */}
+            {loading ? (
+              <div className="loading-wrap" style={{ minHeight: 280 }}><div className="spinner" /></div>
+            ) : (
+              <div className="calendar-grid">
+                {cells.map((cell, idx) => {
+                  if (cell.isEmpty) {
+                    return <div key={`empty-${idx}`} className="calendar-day empty" />;
+                  }
 
-        {/* Grid Cells */}
-        {loading ? (
-          <div className="loading-wrap" style={{ minHeight: 280 }}><div className="spinner" /></div>
-        ) : (
-          <div className="calendar-grid">
-            {cells.map((cell, idx) => {
-              if (cell.isEmpty) {
-                return <div key={`empty-${idx}`} className="calendar-day empty" />;
-              }
+                  const stats = calendarStats[cell.dateStr];
+                  const statsExist = !!stats && stats.tradesCount > 0;
+                  const isProfit = statsExist && stats.pnl >= 0;
 
-              const stats = calendarStats[cell.dateStr];
-              const statsExist = !!stats && stats.tradesCount > 0;
-              const isProfit = statsExist && stats.pnl >= 0;
+                  return (
+                    <div
+                      key={cell.dateStr}
+                      className={`calendar-day ${statsExist ? 'active-day' : ''} ${statsExist ? (isProfit ? 'profit-day' : 'loss-day') : ''}`}
+                      onClick={() => handleDayClick(cell.dateStr, statsExist)}
+                    >
+                      <span className="day-num">{cell.day}</span>
 
-              return (
-                <div
-                  key={cell.dateStr}
-                  className={`calendar-day ${statsExist ? 'active-day' : ''} ${statsExist ? (isProfit ? 'profit-day' : 'loss-day') : ''}`}
-                  onClick={() => handleDayClick(cell.dateStr, statsExist)}
-                >
-                  <span className="day-num">{cell.day}</span>
-                  
-                  {statsExist && (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
-                      <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
-                      <span className="day-pnl">
-                        {stats.pnl >= 0 ? '+' : ''}${Math.abs(stats.pnl).toFixed(0)}
-                      </span>
-                      <span className="day-sub-metric">
-                        {stats.avgR !== null
-                          ? `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`
-                          : `${stats.winRate.toFixed(1)}%`}
-                      </span>
+                      {statsExist && (
+                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
+                          <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
+                          <span className="day-pnl">
+                            {stats.pnl >= 0 ? '+' : ''}${Math.abs(stats.pnl).toFixed(0)}
+                          </span>
+                          <span className="day-sub-metric">
+                            {stats.avgR !== null
+                              ? `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`
+                              : `${stats.winRate.toFixed(1)}%`}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Weekly P&L Rollup Strip */}
+          {/* Side panel: weekly P&L boxes, one beside each grid row */}
+          {!loading && (
+            <div className="calendar-side">
+              <span className="calendar-side-title">Weekly P&amp;L</span>
+              <div className="calendar-side-spacer" />
+              <div className="calendar-side-weeks">
+                {weeklyRollup.map((week, idx) => (
+                  <div className={`calendar-side-week-box ${week.days === 0 ? '' : week.pnl >= 0 ? 'profit' : 'loss'}`} key={idx}>
+                    <span className="calendar-weekly-label">Week {idx + 1}</span>
+                    <span className={`calendar-weekly-pnl ${week.days === 0 ? 'muted' : week.pnl >= 0 ? 'positive' : 'negative'}`}>
+                      {week.days === 0 ? '—' : `${week.pnl >= 0 ? '+' : ''}$${Math.abs(week.pnl).toFixed(1)}`}
+                    </span>
+                    <span className="calendar-weekly-days">{week.days} day{week.days === 1 ? '' : 's'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Monthly metric boxes, below the calendar + weekly side panel */}
         {!loading && (
-          <div className="calendar-weekly-rollup">
-            {weeklyRollup.map((week, idx) => (
-              <div className="calendar-weekly-cell" key={idx}>
-                <span className="calendar-weekly-label">Week {idx + 1}</span>
-                <span className={`calendar-weekly-pnl ${week.days === 0 ? 'muted' : week.pnl >= 0 ? 'positive' : 'negative'}`}>
-                  {week.days === 0 ? '—' : `${week.pnl >= 0 ? '+' : ''}$${Math.abs(week.pnl).toFixed(1)}`}
-                </span>
-                <span className="calendar-weekly-days">{week.days} day{week.days === 1 ? '' : 's'}</span>
+          <div className="calendar-metrics-row">
+            {metricCards.map(c => (
+              <div className={`stat-card ${c.cardCls}`} key={c.label}>
+                <div className={`stat-icon ${c.iconCls}`}>
+                  <c.icon size={14} />
+                </div>
+                <div className="stat-label">{c.label}</div>
+                <div className={`stat-value ${c.cls}`}>{c.value}</div>
+                <div className="stat-sub">{c.sub}</div>
               </div>
             ))}
           </div>

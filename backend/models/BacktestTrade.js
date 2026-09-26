@@ -16,8 +16,9 @@ const backtestTradeSchema = new mongoose.Schema({
   strategy: { type: String, default: '', index: true },
   tags: { type: [String], default: [], index: true },
   // 'replay' = placed on the Backtest chart; 'quick' = logged by hand from
-  // the Backtest Log (label/symbol/direction/P&L/R only -- no prices).
-  source: { type: String, enum: ['replay', 'quick'], default: 'replay' },
+  // the Backtest Log (label/symbol/direction/P&L/R only -- no prices);
+  // 'agent' = placed by an AI agent through the MCP replay tools.
+  source: { type: String, enum: ['replay', 'quick', 'agent'], default: 'replay' },
   symbol: { type: String, required: true },
   interval: { type: String, default: '' },
   direction: { type: String, enum: ['long', 'short'], required: true },

@@ -39,6 +39,12 @@ Everything in section 3 is implemented. Section 3 below still describes the desi
   - A stop/target is only checked against price after the previous clock. A candle that opened before it (after a timeframe switch) is settled on smaller candles.
   - The tag helpers (`normalizeTags`, `strategyAndTags`) moved to `backend/lib/backtestTags.js`.
 
+- **Wider backtest access (added later).**
+  - The Backtest Log (`lib/agentBacktestLog.js`): `list_backtests`, `get_backtest` (with the snapshot image), `update_backtest` (journal fields only), `delete_backtest` (agent-logged trades only), `delete_strategy` (definition only).
+  - `get_metrics` has the Metrics page's statistics, filters and `groupBy`.
+  - In the engine: `place_order`/`cancel_order` (limit and stop entries, filled on 1-minute candles), `modify_trade` (R stays measured from `initialStopLoss`), and `get_indicators`.
+  - Blind-session trades never expose real dates, prices or snapshots through the log tools, and are left out of date-filtered queries.
+
 **Verified, without a live cTrader connection or database** (the sandbox couldn't reach MongoDB downloads). These checks now live in `backend/test/agentReplay.test.js` and `backend/test/mcpRoute.test.js` (run `npm test` in `backend/`), using the stub harness in `backend/fixtures/agentReplayHarness.js`:
 - Tested the engine against a synthetic candle feed. 60 trades, including ones across timeframe switches, all resolved the same way as a brute-force walk of the 1-minute data.
 - No returned candle ever closed after the clock. Forming candles were built only from revealed data.

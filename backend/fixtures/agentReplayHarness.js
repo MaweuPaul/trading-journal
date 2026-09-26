@@ -96,6 +96,7 @@ function memoryModel(Model) {
     return hydrate(doc);
   };
   Model.aggregate = async () => [];
+  Model.deleteOne = async query => { const doc = find(query)[0]; if (doc) store.delete(String(doc._id)); return { deletedCount: doc ? 1 : 0 }; };
   Model.store = store;
   return Model;
 }

@@ -8,6 +8,7 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const ApiKey = require('../models/ApiKey');
 const replay = require('../lib/agentReplay');
+const backtestLog = require('../lib/agentBacktestLog');
 
 // POST /api/mcp -- a Model Context Protocol server (stateless Streamable HTTP)
 // that lets AI agents backtest on the owner's behalf: replay history bar by
@@ -60,6 +61,11 @@ function toolResult(fn) {
   return async args => {
     try {
       const result = await fn(args || {});
+      // A handler can attach images (e.g. a backtest's chart snapshot) next to its JSON.
+      if (result && Array.isArray(result.images)) {
+        const { images, ...rest } = result;
+        return { content: [{ type: 'text', text: JSON.stringify(rest) }, ...images.map(img => ({ type: 'image', data: img.data, mimeType: img.mimeType }))] };
+      }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (err) {
       let message = err.message || 'Something went wrong.';
@@ -85,7 +91,8 @@ function buildServer(userId, apiKeyId) {
       instructions: [
         'Backtest trading strategies on historical candles from the journal owner\'s cTrader account, bar by bar.',
         NO_HINDSIGHT,
-        'Typical loop: start_session -> read candles -> step until a setup forms -> open_trade -> step with a large bars value (stopOnTradeExit stops at the exit) -> log_trade -> repeat. Finish with end_session and get_metrics.',
+        'Typical loop: start_session -> read candles (get_indicators for EMA/RSI/ATR/Bollinger) -> step until a setup forms -> open_trade at market, or place_order for a limit/stop entry -> step with a large bars value (stopOnTradeExit stops at the exit), moving the stop with modify_trade if the rules say so -> log_trade -> repeat. Finish with end_session and get_metrics.',
+        'You can also work with the whole Backtest Log: list_backtests and get_backtest read every logged backtest (the owner\'s and agents\'), update_backtest edits journal fields such as notes and lessons, and get_metrics breaks results down by strategy, symbol, direction, weekday, hour, month, timeframe or source.',
         'Prefer step with bars/untilPrice/untilTime over one call per candle: calls are rate limited.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
         'Trades you log are marked as agent runs and kept apart from the owner\'s own backtest statistics.',
@@ -135,7 +142,7 @@ function buildServer(userId, apiKeyId) {
   tool('step', 'Step the replay',
     'Reveal the next candles in the session timeframe, resolving any open trade against each one (a candle touching both stop and target is settled on smaller candles, down to 1 minute; if still ambiguous, the stop). '
     + 'Without bars/untilPrice/untilTime it reveals one candle. To avoid one call per candle: pass bars (up to maxBars), untilPrice (stop on the candle that trades through it) or untilTime; '
-    + 'with stopOnTradeExit (default true) it stops as soon as an open trade exits. Returns the revealed candles (last 200), events (trade_closed, price_reached, time_reached, session_end) and the session state.',
+    + 'with stopOnTradeExit (default true) it stops as soon as an open trade exits or a pending order expires. Returns the revealed candles (last 200), events (order_filled, order_expired, trade_closed, price_reached, time_reached, session_end) and the session state.',
     {
       sessionId,
       bars: z.number().int().min(1).max(5000).optional(),
@@ -196,13 +203,109 @@ function buildServer(userId, apiKeyId) {
     { sessionId },
     ({ sessionId: id }) => replay.endSession(userId, id));
 
-  tool('get_metrics', 'Get metrics',
-    'Backtest statistics from the Backtest Log: trades, win rate, average/total R, profit factor, expectancy and max drawdown in R, overall and per strategy. Defaults to agent runs only.',
+  tool('place_order', 'Place pending order',
+    'Place a limit order (enter on a pullback to a better price) or stop order (enter on a breakout) instead of entering at market. It fills when a later candle trades through its price, settled on 1-minute candles; a gap fills at the open. In the fill minute only the stop is checked (the conservative reading). Optional expiry.',
     {
-      strategy: z.string().optional(),
-      source: z.enum(['agent', 'replay', 'quick', 'all']).default('agent').describe('agent = trades logged through these tools; replay/quick = the owner\'s own.'),
+      sessionId,
+      type: z.enum(['limit', 'stop']),
+      direction: z.enum(['long', 'short']),
+      price: z.number(),
+      stopLoss: z.number(),
+      takeProfit: z.number().optional(),
+      riskAmount: z.number().positive().default(100),
+      expiresAfterBars: z.number().int().min(1).max(5000).optional().describe('Cancel if not filled within this many bars of the session timeframe.'),
+      expiresAt: timeInput.optional().describe('Or cancel at this time.'),
     },
-    args => replay.getMetrics(userId, args));
+    ({ sessionId: id, ...args }) => replay.placeOrder(userId, id, args));
+
+  tool('cancel_order', 'Cancel pending order', 'Cancel the pending limit/stop order.',
+    { sessionId },
+    ({ sessionId: id }) => replay.cancelOrder(userId, id));
+
+  tool('modify_trade', 'Modify trade or order',
+    'Move the stop and/or target of the open trade (e.g. stop to breakeven, trailing), or the price/stop/target of a pending order. Stops and targets must stay on the correct side of the current price. R is always measured from the original stop.',
+    {
+      sessionId,
+      stopLoss: z.number().optional(),
+      takeProfit: z.number().optional(),
+      removeTakeProfit: z.boolean().optional().describe('Drop the target and let the trade run to its stop or a manual close.'),
+      price: z.number().optional().describe('Pending orders only: new entry price.'),
+    },
+    ({ sessionId: id, ...args }) => replay.modifyTrade(userId, id, args));
+
+  tool('get_indicators', 'Get indicators',
+    `Indicator values on closed candles before the clock, newest last: ema:<period>, sma:<period>, rsi:<period>, atr:<period>, bb:<period>:<stddev>. ${NO_HINDSIGHT}`,
+    {
+      sessionId,
+      timeframe: timeframe.optional().describe('Defaults to the session timeframe.'),
+      indicators: z.array(z.string()).max(10).default(['ema:20', 'ema:50', 'rsi:14', 'atr:14']),
+      count: z.number().int().min(1).max(500).default(50),
+    },
+    ({ sessionId: id, ...args }) => replay.getIndicators(userId, id, args));
+
+  const logFilters = {
+    source: z.enum(['agent', 'replay', 'quick', 'all']).optional().describe('agent = logged through these tools; replay = the owner\'s chart backtests; quick = the owner\'s quick logs.'),
+    strategy: z.string().optional(),
+    symbol: z.string().optional(),
+    direction: z.enum(['long', 'short']).optional(),
+    from: timeInput.optional().describe('Trades entered at or after this date.'),
+    to: timeInput.optional().describe('Trades entered before this date.'),
+  };
+
+  tool('list_backtests', 'List backtests',
+    'Browse the Backtest Log: the owner\'s own backtests and agent runs, with filters. Rows include results and journal scores; use get_backtest for notes and the chart snapshot. Blind-session trades hide their real dates and prices.',
+    {
+      ...logFilters,
+      source: logFilters.source.default('all'),
+      outcome: z.enum(['win', 'loss', 'breakeven']).optional(),
+      sort: z.enum(['newest', 'oldest', 'best', 'worst']).default('newest').describe('newest/oldest = by when it was logged; best/worst = by R.'),
+      limit: z.number().int().min(1).max(200).default(50),
+      offset: z.number().int().min(0).default(0),
+    },
+    args => backtestLog.listBacktests(userId, args));
+
+  tool('get_backtest', 'Get backtest',
+    'One backtest in full: prices, times, result, notes, lesson, mistakes and quality scores, plus the chart snapshot image saved with it (when there is one).',
+    { id: z.string(), includeSnapshot: z.boolean().default(true) },
+    async ({ id, includeSnapshot }) => {
+      const { backtest, snapshot } = await backtestLog.getBacktest(userId, id, { includeSnapshot });
+      return snapshot ? { backtest, images: [snapshot] } : { backtest };
+    });
+
+  tool('update_backtest', 'Update backtest journal',
+    'Edit a backtest\'s journal fields (any backtest, including the owner\'s): name, strategy or tags, notes (replace) or appendNotes (add a paragraph, keeping what is there), lesson, planFollowed, setupQuality/executionQuality (0-5), mistakes. Prices and results cannot be changed. Prefer appendNotes on the owner\'s trades so their own words are kept.',
+    {
+      id: z.string(),
+      name: z.string().max(100).optional(),
+      strategy: z.string().optional(),
+      tags: z.array(z.string()).max(10).optional(),
+      notes: z.string().max(5000).optional(),
+      appendNotes: z.string().max(5000).optional(),
+      lesson: z.string().max(2000).optional(),
+      planFollowed: z.boolean().optional(),
+      setupQuality: z.number().int().min(0).max(5).optional(),
+      executionQuality: z.number().int().min(0).max(5).optional(),
+      mistakes: z.array(z.string()).max(10).optional(),
+    },
+    ({ id, ...args }) => backtestLog.updateBacktest(userId, id, args));
+
+  tool('delete_backtest', 'Delete backtest', 'Delete a backtest that an agent logged. The owner\'s own backtests cannot be deleted from here.',
+    { id: z.string() },
+    ({ id }) => backtestLog.deleteBacktest(userId, id));
+
+  tool('delete_strategy', 'Delete strategy', 'Delete a strategy definition (its name and description). Backtests logged under it keep their tag.',
+    { name: z.string() },
+    ({ name }) => backtestLog.deleteStrategy(userId, name));
+
+  tool('get_metrics', 'Get metrics',
+    'Statistics from the Backtest Log, the same as the Metrics page: trades, win rate, expectancy and average/total R, average win/loss, payoff, profit factor, max drawdown in R, best/worst, streaks, SQN, half Kelly and P&L. '
+    + 'Filter by source (default: agent runs only), strategy, symbol, direction and date; break down by any of strategy, symbol, direction, timeframe, source, outcome, weekday, hour (UTC) or month. Use source: all with groupBy: source to compare the owner\'s results with the agent\'s.',
+    {
+      ...logFilters,
+      source: logFilters.source.default('agent'),
+      groupBy: z.array(z.enum(['strategy', 'symbol', 'direction', 'timeframe', 'source', 'outcome', 'weekday', 'hour', 'month'])).max(4).default(['strategy']),
+    },
+    args => backtestLog.getMetrics(userId, args));
 
   return server;
 }

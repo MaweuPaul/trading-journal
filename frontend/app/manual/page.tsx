@@ -453,14 +453,21 @@ export default function ManualPage() {
                   <tr><td className="term">start_session</td><td>Start a replay on a symbol, timeframe and date range, or a blind one.</td></tr>
                   <tr><td className="term">get_candles</td><td>Closed candles on any timeframe before the clock, plus the still-forming higher-timeframe candle.</td></tr>
                   <tr><td className="term">step</td><td>Reveal the next candles: one at a time, a number of bars, until a price or time, or until the open trade exits.</td></tr>
+                  <tr><td className="term">get_indicators</td><td>EMA, SMA, RSI, ATR and Bollinger Bands, calculated on closed candles only.</td></tr>
                   <tr><td className="term">open_trade</td><td>Enter at the last close with a required stop, optional target and USD risk. <code>close_trade</code> exits manually.</td></tr>
+                  <tr><td className="term">place_order</td><td>A limit (pullback) or stop (breakout) entry, optionally expiring. Fills are checked minute by minute. <code>cancel_order</code> removes it.</td></tr>
+                  <tr><td className="term">modify_trade</td><td>Move the stop or target (e.g. stop to breakeven), or a pending order&apos;s price. R is always measured from the original stop.</td></tr>
                   <tr><td className="term">log_trade</td><td>Save the closed trade to the Backtest Log with notes. <code>discard_trade</code> drops it instead.</td></tr>
-                  <tr><td className="term">get_metrics</td><td>Win rate, average and total R, profit factor, expectancy and max drawdown, overall and per strategy.</td></tr>
+                  <tr><td className="term">list_backtests</td><td>Browse your whole Backtest Log (your backtests and agent runs). <code>get_backtest</code> reads one in full, including its chart snapshot.</td></tr>
+                  <tr><td className="term">update_backtest</td><td>Edit journal fields on any backtest: notes (or add a paragraph), lesson, tags, quality scores, mistakes. Prices and results can&apos;t be changed.</td></tr>
+                  <tr><td className="term">delete_backtest</td><td>Delete a backtest <b>an agent logged</b>. Your own backtests can&apos;t be deleted by an agent. <code>delete_strategy</code> removes a strategy&apos;s definition only.</td></tr>
+                  <tr><td className="term">get_metrics</td><td>The Metrics page&apos;s stats, filtered by source, strategy, symbol, direction and date, and broken down by strategy, symbol, weekday, hour, month and more. Ask it to compare your results with the agent&apos;s.</td></tr>
                   <tr><td className="term">sessions</td><td><code>list_sessions</code>, <code>get_state</code>, <code>set_timeframe</code> and <code>end_session</code> manage a replay. Sessions expire a week after last use.</td></tr>
                 </tbody>
               </table>
             </div>
 
+            <Callout icon="Access">An agent can <b>read</b> your whole Backtest Log and <b>add to or edit</b> journal fields on your backtests (it&apos;s told to add notes rather than overwrite yours), but it <b>can&apos;t delete</b> your backtests or change their prices and results. It can&apos;t reach anything outside Backtest: no real trades, accounts or settings.</Callout>
             <div className="manual-sub">Limits</div>
             <KvGrid items={[
               { label: 'Active sessions', value: '10 per user' },

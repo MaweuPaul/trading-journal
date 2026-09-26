@@ -116,7 +116,7 @@ Investor sessions are scoped by JWT to exactly three read-only endpoints (summar
 The backend runs a [Model Context Protocol](https://modelcontextprotocol.io) server at `/api/mcp`, so an AI agent can backtest your strategies for you. It replays historical candles from your connected cTrader account one bar at a time, places simulated trades, and logs them to the Backtest Log.
 
 - **No hindsight.** The replay clock lives on the server, and no candle that closes after it is ever sent to the agent. A candle that touches both the stop and the target is settled on smaller candles, down to 1 minute, the same way the Backtest chart does it.
-- **Blind mode.** Start a session with `blind: true` and the server picks a random window, shifts the dates into 1990 (weekday and time of day stay real) and rescales prices, so the model's memory of what the market did can't leak into its decisions. Your log still stores the real dates and prices.
+- **Blind mode.** Start a session with `blind: true` and the server picks a random window, shifts the dates into 1990 (weekday and time of day stay real) and rescales prices, so the model's memory of what the market did can't leak into its decisions. Your log still stores the real dates and prices, and the Backtest Log tools never show an agent a blind trade's real dates, prices or chart.
 - **Kept apart from your stats.** Agent trades carry an **AGENT** badge (**AGENT · BLIND** for blind sessions). Every Backtest page has a **Mine / Agent / All** switch, set to **Mine** by default, so agent runs never change your own numbers unless you choose to include them.
 - **Limits.** At most 10 active sessions per user, 40 cTrader candle requests a minute per user, and 120 MCP requests a minute per key.
 
@@ -201,9 +201,16 @@ Ask your agent something like:
 | `get_candles` | Closed candles on any timeframe before the clock, plus the still-forming higher-timeframe candle; `before` pages further back |
 | `step` | Reveal the next candles: one by default, or `bars`, `untilPrice` or `untilTime`; stops when a trade exits (`stopOnTradeExit`) |
 | `set_timeframe`, `get_state` | Change the stepping timeframe; clock, progress, last candle and open trade with unrealised R |
+| `get_indicators` | EMA, SMA, RSI, ATR and Bollinger Bands on closed candles only (e.g. `ema:20`, `rsi:14`, `bb:20:2`) |
 | `open_trade`, `close_trade` | Enter at the last close with a required stop and an optional target and USD risk; exit manually |
+| `place_order`, `cancel_order` | Limit (pullback) or stop (breakout) entry with optional expiry; fills are settled on 1-minute candles, a gap fills at the open, and in the fill minute only the stop is checked |
+| `modify_trade` | Move the stop/target of the open trade (e.g. to breakeven) or the price/stop/target of a pending order; R stays measured from the original stop |
 | `log_trade`, `discard_trade` | Record the closed trade in the Backtest Log (with notes, lesson, quality scores and tags), or drop it |
-| `list_sessions`, `end_session`, `get_metrics` | Your sessions; finish one; win rate, average/total R, profit factor, expectancy and max drawdown in R, overall and per strategy |
+| `list_backtests`, `get_backtest` | Browse the whole Backtest Log (your own backtests and agent runs) with filters and paging; read one in full, including its chart snapshot image |
+| `update_backtest` | Edit journal fields on any backtest: name, strategy/tags, notes (or `appendNotes` to add a paragraph), lesson, plan followed, quality scores, mistakes. Prices and results can't be changed |
+| `delete_backtest`, `delete_strategy` | Delete a backtest **an agent logged** (your own can't be deleted over MCP); delete a strategy's definition (trades keep their tag) |
+| `get_metrics` | The Metrics page's stats (win rate, expectancy, profit factor, max drawdown, streaks, SQN, half Kelly and more), filtered by source, strategy, symbol, direction and date, and broken down by strategy, symbol, direction, timeframe, source, outcome, weekday, hour or month |
+| `list_sessions`, `end_session` | Your sessions; finish one |
 
 ### Troubleshooting
 

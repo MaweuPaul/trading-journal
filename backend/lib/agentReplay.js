@@ -230,22 +230,29 @@ async function firstHit(ctx, tf, start, end, t) {
   return null;
 }
 
-function closedTradeFrom(trade, which, exitTime) {
-  const exitPrice = which === 'sl' ? trade.stopLoss : trade.takeProfit;
-  const long = trade.direction === 'long';
-  const outcome = which === 'tp' ? 'win'
-    : (long ? trade.stopLoss >= trade.entryPrice : trade.stopLoss <= trade.entryPrice) ? 'breakeven' : 'loss';
+function closedTradeFrom(trade, which, exitTime, exitPriceOverride) {
+  const exitPrice = exitPriceOverride ?? (which === 'sl' ? trade.stopLoss : trade.takeProfit);
   const rMultiple = rMultipleOf(trade, exitPrice);
-  return { ...trade, exitTime, exitPrice, exitReason: which === 'sl' ? 'stop' : 'target', outcome, rMultiple, pnlUSD: rMultiple * trade.riskAmount };
+  return { ...trade, exitTime, exitPrice, exitReason: which === 'sl' ? 'stop' : 'target', outcome: outcomeOf(rMultiple, which === 'tp'), rMultiple, pnlUSD: rMultiple * trade.riskAmount };
 }
+// A stop that was moved to entry is breakeven; one moved past entry locks in a
+// win. The tolerance absorbs rounding: agents see prices rounded (or rescaled
+// in blind sessions), so "stop to entry" can land a hair away from it.
+const BREAKEVEN_R = 0.001;
+function outcomeOf(rMultiple, hitTarget = false) {
+  if (hitTarget) return 'win';
+  return Math.abs(rMultiple) < BREAKEVEN_R ? 'breakeven' : rMultiple > 0 ? 'win' : 'loss';
+}
+/** R against the stop the trade was opened with, even if the stop was moved since. */
 function rMultipleOf(trade, price) {
-  const risk = trade.direction === 'long' ? trade.entryPrice - trade.stopLoss : trade.stopLoss - trade.entryPrice;
+  const stop = trade.initialStopLoss ?? trade.stopLoss;
+  const risk = trade.direction === 'long' ? trade.entryPrice - stop : stop - trade.entryPrice;
   const gain = trade.direction === 'long' ? price - trade.entryPrice : trade.entryPrice - price;
   return risk !== 0 ? gain / risk : 0;
 }
 
 // ── Output (and blind-mode transforms) ──────────────────────────────────────
-const round = (v, digits = 3) => (v == null || !Number.isFinite(v) ? v : Number(v.toFixed(digits)));
+const round = (v, digits = 3) => (v == null || !Number.isFinite(v) ? v : Number(v.toFixed(digits)) || 0); // `|| 0` turns -0 into 0
 const plain = doc => (doc && typeof doc.toObject === 'function' ? doc.toObject() : doc);
 
 function viewOf(s) {
@@ -267,11 +274,20 @@ function viewOf(s) {
       if (!t) return null;
       return {
         direction: t.direction, entryTime: iso(t.entryTime), entryPrice: px(t.entryPrice), stopLoss: px(t.stopLoss),
+        ...(t.initialStopLoss != null && t.initialStopLoss !== t.stopLoss ? { initialStopLoss: px(t.initialStopLoss) } : {}),
         takeProfit: px(t.takeProfit), riskAmount: t.riskAmount,
         ...(t.exitTime != null ? {
           exitTime: iso(t.exitTime), exitPrice: px(t.exitPrice), exitReason: t.exitReason, outcome: t.outcome,
           rMultiple: round(t.rMultiple), pnlUSD: round(t.pnlUSD, 2),
         } : {}),
+      };
+    },
+    order: raw => {
+      const o = plain(raw);
+      if (!o) return null;
+      return {
+        type: o.type, direction: o.direction, price: px(o.price), stopLoss: px(o.stopLoss), takeProfit: px(o.takeProfit),
+        riskAmount: o.riskAmount, placedAt: iso(o.placedAt), expiresAt: o.expiresAt == null ? null : iso(o.expiresAt),
       };
     },
   };
@@ -322,6 +338,7 @@ async function stateOf(s, ctx = ctxOf(s)) {
     range: { from: v.iso(fromSec), to: v.iso(toSec) },
     progressPct: round(Math.min(100, Math.max(0, ((s.clock - fromSec) / (toSec - fromSec)) * 100)), 1),
     lastCandle: last ? v.candle(last) : null,
+    pendingOrder: s.pendingOrder ? v.order(s.pendingOrder) : null,
     openTrade,
     closedTrade: s.closedTrade ? v.trade(s.closedTrade) : null,
     loggedTrades: s.loggedTrades,
@@ -459,7 +476,32 @@ async function step(userId, sessionId, input = {}) {
       const prevClock = s.clock;
       s.clock = c.time + sec;
       revealed.push(c);
-      if (s.openTrade) {
+      // A pending order filled in this candle has its stop/target settled on
+      // the same 1-minute walk, so the open-trade check below skips it.
+      let settledThisCandle = false;
+      if (s.pendingOrder) {
+        const order = plain(s.pendingOrder);
+        const segStart = Math.max(prevClock, c.time);
+        const segEnd = order.expiresAt != null ? Math.min(c.time + sec, order.expiresAt) : c.time + sec;
+        const res = segEnd > segStart && orderTouched(c, order) ? await resolveOrder(ctx, order, segStart, segEnd) : null;
+        if (res && res.filled) {
+          s.pendingOrder = null;
+          s.openTrade = res.trade;
+          settledThisCandle = true;
+          events.push({ type: 'order_filled', trade: v.trade(res.trade) });
+          if (res.closed) {
+            s.closedTrade = closedTradeFrom(res.trade, res.closed.which, res.closed.time, res.closed.price);
+            s.openTrade = null;
+            events.push({ type: 'trade_closed', trade: v.trade(s.closedTrade), message: 'Call log_trade to record it in the Backtest Log, or discard_trade to drop it.' });
+            if (stopOnTradeExit) { stopped = true; break; }
+          }
+        } else if (order.expiresAt != null && s.clock >= order.expiresAt) {
+          s.pendingOrder = null;
+          events.push({ type: 'order_expired', order: v.order(order) });
+          if (stopOnTradeExit) { stopped = true; break; }
+        }
+      }
+      if (s.openTrade && !settledThisCandle) {
         const trade = plain(s.openTrade);
         const h = levelsHit(c, trade);
         // Only price action after the previous clock counts (the trade was
@@ -507,6 +549,7 @@ async function openTrade(userId, sessionId, input = {}) {
   const v = viewOf(s);
   if (s.openTrade) throw new AgentError('A trade is already open in this session. Close it (close_trade) or step until it exits.', 'TRADE_OPEN');
   if (s.closedTrade) throw new AgentError('The last trade is closed but not logged yet. Call log_trade to record it or discard_trade to drop it first.', 'UNLOGGED_TRADE');
+  if (s.pendingOrder) throw new AgentError('A pending order is waiting. Cancel it (cancel_order) before entering at market.', 'ORDER_PENDING');
   const direction = input.direction;
   if (!['long', 'short'].includes(direction)) throw new AgentError('direction must be long or short.');
   const stopLoss = v.priceIn(Number(input.stopLoss));
@@ -523,7 +566,7 @@ async function openTrade(userId, sessionId, input = {}) {
   if (long ? stopLoss >= entry : stopLoss <= entry) throw new AgentError(`For a ${direction} the stop must be ${long ? 'below' : 'above'} the entry (${v.px(entry)}).`);
   if (takeProfit != null && (long ? takeProfit <= entry : takeProfit >= entry)) throw new AgentError(`For a ${direction} the target must be ${long ? 'above' : 'below'} the entry (${v.px(entry)}).`);
 
-  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, takeProfit, riskAmount };
+  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit, riskAmount };
   await saveSession(s);
   return { opened: v.trade(s.openTrade), state: await stateOf(s) };
 }
@@ -538,7 +581,7 @@ async function closeTrade(userId, sessionId) {
   const rMultiple = rMultipleOf(trade, exitPrice);
   s.closedTrade = {
     ...trade, exitTime: last ? last.time : trade.entryTime, exitPrice, exitReason: 'manual',
-    outcome: Math.abs(exitPrice - trade.entryPrice) < 1e-9 ? 'breakeven' : rMultiple > 0 ? 'win' : 'loss',
+    outcome: outcomeOf(rMultiple),
     rMultiple, pnlUSD: rMultiple * trade.riskAmount,
   };
   s.openTrade = null;
@@ -574,12 +617,12 @@ async function logTrade(userId, sessionId, input = {}) {
     direction: t.direction,
     entryTime: t.entryTime, entryPrice: t.entryPrice,
     exitTime: t.exitTime, exitPrice: t.exitPrice,
-    stopLoss: t.stopLoss, takeProfit: t.takeProfit ?? null,
+    stopLoss: t.initialStopLoss ?? t.stopLoss, takeProfit: t.takeProfit ?? null,
     outcome: t.outcome,
     riskAmount: t.riskAmount,
     pnlUSD: t.pnlUSD,
     rMultiple: t.rMultiple,
-    notes: String(input.notes || '').slice(0, 5000),
+    notes: [String(input.notes || ''), stopMovedNote(t)].filter(Boolean).join('\n\n').slice(0, 5000),
     planFollowed: typeof input.planFollowed === 'boolean' ? input.planFollowed : null,
     setupQuality: Math.max(0, Math.min(5, Number(input.setupQuality) || 0)),
     executionQuality: Math.max(0, Math.min(5, Number(input.executionQuality) || 0)),
@@ -614,7 +657,7 @@ async function listSessions(userId) {
         sessionId: String(s._id), status: s.status, symbol: s.symbol, timeframe: s.interval, strategy: s.strategy || null,
         blind: v.blind, clock: v.iso(s.clock),
         progressPct: round(Math.min(100, Math.max(0, ((s.clock - fromSec) / (toSec - fromSec)) * 100)), 1),
-        openTrade: Boolean(s.openTrade), unloggedTrade: Boolean(s.closedTrade), loggedTrades: s.loggedTrades,
+        pendingOrder: Boolean(s.pendingOrder), openTrade: Boolean(s.openTrade), unloggedTrade: Boolean(s.closedTrade), loggedTrades: s.loggedTrades,
       };
     }),
   };
@@ -622,58 +665,225 @@ async function listSessions(userId) {
 
 async function endSession(userId, sessionId) {
   const s = await loadSession(userId, sessionId);
-  const dropped = { openTrade: Boolean(s.openTrade), unloggedTrade: Boolean(s.closedTrade) };
+  const dropped = { pendingOrder: Boolean(s.pendingOrder), openTrade: Boolean(s.openTrade), unloggedTrade: Boolean(s.closedTrade) };
   s.status = 'ended';
+  s.pendingOrder = null;
   s.openTrade = null;
   s.closedTrade = null;
   await saveSession(s);
   return { ended: true, loggedTrades: s.loggedTrades, dropped };
 }
 
-// ── Strategies, symbols, metrics ────────────────────────────────────────────
-function statsOf(trades) {
-  const n = trades.length;
-  const wins = trades.filter(t => t.outcome === 'win').length;
-  const losses = trades.filter(t => t.outcome === 'loss').length;
-  const rs = trades.map(t => Number(t.rMultiple) || 0);
-  const totalR = rs.reduce((a, b) => a + b, 0);
-  const grossWin = rs.filter(r => r > 0).reduce((a, b) => a + b, 0);
-  const grossLoss = -rs.filter(r => r < 0).reduce((a, b) => a + b, 0);
-  let equity = 0, peak = 0, maxDrawdownR = 0;
-  for (const r of rs) { equity += r; peak = Math.max(peak, equity); maxDrawdownR = Math.max(maxDrawdownR, peak - equity); }
-  return {
-    trades: n, wins, losses, breakevens: n - wins - losses,
-    winRate: n ? round((wins / n) * 100, 1) : 0,
-    avgR: n ? round(totalR / n) : 0,
-    expectancyR: n ? round(totalR / n) : 0,
-    totalR: round(totalR),
-    profitFactor: grossLoss > 0 ? round(grossWin / grossLoss) : null,
-    maxDrawdownR: round(maxDrawdownR),
-    totalPnlUSD: round(trades.reduce((sum, t) => sum + (Number(t.pnlUSD) || 0), 0), 2),
-  };
+// ── Pending orders, trade management, indicators ────────────────────────────
+function orderTouched(c, o) {
+  const long = o.direction === 'long';
+  return o.type === 'limit' ? (long ? c.low <= o.price : c.high >= o.price) : (long ? c.high >= o.price : c.low <= o.price);
 }
 
-async function getMetrics(userId, { strategy, source = 'agent' } = {}) {
-  const query = { user: userId };
-  if (strategy) query.tags = String(strategy).trim().replace(/^#+/, '');
-  if (source === 'replay') query.source = { $in: ['replay', null] };
-  else if (source === 'agent' || source === 'quick') query.source = source;
-  else if (source !== 'all') throw new AgentError('source must be agent, replay, quick or all.');
-  const trades = await BacktestTrade.find(query).select('strategy rMultiple outcome pnlUSD entryTime createdAt').lean();
-  trades.sort((a, b) => (a.entryTime ? a.entryTime * 1000 : +a.createdAt) - (b.entryTime ? b.entryTime * 1000 : +b.createdAt));
-  const byStrategy = new Map();
-  for (const t of trades) {
-    const key = t.strategy || '(untagged)';
-    if (!byStrategy.has(key)) byStrategy.set(key, []);
-    byStrategy.get(key).push(t);
+/**
+ * Walk 1-minute candles in [start, end) for a pending order: find the fill,
+ * then the stop/target. A market that gaps through the order price fills at
+ * the minute's open. In the fill minute itself only the stop counts, since
+ * the order of prices inside one minute is unknown (the conservative reading).
+ */
+async function resolveOrder(ctx, order, start, end) {
+  const long = order.direction === 'long';
+  let trade = null;
+  for (const m of await candlesIn(ctx, '1min', start, end)) {
+    if (!trade) {
+      if (!orderTouched(m, order)) continue;
+      const gapped = order.type === 'limit' ? (long ? m.open < order.price : m.open > order.price) : (long ? m.open > order.price : m.open < order.price);
+      const entryPrice = gapped ? m.open : order.price;
+      trade = {
+        direction: order.direction, entryTime: m.time, entryPrice, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss,
+        takeProfit: order.takeProfit, riskAmount: order.riskAmount,
+      };
+      // Filled beyond its own stop: out immediately at the fill.
+      if (long ? entryPrice <= order.stopLoss : entryPrice >= order.stopLoss) return { filled: true, trade, closed: { which: 'sl', time: m.time, price: entryPrice } };
+      if (levelsHit(m, trade).sl) return { filled: true, trade, closed: { which: 'sl', time: m.time } };
+      continue;
+    }
+    const h = levelsHit(m, trade);
+    if (h.sl || h.tp) return { filled: true, trade, closed: { which: h.sl ? 'sl' : 'tp', time: m.time } };
   }
+  return trade ? { filled: true, trade, closed: null } : null;
+}
+
+function stopMovedNote(t) {
+  if (t.initialStopLoss == null || t.initialStopLoss === t.stopLoss) return '';
+  return `Stop moved from ${t.initialStopLoss} to ${t.stopLoss} during the trade (R is measured from the original stop).`;
+}
+
+async function placeOrder(userId, sessionId, input = {}) {
+  const s = await loadSession(userId, sessionId);
+  const v = viewOf(s);
+  if (s.openTrade) throw new AgentError('A trade is already open in this session.', 'TRADE_OPEN');
+  if (s.closedTrade) throw new AgentError('The last trade is closed but not logged yet. Call log_trade or discard_trade first.', 'UNLOGGED_TRADE');
+  if (s.pendingOrder) throw new AgentError('An order is already pending. Cancel or modify it first.', 'ORDER_PENDING');
+  const { type, direction } = input;
+  if (!['limit', 'stop'].includes(type)) throw new AgentError('type must be limit or stop.');
+  if (!['long', 'short'].includes(direction)) throw new AgentError('direction must be long or short.');
+  const price = v.priceIn(Number(input.price));
+  const stopLoss = v.priceIn(Number(input.stopLoss));
+  const takeProfit = input.takeProfit == null ? null : v.priceIn(Number(input.takeProfit));
+  const riskAmount = input.riskAmount == null ? 100 : Number(input.riskAmount);
+  if (![price, stopLoss].every(Number.isFinite)) throw new AgentError('price and stopLoss are required numbers.');
+  if (takeProfit != null && !Number.isFinite(takeProfit)) throw new AgentError('takeProfit must be a number.');
+  if (!Number.isFinite(riskAmount) || riskAmount <= 0) throw new AgentError('riskAmount must be a positive number of USD.');
+
+  const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
+  if (!last) throw new AgentError('No candle has been revealed yet. Call step first.', 'NO_DATA');
+  const long = direction === 'long';
+  const now = last.close;
+  // A limit waits for a better price, a stop for a breakout.
+  const belowNow = type === 'limit' ? long : !long;
+  if (belowNow ? price >= now : price <= now) {
+    throw new AgentError(`A ${direction} ${type} order must be ${belowNow ? 'below' : 'above'} the current price (${v.px(now)}); use open_trade to enter at market.`);
+  }
+  if (long ? stopLoss >= price : stopLoss <= price) throw new AgentError(`The stop must be ${long ? 'below' : 'above'} the order price.`);
+  if (takeProfit != null && (long ? takeProfit <= price : takeProfit >= price)) throw new AgentError(`The target must be ${long ? 'above' : 'below'} the order price.`);
+
+  let expiresAt = null;
+  if (input.expiresAfterBars != null) expiresAt = s.clock + Math.max(1, Math.floor(Number(input.expiresAfterBars))) * TF_SEC[s.interval];
+  const untilTime = parseTime(input.expiresAt, 'expiresAt');
+  if (untilTime != null) expiresAt = v.timeIn(untilTime);
+  if (expiresAt != null && expiresAt <= s.clock) throw new AgentError('The expiry must be after the current clock.');
+
+  s.pendingOrder = { type, direction, price, stopLoss, takeProfit, riskAmount, placedAt: s.clock, expiresAt };
+  await saveSession(s);
+  return { placed: v.order(s.pendingOrder), message: 'Step forward; an order_filled event reports the fill.' };
+}
+
+async function cancelOrder(userId, sessionId) {
+  const s = await loadSession(userId, sessionId);
+  if (!s.pendingOrder) throw new AgentError('There is no pending order.', 'NO_ORDER');
+  s.pendingOrder = null;
+  await saveSession(s);
+  return { cancelled: true };
+}
+
+/** Move the stop/target of the open trade, or the price/stop/target of the pending order. */
+async function modifyTrade(userId, sessionId, input = {}) {
+  const s = await loadSession(userId, sessionId);
+  const v = viewOf(s);
+  const num = key => (input[key] == null ? undefined : v.priceIn(Number(input[key])));
+  const stopLoss = num('stopLoss');
+  const takeProfit = input.removeTakeProfit ? null : num('takeProfit');
+  const price = num('price');
+  if ([stopLoss, takeProfit, price].some(x => x !== undefined && x !== null && !Number.isFinite(x))) throw new AgentError('Prices must be numbers.');
+
+  if (s.openTrade) {
+    if (price !== undefined) throw new AgentError('price only applies to a pending order; the trade is already filled.');
+    const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
+    const t = plain(s.openTrade);
+    const long = t.direction === 'long';
+    const now = last ? last.close : t.entryPrice;
+    const next = { stopLoss: stopLoss ?? t.stopLoss, takeProfit: takeProfit === undefined ? t.takeProfit : takeProfit };
+    if (long ? next.stopLoss >= now : next.stopLoss <= now) throw new AgentError(`The stop must stay ${long ? 'below' : 'above'} the current price (${v.px(now)}). To exit now, use close_trade.`);
+    if (next.takeProfit != null && (long ? next.takeProfit <= now : next.takeProfit >= now)) throw new AgentError(`The target must stay ${long ? 'above' : 'below'} the current price (${v.px(now)}). To exit now, use close_trade.`);
+    s.openTrade = { ...t, initialStopLoss: t.initialStopLoss ?? t.stopLoss, ...next };
+    await saveSession(s);
+    return { modified: v.trade(s.openTrade) };
+  }
+  if (s.pendingOrder) {
+    const o = plain(s.pendingOrder);
+    const next = { ...o, price: price ?? o.price, stopLoss: stopLoss ?? o.stopLoss, takeProfit: takeProfit === undefined ? o.takeProfit : takeProfit };
+    const long = o.direction === 'long';
+    if (long ? next.stopLoss >= next.price : next.stopLoss <= next.price) throw new AgentError(`The stop must be ${long ? 'below' : 'above'} the order price.`);
+    if (next.takeProfit != null && (long ? next.takeProfit <= next.price : next.takeProfit >= next.price)) throw new AgentError(`The target must be ${long ? 'above' : 'below'} the order price.`);
+    s.pendingOrder = next;
+    await saveSession(s);
+    return { modified: v.order(s.pendingOrder) };
+  }
+  throw new AgentError('There is no open trade or pending order to modify.', 'NO_TRADE');
+}
+
+const INDICATORS = {
+  ema: { params: [20], warmup: p => p * 4 },
+  sma: { params: [20], warmup: p => p },
+  rsi: { params: [14], warmup: p => p * 5 },
+  atr: { params: [14], warmup: p => p * 5 },
+  bb: { params: [20, 2], warmup: p => p },
+};
+function parseIndicator(spec) {
+  const [name, ...rest] = String(spec).toLowerCase().trim().split(/[:(),\s]+/).filter(Boolean);
+  const def = INDICATORS[name];
+  if (!def) throw new AgentError(`Unknown indicator "${spec}". Use ${Object.keys(INDICATORS).map(k => `${k}:${INDICATORS[k].params.join(':')}`).join(', ')}.`);
+  const params = def.params.map((d, i) => (rest[i] != null ? Number(rest[i]) : d));
+  if (!params.every(p => Number.isFinite(p) && p > 0) || params[0] > 500) throw new AgentError(`Bad parameters in "${spec}".`);
+  params[0] = Math.floor(params[0]);
+  return { name, params, key: [name, ...params].join('_').replace('.', '_'), warmup: def.warmup(params[0]) };
+}
+function emaSeries(values, period) {
+  const out = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+  const k = 2 / (period + 1);
+  let prev = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  out[period - 1] = prev;
+  for (let i = period; i < values.length; i++) { prev = values[i] * k + prev * (1 - k); out[i] = prev; }
+  return out;
+}
+function smaSeries(values, period) {
+  return values.map((_, i) => (i + 1 < period ? null : values.slice(i + 1 - period, i + 1).reduce((a, b) => a + b, 0) / period));
+}
+function wilder(values, period) {
+  const out = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+  let avg = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  out[period - 1] = avg;
+  for (let i = period; i < values.length; i++) { avg = (avg * (period - 1) + values[i]) / period; out[i] = avg; }
+  return out;
+}
+function computeIndicator(ind, candles) {
+  const closes = candles.map(c => c.close);
+  const [p, mult] = ind.params;
+  if (ind.name === 'ema') return { [ind.key]: emaSeries(closes, p) };
+  if (ind.name === 'sma') return { [ind.key]: smaSeries(closes, p) };
+  if (ind.name === 'rsi') {
+    const gains = [], losses = [];
+    for (let i = 1; i < closes.length; i++) { const d = closes[i] - closes[i - 1]; gains.push(Math.max(d, 0)); losses.push(Math.max(-d, 0)); }
+    const g = wilder(gains, p), l = wilder(losses, p);
+    return { [ind.key]: [null, ...g.map((gv, i) => (gv == null ? null : l[i] === 0 ? 100 : 100 - 100 / (1 + gv / l[i])))] };
+  }
+  if (ind.name === 'atr') {
+    const tr = candles.map((c, i) => (i === 0 ? c.high - c.low : Math.max(c.high - c.low, Math.abs(c.high - candles[i - 1].close), Math.abs(c.low - candles[i - 1].close))));
+    return { [ind.key]: wilder(tr, p) };
+  }
+  // Bollinger Bands
+  const mid = smaSeries(closes, p);
+  const sd = closes.map((_, i) => (mid[i] == null ? null : Math.sqrt(closes.slice(i + 1 - p, i + 1).reduce((a, b) => a + (b - mid[i]) ** 2, 0) / p)));
   return {
-    source,
-    overall: statsOf(trades),
-    byStrategy: [...byStrategy].map(([name, list]) => ({ strategy: name, ...statsOf(list) })).sort((a, b) => b.trades - a.trades),
+    [`${ind.key}_mid`]: mid,
+    [`${ind.key}_upper`]: mid.map((m, i) => (m == null ? null : m + mult * sd[i])),
+    [`${ind.key}_lower`]: mid.map((m, i) => (m == null ? null : m - mult * sd[i])),
   };
 }
 
+/** Indicator values on closed candles only, so they carry no future data. */
+async function getIndicators(userId, sessionId, { timeframe, indicators = ['ema:20', 'ema:50', 'rsi:14', 'atr:14'], count = 50 } = {}) {
+  const s = await loadSession(userId, sessionId, { active: false });
+  const tf = checkInterval(timeframe || s.interval);
+  const v = viewOf(s);
+  const list = (Array.isArray(indicators) ? indicators : [indicators]).slice(0, 10).map(parseIndicator);
+  if (!list.length) throw new AgentError('Ask for at least one indicator.');
+  const n = Math.max(1, Math.min(MAX_CANDLES_PER_CALL, Math.floor(Number(count)) || 50));
+  const warmup = Math.max(...list.map(i => i.warmup));
+  const candles = await closedCandles(ctxOf(s), tf, s.clock, n + warmup);
+  const series = Object.assign({}, ...list.map(ind => computeIndicator(ind, candles)));
+  const from = Math.max(0, candles.length - n);
+  const rows = candles.slice(from).map((c, i) => {
+    const row = { time: v.iso(c.time), close: v.px(c.close) };
+    // RSI is unitless; every other indicator is a price (rescaled in blind sessions).
+    for (const [key, values] of Object.entries(series)) {
+      const x = values[from + i];
+      row[key] = x == null ? null : key.startsWith('rsi') ? round(x, 2) : v.px(x);
+    }
+    return row;
+  });
+  return { timeframe: tf, clock: v.iso(s.clock), values: rows };
+}
+
+// ── Strategies and symbols ───────────────────────────────────────────────
 async function listStrategies(userId) {
   const [defined, stats] = await Promise.all([
     BacktestStrategy.find({ user: userId }).sort({ name: 1 }).lean(),
@@ -721,7 +931,8 @@ module.exports = {
   AgentError, INTERVALS,
   startSession, getCandles, step, openTrade, closeTrade, discardTrade, logTrade,
   setTimeframe, getState, listSessions, endSession,
-  getMetrics, listStrategies, createStrategy, listSymbols,
+  placeOrder, cancelOrder, modifyTrade, getIndicators,
+  listStrategies, createStrategy, listSymbols,
   // exported for tests
-  _internal: { missingRanges, addRange, mergeCandles, firstHit, levelsHit, cache },
+  _internal: { missingRanges, addRange, mergeCandles, firstHit, levelsHit, cache, viewOf, round, plain },
 };

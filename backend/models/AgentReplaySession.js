@@ -9,6 +9,9 @@ const tradeSchema = new mongoose.Schema({
   entryTime: { type: Number, required: true },   // open time (unix s) of the candle it was placed on
   entryPrice: { type: Number, required: true },
   stopLoss: { type: Number, required: true },
+  // The stop the trade was opened with: R is always measured against it,
+  // even after modify_trade moves the stop (e.g. to breakeven).
+  initialStopLoss: Number,
   takeProfit: { type: Number, default: null },
   riskAmount: { type: Number, default: 100 },
   exitTime: Number,
@@ -17,6 +20,19 @@ const tradeSchema = new mongoose.Schema({
   outcome: { type: String, enum: ['win', 'loss', 'breakeven'] },
   rMultiple: Number,
   pnlUSD: Number,
+}, { _id: false });
+
+// A limit/stop entry waiting to be filled. Fills are settled on 1-minute
+// candles as the replay steps.
+const orderSchema = new mongoose.Schema({
+  type: { type: String, enum: ['limit', 'stop'], required: true },
+  direction: { type: String, enum: ['long', 'short'], required: true },
+  price: { type: Number, required: true },
+  stopLoss: { type: Number, required: true },
+  takeProfit: { type: Number, default: null },
+  riskAmount: { type: Number, default: 100 },
+  placedAt: { type: Number, required: true },  // clock (unix s) when placed
+  expiresAt: { type: Number, default: null },  // unix s; null = good till cancelled
 }, { _id: false });
 
 const agentReplaySessionSchema = new mongoose.Schema({
@@ -28,6 +44,7 @@ const agentReplaySessionSchema = new mongoose.Schema({
   toMs: { type: Number, required: true },
   clock: { type: Number, required: true },       // unix s: close time of the last revealed candle
   strategy: { type: String, default: '' },
+  pendingOrder: { type: orderSchema, default: null },
   openTrade: { type: tradeSchema, default: null },
   closedTrade: { type: tradeSchema, default: null }, // resolved, waiting to be logged or discarded
   loggedTrades: { type: Number, default: 0 },

@@ -74,8 +74,9 @@ test('MCP: a full backtest loop over HTTP', async () => {
   assert.equal(init.status, 200);
   assert.equal(init.body.result.serverInfo.name, 'tradejournal-backtest');
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name).sort();
-  assert.deepEqual(tools, ['close_trade', 'create_strategy', 'discard_trade', 'end_session', 'get_candles', 'get_metrics', 'get_state',
-    'list_sessions', 'list_strategies', 'list_symbols', 'log_trade', 'open_trade', 'set_timeframe', 'start_session', 'step']);
+  assert.deepEqual(tools, ['cancel_order', 'close_trade', 'create_strategy', 'delete_backtest', 'delete_strategy', 'discard_trade', 'end_session',
+    'get_backtest', 'get_candles', 'get_indicators', 'get_metrics', 'get_state', 'list_backtests', 'list_sessions', 'list_strategies',
+    'list_symbols', 'log_trade', 'modify_trade', 'open_trade', 'place_order', 'set_timeframe', 'start_session', 'step', 'update_backtest']);
 
   assert.ok((await call('list_symbols', { search: 'usd' })).data.symbols.includes('XAUUSD'));
   assert.equal((await call('create_strategy', { name: 'Breakout', description: 'Buy the break of the Asian range' })).data.name, 'Breakout');
@@ -105,6 +106,20 @@ test('MCP: a full backtest loop over HTTP', async () => {
   assert.equal(String(trade.user), userId);
 
   assert.equal((await call('get_metrics')).data.overall.trades, 1);
+  const byHour = await call('get_metrics', { source: 'all', groupBy: ['source', 'hour'] });
+  assert.equal(byHour.data.breakdowns.source[0].source, 'agent');
+
+  // The Backtest Log: list, read with its snapshot image, annotate, delete.
+  H.models.Trade.store.get(logged.data.tradeId).snapshot = 'data:image/png;base64,iVBORw0KGgo=';
+  const listed = await call('list_backtests', { source: 'agent' });
+  assert.equal(listed.data.total, 1);
+  const { body } = await rpc('tools/call', { name: 'get_backtest', arguments: { id: logged.data.tradeId } });
+  assert.equal(body.result.content[1].type, 'image');
+  assert.equal(body.result.content[1].mimeType, 'image/png');
+  assert.equal(JSON.parse(body.result.content[0].text).backtest.notes, 'Broke the Asian high');
+  const edited = await call('update_backtest', { id: logged.data.tradeId, appendNotes: 'Review: entry was late.' });
+  assert.equal(edited.data.updated.notes, 'Broke the Asian high\n\nReview: entry was late.');
+  assert.equal((await call('delete_backtest', { id: logged.data.tradeId })).data.deleted, true);
   assert.ok((await call('list_sessions')).data.sessions.some(s => s.sessionId === sessionId));
   assert.equal((await call('end_session', { sessionId })).data.ended, true);
   const afterEnd = await call('step', { sessionId });

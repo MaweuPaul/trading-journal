@@ -162,22 +162,6 @@ test('blind sessions hide the real dates and prices but store real values', asyn
   }
 });
 
-test('metrics from logged agent trades', async () => {
-  const user = H.newUserId();
-  for (const [outcome, r] of [['win', 2], ['loss', -1], ['loss', -1], ['win', 1.5], ['breakeven', 0]]) {
-    await H.models.Trade.create({ user, source: 'agent', strategy: 'S', tags: ['S'], symbol: 'XAUUSD', interval: '15min', direction: 'long', entryTime: 1, entryPrice: 1, exitTime: 2, exitPrice: 1, stopLoss: 0.5, outcome, rMultiple: r, pnlUSD: r * 100 });
-  }
-  await H.models.Trade.create({ user, source: 'replay', strategy: 'S', tags: ['S'], symbol: 'XAUUSD', interval: '15min', direction: 'long', entryTime: 1, entryPrice: 1, exitTime: 2, exitPrice: 1, stopLoss: 0.5, outcome: 'win', rMultiple: 5 });
-  const m = await replay.getMetrics(user, {});
-  assert.equal(m.overall.trades, 5, 'agent source only by default');
-  assert.equal(m.overall.winRate, 40);
-  assert.equal(m.overall.totalR, 1.5);
-  assert.equal(m.overall.profitFactor, 1.75);
-  assert.equal(m.overall.maxDrawdownR, 2);
-  assert.equal((await replay.getMetrics(user, { source: 'all' })).overall.trades, 6);
-  await assert.rejects(replay.getMetrics(user, { source: 'nope' }), /source must be/);
-});
-
 test('the candle cache fetches history in blocks, not per step', async () => {
   const user = H.newUserId();
   const s = await start(user, { context: 20 });

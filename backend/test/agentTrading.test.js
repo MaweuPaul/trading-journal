@@ -154,3 +154,22 @@ test('blind sessions: orders and indicators use the shown (rescaled) prices', as
   const realCloses = H.series['15min'].filter(c => c.time + 900 <= H.models.Session.store.get(s.sessionId).clock).slice(-5).map(c => c.close);
   assert.ok(Math.abs(ind.values[0].sma_5 / (realCloses.reduce((a, b) => a + b, 0) / 5) - scale) < 1e-4, 'sma rescaled');
 });
+
+test('step stops on the first candle that closes beyond a level', async () => {
+  const user = H.newUserId();
+  const s = await start(user);
+  for (let i = 0; i < 20; i++) {
+    const st = await replay.getState(user, s.sessionId);
+    const now = st.lastCandle.close;
+    const above = now + 2, below = now - 2;
+    const from = toSec(st.clock);
+    const res = await replay.step(user, s.sessionId, { untilCloseAbove: above, untilCloseBelow: below });
+    const truth = H.series['15min'].find(c => c.time >= from && (c.close > above || c.close < below));
+    const ev = res.events.find(e => e.type === 'close_above' || e.type === 'close_below');
+    assert.ok(ev, `run ${i}: no close event`);
+    assert.equal(toSec(ev.time), truth.time, `run ${i}: stopped on the wrong candle`);
+    assert.equal(ev.type, truth.close > above ? 'close_above' : 'close_below');
+    assert.equal(toSec(res.state.clock), truth.time + 900);
+  }
+  await assert.rejects(replay.step(user, s.sessionId, { untilCloseAbove: 'x' }), /must be numbers/);
+});

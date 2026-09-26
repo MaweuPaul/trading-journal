@@ -455,11 +455,15 @@ async function step(userId, sessionId, input = {}) {
   const sec = TF_SEC[s.interval];
   const endSec = s.toMs / 1000;
   const untilPrice = input.untilPrice == null ? null : v.priceIn(Number(input.untilPrice));
+  // Breakout-style stops: the first candle that CLOSES beyond a level (a wick through it doesn't count).
+  const closeAbove = input.untilCloseAbove == null ? null : v.priceIn(Number(input.untilCloseAbove));
+  const closeBelow = input.untilCloseBelow == null ? null : v.priceIn(Number(input.untilCloseBelow));
+  if ([untilPrice, closeAbove, closeBelow].some(x => x != null && !Number.isFinite(x))) throw new AgentError('untilPrice, untilCloseAbove and untilCloseBelow must be numbers.');
   const untilTimeRaw = parseTime(input.untilTime, 'untilTime');
   const untilTime = untilTimeRaw == null ? null : v.timeIn(untilTimeRaw);
   const stopOnTradeExit = input.stopOnTradeExit !== false;
   const maxBars = Math.max(1, Math.min(MAX_STEP_BARS, Math.floor(Number(input.maxBars ?? 2000)) || 2000));
-  const hasCondition = untilPrice != null || untilTime != null;
+  const hasCondition = untilPrice != null || untilTime != null || closeAbove != null || closeBelow != null;
   const limit = input.bars != null ? Math.max(1, Math.min(maxBars, Math.floor(Number(input.bars)) || 1)) : hasCondition ? maxBars : 1;
 
   const revealed = [];
@@ -519,6 +523,14 @@ async function step(userId, sessionId, input = {}) {
       }
       if (untilPrice != null && c.low <= untilPrice && untilPrice <= c.high) {
         events.push({ type: 'price_reached', price: v.px(untilPrice), time: v.iso(c.time) });
+        stopped = true; break;
+      }
+      if (closeAbove != null && c.close > closeAbove) {
+        events.push({ type: 'close_above', level: v.px(closeAbove), close: v.px(c.close), time: v.iso(c.time) });
+        stopped = true; break;
+      }
+      if (closeBelow != null && c.close < closeBelow) {
+        events.push({ type: 'close_below', level: v.px(closeBelow), close: v.px(c.close), time: v.iso(c.time) });
         stopped = true; break;
       }
       if (untilTime != null && s.clock >= untilTime) {

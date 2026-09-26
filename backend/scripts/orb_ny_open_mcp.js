@@ -143,6 +143,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
       const allowLong = !cfg.bias || (prevMid != null && mid > prevMid);
       const allowShort = !cfg.bias || (prevMid != null && mid < prevMid);
       const biasText = prevMid == null ? 'no previous range' : `mid ${mid.toFixed(2)} vs yesterday ${prevMid.toFixed(2)}`;
+      const prevMidForFeature = prevMid;
       prevMid = mid;
       if (width <= 0 || (!allowLong && !allowShort)) { stats.filtered++; continue; }
 
@@ -173,8 +174,17 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
       // 3. Enter; stop at the opposite side, measured-move target.
       const long = breakout.direction === 'long';
       const entry = breakout.candle.close;
+      // Entry conditions, so results can later be split by them (get_metrics groupBy feature:<name>).
+      const features = {
+        rangeWidth: +width.toFixed(5),
+        rangeWidthPct: +(width / entry * 100).toFixed(4),
+        minutesToBreakout: Math.round((toSec(breakout.candle.time) + 60 - open) / 60),
+        breakoutBeyondRange: +((long ? entry - high : low - entry) / width).toFixed(3), // how far the close went past the range, in range widths
+        ...(prevMidForFeature != null ? { biasGapInRanges: +((mid - prevMidForFeature) / width).toFixed(3) } : {}),
+        weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()],
+      };
       const opened = await call('open_trade', {
-        sessionId: sid, direction: breakout.direction, riskAmount: cfg.risk,
+        sessionId: sid, direction: breakout.direction, riskAmount: cfg.risk, features,
         stopLoss: long ? low : high,
         takeProfit: long ? entry + cfg.targetMult * width : entry - cfg.targetMult * width,
       });

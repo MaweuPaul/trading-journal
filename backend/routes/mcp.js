@@ -92,6 +92,7 @@ function buildServer(userId, apiKeyId) {
         'Backtest trading strategies on historical candles from the journal owner\'s cTrader account, bar by bar.',
         NO_HINDSIGHT,
         'Typical loop: start_session -> read candles (get_indicators for EMA/RSI/ATR/Bollinger) -> step until a setup forms -> open_trade at market, or place_order for a limit/stop entry -> step with a large bars value (stopOnTradeExit stops at the exit), moving the stop with modify_trade if the rules say so -> log_trade -> repeat. Finish with end_session and get_metrics.',
+        'To improve a strategy without fooling yourself: set_holdout on its later data first; tune only on sessions before that date, using get_metrics breakdowns (including feature:<name> for entry conditions you record with features on open_trade/place_order/log_trade); save each rule change with update_strategy_rules (say what changed and why); then run the new version on the held-out period and judge it once with evaluate_holdout. get_strategy shows the full history. Keep a change only if it holds up out of sample.',
         'You can also work with the whole Backtest Log: list_backtests and get_backtest read every logged backtest (the owner\'s and agents\'), update_backtest edits journal fields such as notes and lessons, and get_metrics breaks results down by strategy, symbol, direction, weekday, hour, month, timeframe or source.',
         'Prefer step with bars/untilPrice/untilTime over one call per candle: calls are rate limited.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
@@ -171,6 +172,7 @@ function buildServer(userId, apiKeyId) {
       stopLoss: z.number(),
       takeProfit: z.number().optional(),
       riskAmount: z.number().positive().default(100).describe('USD risked; P&L is R multiple x this.'),
+      features: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional().describe('Entry conditions to record with the trade, e.g. { "rangeWidth": 3.2, "minutesToBreakout": 4 }. atr14 and riskInAtr are added automatically.'),
     },
     ({ sessionId: id, ...args }) => replay.openTrade(userId, id, args));
 
@@ -194,6 +196,7 @@ function buildServer(userId, apiKeyId) {
       planFollowed: z.boolean().optional(),
       mistakes: z.array(z.string()).max(10).optional(),
       tags: z.array(z.string()).max(9).optional().describe('Extra tags; the session strategy always comes first.'),
+      features: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional().describe('More entry conditions to record (merged with those captured at entry).'),
     },
     ({ sessionId: id, ...args }) => replay.logTrade(userId, id, args));
 
@@ -215,6 +218,7 @@ function buildServer(userId, apiKeyId) {
       stopLoss: z.number(),
       takeProfit: z.number().optional(),
       riskAmount: z.number().positive().default(100),
+      features: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional().describe('Entry conditions to record with the trade, e.g. { "rangeWidth": 3.2, "minutesToBreakout": 4 }. atr14 and riskInAtr are added automatically.'),
       expiresAfterBars: z.number().int().min(1).max(5000).optional().describe('Cancel if not filled within this many bars of the session timeframe.'),
       expiresAt: timeInput.optional().describe('Or cancel at this time.'),
     },
@@ -252,6 +256,13 @@ function buildServer(userId, apiKeyId) {
     direction: z.enum(['long', 'short']).optional(),
     from: timeInput.optional().describe('Trades entered at or after this date.'),
     to: timeInput.optional().describe('Trades entered before this date.'),
+    version: z.number().int().min(1).optional().describe('Only trades taken under this version of the strategy\'s rules.'),
+    where: z.array(z.object({
+      feature: z.string(),
+      min: z.number().optional(),
+      max: z.number().optional(),
+      equals: z.union([z.number(), z.string(), z.boolean()]).optional(),
+    })).max(5).optional().describe('Filter by recorded entry conditions, e.g. [{ "feature": "rangeWidth", "max": 3 }] to test a proposed filter.'),
   };
 
   tool('list_backtests', 'List backtests',
@@ -299,13 +310,33 @@ function buildServer(userId, apiKeyId) {
     { name: z.string() },
     ({ name }) => backtestLog.deleteStrategy(userId, name));
 
+  tool('get_strategy', 'Get strategy',
+    'A strategy\'s current rules, every version with what changed and why, in-sample results per version, its held-out period and every held-out evaluation so far. Read this before proposing a change so you don\'t repeat one that already failed.',
+    { name: z.string() },
+    ({ name }) => backtestLog.getStrategy(userId, name));
+
+  tool('update_strategy_rules', 'Update strategy rules',
+    'Save a new version of a strategy\'s rules (the full rules, not a diff) with what changed and the evidence for it. Earlier versions stay in the history. Sessions started afterwards trade the new version; each logged trade records its version.',
+    { name: z.string(), rules: z.string().max(5000), change: z.string().max(1000).describe('What changed from the previous version, and which results motivated it.') },
+    args => backtestLog.updateStrategyRules(userId, args));
+
+  tool('set_holdout', 'Set held-out period',
+    'Hold out a strategy\'s data from a date onwards: its trades there are hidden from list_backtests, get_backtest and get_metrics, so rules can be tuned on earlier data and then tested on data they were not fitted to. Set it before you start tuning.',
+    { name: z.string(), from: timeInput.describe('Trades entered on or after this date are held out.') },
+    args => backtestLog.setHoldout(userId, args));
+
+  tool('evaluate_holdout', 'Evaluate on held-out data',
+    'Compare a version\'s results before and after the held-out date, with a verdict (needs 20+ held-out trades). The first evaluation of each version is frozen in its history, and every evaluation is counted: the more often held-out results are looked at, the less independent they become.',
+    { name: z.string(), version: z.number().int().min(1).optional().describe('Defaults to the current version.') },
+    args => backtestLog.evaluateHoldout(userId, args));
+
   tool('get_metrics', 'Get metrics',
     'Statistics from the Backtest Log, the same as the Metrics page: trades, win rate, expectancy and average/total R, average win/loss, payoff, profit factor, max drawdown in R, best/worst, streaks, SQN, half Kelly and P&L. '
-    + 'Filter by source (default: agent runs only), strategy, symbol, direction and date; break down by any of strategy, symbol, direction, timeframe, source, outcome, weekday, hour (UTC) or month. Use source: all with groupBy: source to compare the owner\'s results with the agent\'s.',
+    + 'Filter by source (default: agent runs only), strategy, rules version, symbol, direction, date and recorded entry conditions (where); break down by strategy, version, symbol, direction, timeframe, source, outcome, weekday, hour (UTC), month or feature:<name>. Use source: all with groupBy: source to compare the owner\'s results with the agent\'s. Trades in a strategy\'s held-out period are excluded (see evaluate_holdout).',
     {
       ...logFilters,
       source: logFilters.source.default('agent'),
-      groupBy: z.array(z.enum(['strategy', 'symbol', 'direction', 'timeframe', 'source', 'outcome', 'weekday', 'hour', 'month'])).max(4).default(['strategy']),
+      groupBy: z.array(z.string()).max(4).default(['strategy']).describe('Any of strategy, version, symbol, direction, timeframe, source, outcome, weekday, hour, month, or feature:<name> (numbers split into quartiles).'),
     },
     args => backtestLog.getMetrics(userId, args));
 

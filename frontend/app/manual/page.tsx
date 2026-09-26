@@ -462,12 +462,23 @@ export default function ManualPage() {
                   <tr><td className="term">update_backtest</td><td>Edit journal fields on any backtest: notes (or add a paragraph), lesson, tags, quality scores, mistakes. Prices and results can&apos;t be changed.</td></tr>
                   <tr><td className="term">delete_backtest</td><td>Delete a backtest <b>an agent logged</b>. Your own backtests can&apos;t be deleted by an agent. <code>delete_strategy</code> removes a strategy&apos;s definition only.</td></tr>
                   <tr><td className="term">get_metrics</td><td>The Metrics page&apos;s stats, filtered by source, strategy, symbol, direction and date, and broken down by strategy, symbol, weekday, hour, month and more. Ask it to compare your results with the agent&apos;s.</td></tr>
+                  <tr><td className="term">get_strategy</td><td>A strategy&apos;s full history: every version of its rules, what changed and why, and results per version. <code>update_strategy_rules</code> saves a new version.</td></tr>
+                  <tr><td className="term">set_holdout</td><td>Hide a strategy&apos;s later data so rules are tuned only on earlier data. <code>evaluate_holdout</code> then tests a version on it, counting every look.</td></tr>
                   <tr><td className="term">sessions</td><td><code>list_sessions</code>, <code>get_state</code>, <code>set_timeframe</code> and <code>end_session</code> manage a replay. Sessions expire a week after last use.</td></tr>
                 </tbody>
               </table>
             </div>
 
             <Callout icon="Access">An agent can <b>read</b> your whole Backtest Log and <b>add to or edit</b> journal fields on your backtests (it&apos;s told to add notes rather than overwrite yours), but it <b>can&apos;t delete</b> your backtests or change their prices and results. It can&apos;t reach anything outside Backtest: no real trades, accounts or settings.</Callout>
+            <div className="manual-sub">Letting the agent improve a strategy</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>The agent can learn from its own results, as long as it doesn&apos;t judge a change on the same data it tuned it on. Ask it to follow this loop:</p>
+            <ol className="manual-steps">
+              <li><b>Hold out the later data</b><span className="d">e.g. &quot;hold out ORB NY Open from 2026-03-01&quot;. Results after that date are hidden from it until the final test.</span></li>
+              <li><b>Find what separates winners from losers</b><span className="d">Every trade records its entry conditions (ATR, stop distance in ATRs, and whatever the agent adds, like range width). The agent splits results by them on the earlier data.</span></li>
+              <li><b>Save one change as a new version</b><span className="d">With what changed and why. Every version stays in the strategy&apos;s history, including the ones that failed.</span></li>
+              <li><b>Test it once on the held-out data</b><span className="d">Keep the change only if it holds up there. Every look at held-out results is counted, and versions made after peeking are flagged.</span></li>
+            </ol>
+            <Callout icon="Note">This doesn&apos;t retrain the AI model itself. It gives the agent a disciplined, recorded way to learn from your data, and keeps you from trusting an improvement that only exists in the data it was fitted to.</Callout>
             <div className="manual-sub">Limits</div>
             <KvGrid items={[
               { label: 'Active sessions', value: '10 per user' },

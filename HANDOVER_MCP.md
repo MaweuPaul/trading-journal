@@ -45,6 +45,14 @@ Everything in section 3 is implemented. Section 3 below still describes the desi
   - In the engine: `place_order`/`cancel_order` (limit and stop entries, filled on 1-minute candles), `modify_trade` (R stays measured from `initialStopLoss`), and `get_indicators`.
   - Blind-session trades never expose real dates, prices or snapshots through the log tools, and are left out of date-filtered queries.
 
+- **Research loop (added later).**
+  - Every agent trade stores `features` (entry conditions): `atr14` and `riskInAtr` automatically, plus anything the agent passes to `open_trade`, `place_order` or `log_trade`. Each trade also stores `strategyVersion`.
+  - `get_metrics` takes `where` (feature filters), `version`, and `groupBy` `version` / `feature:<name>` (numbers split into quartiles).
+  - `BacktestStrategy` has `versions` (rules, change, frozen first `holdoutResult`, and a `holdoutSeenBefore` flag), `holdoutFrom` and `holdoutEvaluations`. Tools: `get_strategy`, `update_strategy_rules`, `set_holdout`, `evaluate_holdout`.
+  - Held-out trades are hidden from `list_backtests`, `get_backtest` and `get_metrics`.
+  - `step` also takes `untilCloseAbove` / `untilCloseBelow`.
+  - Example client: `backend/scripts/orb_ny_open_mcp.js`.
+
 **Verified, without a live cTrader connection or database** (the sandbox couldn't reach MongoDB downloads). These checks now live in `backend/test/agentReplay.test.js` and `backend/test/mcpRoute.test.js` (run `npm test` in `backend/`), using the stub harness in `backend/fixtures/agentReplayHarness.js`:
 - Tested the engine against a synthetic candle feed. 60 trades, including ones across timeframe switches, all resolved the same way as a brute-force walk of the 1-minute data.
 - No returned candle ever closed after the clock. Forming candles were built only from revealed data.

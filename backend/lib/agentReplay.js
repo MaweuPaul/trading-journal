@@ -262,6 +262,7 @@ function viewOf(s) {
   const iso = sec => new Date((sec - shift) * 1000).toISOString().replace(/:00\.000Z$/, 'Z').replace(/\.000Z$/, 'Z');
   // cTrader prices have 5 decimals; scaled (blind) ones keep 8 significant digits.
   const px = v => (v == null ? v : b ? Number((v * scale).toPrecision(8)) : Number(v.toFixed(5)));
+  const viewFeatures = f => (f.atr14 != null ? { ...f, atr14: px(f.atr14) } : f);
   return {
     blind: Boolean(b),
     iso,
@@ -276,6 +277,7 @@ function viewOf(s) {
         direction: t.direction, entryTime: iso(t.entryTime), entryPrice: px(t.entryPrice), stopLoss: px(t.stopLoss),
         ...(t.initialStopLoss != null && t.initialStopLoss !== t.stopLoss ? { initialStopLoss: px(t.initialStopLoss) } : {}),
         takeProfit: px(t.takeProfit), riskAmount: t.riskAmount,
+        ...(t.features ? { features: viewFeatures(t.features) } : {}),
         ...(t.exitTime != null ? {
           exitTime: iso(t.exitTime), exitPrice: px(t.exitPrice), exitReason: t.exitReason, outcome: t.outcome,
           rMultiple: round(t.rMultiple), pnlUSD: round(t.pnlUSD, 2),
@@ -288,6 +290,7 @@ function viewOf(s) {
       return {
         type: o.type, direction: o.direction, price: px(o.price), stopLoss: px(o.stopLoss), takeProfit: px(o.takeProfit),
         riskAmount: o.riskAmount, placedAt: iso(o.placedAt), expiresAt: o.expiresAt == null ? null : iso(o.expiresAt),
+        ...(o.features ? { features: viewFeatures(o.features) } : {}),
       };
     },
   };
@@ -365,6 +368,7 @@ async function startSession(userId, apiKeyId, input) {
     throw new AgentError(`You already have ${active} active sessions (the limit is ${MAX_ACTIVE_SESSIONS}). End one with end_session first.`, 'TOO_MANY_SESSIONS');
   }
 
+  const strategyVersion = await currentStrategyVersion(userId, strategy);
   const blind = Boolean(input.blind);
   let windows;
   if (blind) {
@@ -391,7 +395,7 @@ async function startSession(userId, apiKeyId, input) {
 
   for (const [from, to] of windows) {
     const s = new AgentReplaySession({
-      user: userId, apiKey: apiKeyId, symbol, interval, fromMs: from * 1000, toMs: to * 1000, clock: from, strategy,
+      user: userId, apiKey: apiKeyId, symbol, interval, fromMs: from * 1000, toMs: to * 1000, clock: from, strategy, strategyVersion,
       blind: blind ? { enabled: true, timeShift: Math.floor((from - BLIND_EPOCH) / WEEK) * WEEK, priceScale: randomBlindScale() } : { enabled: false },
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
@@ -578,7 +582,8 @@ async function openTrade(userId, sessionId, input = {}) {
   if (long ? stopLoss >= entry : stopLoss <= entry) throw new AgentError(`For a ${direction} the stop must be ${long ? 'below' : 'above'} the entry (${v.px(entry)}).`);
   if (takeProfit != null && (long ? takeProfit <= entry : takeProfit >= entry)) throw new AgentError(`For a ${direction} the target must be ${long ? 'above' : 'below'} the entry (${v.px(entry)}).`);
 
-  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit, riskAmount };
+  const features = { ...(await autoFeatures(s, entry, stopLoss)), ...normalizeFeatures(input.features) };
+  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit, riskAmount, features };
   await saveSession(s);
   return { opened: v.trade(s.openTrade), state: await stateOf(s) };
 }
@@ -640,6 +645,8 @@ async function logTrade(userId, sessionId, input = {}) {
     executionQuality: Math.max(0, Math.min(5, Number(input.executionQuality) || 0)),
     mistakes: normalizeTags(input.mistakes),
     lesson: String(input.lesson || '').slice(0, 2000),
+    features: { ...(t.features || {}), ...normalizeFeatures(input.features) },
+    strategyVersion: s.strategy ? (s.strategyVersion ?? 1) : null,
   });
   s.loggedTrades += 1;
   s.closedTrade = null;
@@ -686,6 +693,41 @@ async function endSession(userId, sessionId) {
   return { ended: true, loggedTrades: s.loggedTrades, dropped };
 }
 
+// ── Entry conditions ("features") ───────────────────────────────────────────
+// Recorded on every trade so results can later be split by the conditions a
+// trade was taken in (get_metrics groupBy feature:<name>). Two are captured
+// automatically; agents add their own (range width, minutes to breakout, ...).
+const MAX_FEATURES = 20;
+function normalizeFeatures(input) {
+  if (input == null) return {};
+  if (typeof input !== 'object' || Array.isArray(input)) throw new AgentError('features must be an object of name: value pairs, e.g. { "rangeWidth": 3.2, "session": "NY" }.');
+  const out = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(key)) throw new AgentError(`Feature name "${key}" must be letters, digits or _ (max 40), starting with a letter.`);
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === 'boolean') out[key] = value;
+    else if (typeof value === 'string' && value.length <= 60) out[key] = value;
+    else throw new AgentError(`Feature "${key}" must be a number, true/false, or a short text (max 60 characters).`);
+  }
+  if (Object.keys(out).length > MAX_FEATURES) throw new AgentError(`At most ${MAX_FEATURES} features per trade.`);
+  return out;
+}
+/** atr14 (session timeframe, real price units) and the stop distance in ATRs, at the clock. */
+async function autoFeatures(s, entry, stop) {
+  const candles = await closedCandles(ctxOf(s), s.interval, s.clock, 15);
+  if (candles.length < 15) return {};
+  const tr = candles.slice(1).map((c, i) => Math.max(c.high - c.low, Math.abs(c.high - candles[i].close), Math.abs(c.low - candles[i].close)));
+  const atr = tr.reduce((a, b) => a + b, 0) / tr.length;
+  return atr > 0 ? { atr14: Number(atr.toPrecision(6)), riskInAtr: round(Math.abs(entry - stop) / atr, 3) } : {};
+}
+/** The version of a strategy's rules currently in force (1 until an agent revises them). */
+async function currentStrategyVersion(userId, name) {
+  if (!name) return null;
+  const strategy = await BacktestStrategy.findOne({ user: userId, name }).lean();
+  if (!strategy) return 1;
+  return strategy.versions && strategy.versions.length ? strategy.versions[strategy.versions.length - 1].version : 1;
+}
+
 // ── Pending orders, trade management, indicators ────────────────────────────
 function orderTouched(c, o) {
   const long = o.direction === 'long';
@@ -708,7 +750,7 @@ async function resolveOrder(ctx, order, start, end) {
       const entryPrice = gapped ? m.open : order.price;
       trade = {
         direction: order.direction, entryTime: m.time, entryPrice, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss,
-        takeProfit: order.takeProfit, riskAmount: order.riskAmount,
+        takeProfit: order.takeProfit, riskAmount: order.riskAmount, features: order.features,
       };
       // Filled beyond its own stop: out immediately at the fill.
       if (long ? entryPrice <= order.stopLoss : entryPrice >= order.stopLoss) return { filled: true, trade, closed: { which: 'sl', time: m.time, price: entryPrice } };
@@ -761,7 +803,8 @@ async function placeOrder(userId, sessionId, input = {}) {
   if (untilTime != null) expiresAt = v.timeIn(untilTime);
   if (expiresAt != null && expiresAt <= s.clock) throw new AgentError('The expiry must be after the current clock.');
 
-  s.pendingOrder = { type, direction, price, stopLoss, takeProfit, riskAmount, placedAt: s.clock, expiresAt };
+  const features = { ...(await autoFeatures(s, price, stopLoss)), ...normalizeFeatures(input.features) };
+  s.pendingOrder = { type, direction, price, stopLoss, takeProfit, riskAmount, placedAt: s.clock, expiresAt, features };
   await saveSession(s);
   return { placed: v.order(s.pendingOrder), message: 'Step forward; an order_filled event reports the fill.' };
 }
@@ -946,5 +989,6 @@ module.exports = {
   placeOrder, cancelOrder, modifyTrade, getIndicators,
   listStrategies, createStrategy, listSymbols,
   // exported for tests
+  normalizeFeatures,
   _internal: { missingRanges, addRange, mergeCandles, firstHit, levelsHit, cache, viewOf, round, plain },
 };

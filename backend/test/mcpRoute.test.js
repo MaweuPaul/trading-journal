@@ -75,8 +75,9 @@ test('MCP: a full backtest loop over HTTP', async () => {
   assert.equal(init.body.result.serverInfo.name, 'tradejournal-backtest');
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name).sort();
   assert.deepEqual(tools, ['cancel_order', 'close_trade', 'create_strategy', 'delete_backtest', 'delete_strategy', 'discard_trade', 'end_session',
-    'get_backtest', 'get_candles', 'get_indicators', 'get_metrics', 'get_state', 'list_backtests', 'list_sessions', 'list_strategies',
-    'list_symbols', 'log_trade', 'modify_trade', 'open_trade', 'place_order', 'set_timeframe', 'start_session', 'step', 'update_backtest']);
+    'evaluate_holdout', 'get_backtest', 'get_candles', 'get_indicators', 'get_metrics', 'get_state', 'get_strategy', 'list_backtests', 'list_sessions',
+    'list_strategies', 'list_symbols', 'log_trade', 'modify_trade', 'open_trade', 'place_order', 'set_holdout', 'set_timeframe', 'start_session',
+    'step', 'update_backtest', 'update_strategy_rules']);
 
   assert.ok((await call('list_symbols', { search: 'usd' })).data.symbols.includes('XAUUSD'));
   assert.equal((await call('create_strategy', { name: 'Breakout', description: 'Buy the break of the Asian range' })).data.name, 'Breakout');

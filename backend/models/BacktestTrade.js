@@ -21,6 +21,11 @@ const backtestTradeSchema = new mongoose.Schema({
   source: { type: String, enum: ['replay', 'quick', 'agent'], default: 'replay' },
   // Agent trades placed in a blind session (dates and prices hidden from the agent).
   blind: { type: Boolean, default: false },
+  // Market conditions when the trade was entered (e.g. { atr14: 4.2, riskInAtr: 1.3,
+  // rangeWidth: 3.1 }), so results can be split by them. Agent trades only, for now.
+  features: { type: mongoose.Schema.Types.Mixed, default: undefined },
+  // Version of the strategy's rules (BacktestStrategy.versions) the trade was taken under.
+  strategyVersion: { type: Number, default: null },
   symbol: { type: String, required: true },
   interval: { type: String, default: '' },
   direction: { type: String, enum: ['long', 'short'], required: true },

@@ -20,6 +20,7 @@ const tradeSchema = new mongoose.Schema({
   outcome: { type: String, enum: ['win', 'loss', 'breakeven'] },
   rMultiple: Number,
   pnlUSD: Number,
+  features: { type: mongoose.Schema.Types.Mixed, default: undefined }, // captured at entry
 }, { _id: false });
 
 // A limit/stop entry waiting to be filled. Fills are settled on 1-minute
@@ -33,6 +34,7 @@ const orderSchema = new mongoose.Schema({
   riskAmount: { type: Number, default: 100 },
   placedAt: { type: Number, required: true },  // clock (unix s) when placed
   expiresAt: { type: Number, default: null },  // unix s; null = good till cancelled
+  features: { type: mongoose.Schema.Types.Mixed, default: undefined }, // captured when placed
 }, { _id: false });
 
 const agentReplaySessionSchema = new mongoose.Schema({
@@ -44,6 +46,7 @@ const agentReplaySessionSchema = new mongoose.Schema({
   toMs: { type: Number, required: true },
   clock: { type: Number, required: true },       // unix s: close time of the last revealed candle
   strategy: { type: String, default: '' },
+  strategyVersion: { type: Number, default: null }, // rules version in force when the session started
   pendingOrder: { type: orderSchema, default: null },
   openTrade: { type: tradeSchema, default: null },
   closedTrade: { type: tradeSchema, default: null }, // resolved, waiting to be logged or discarded

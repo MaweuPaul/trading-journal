@@ -211,6 +211,21 @@ Ask your agent something like:
 | `delete_backtest`, `delete_strategy` | Delete a backtest **an agent logged** (your own can't be deleted over MCP); delete a strategy's definition (trades keep their tag) |
 | `get_metrics` | The Metrics page's stats (win rate, expectancy, profit factor, max drawdown, streaks, SQN, half Kelly and more), filtered by source, strategy, symbol, direction and date, and broken down by strategy, symbol, direction, timeframe, source, outcome, weekday, hour or month |
 | `list_sessions`, `end_session` | Your sessions; finish one |
+| `get_strategy`, `update_strategy_rules` | A strategy's full history (every rules version, what changed and why, results per version, held-out evaluations); save a new version of its rules |
+| `set_holdout`, `evaluate_holdout` | Hold out a strategy's later data so rules are tuned only on earlier data; judge a version on the held-out data (every look is counted) |
+
+### Improving a strategy (the research loop)
+
+Agents can refine a strategy from its backtest results without fooling themselves by tuning to the same data they test on:
+
+1. **Hold out the later data**: `set_holdout` (e.g. the last 6 months). Those trades' results are hidden from `list_backtests`, `get_backtest` and `get_metrics`.
+2. **Record entry conditions**: every trade stores `atr14` and `riskInAtr` automatically, and the agent adds its own through `features` (e.g. range width, minutes to breakout). `get_metrics` can then split results with `groupBy: ["feature:rangeWidth"]` (quartiles) or test a filter with `where: [{ "feature": "rangeWidth", "max": 3 }]`.
+3. **Propose one change** from that evidence and save it with `update_strategy_rules`, including what changed and why. Each logged trade records the rules version it was taken under.
+4. **Test it on the held-out period**, then call `evaluate_holdout` once. The first evaluation of each version is frozen in its history, every look is counted, and versions written after held-out results were seen are flagged as not clean tests.
+
+Ask your agent, e.g.: *"Research my ORB NY Open strategy: hold out from 2026-03-01, find what separates its winners from its losers before that date, propose one rule change, and test it on the held-out period."*
+
+`backend/scripts/orb_ny_open_mcp.js` is a worked example client that runs the ORB New York Open strategy through these tools and records its entry conditions (`TJ_MCP_URL=… TJ_KEY=… node backend/scripts/orb_ny_open_mcp.js --symbol XAUUSD --from 2025-06-02 --to 2025-09-01`).
 
 ### Troubleshooting
 

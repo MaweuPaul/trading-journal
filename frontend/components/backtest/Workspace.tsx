@@ -108,7 +108,7 @@ function fmtTick(unixSeconds: number) {
 export default function Workspace() {
   const params = useSearchParams();
   const { resolvedTheme } = useTheme();
-  const { activeSymbol, setActiveSymbol, strategies, addTrade } = useBacktest();
+  const { activeSymbol, setActiveSymbol, strategies, addTrade, currentStrategy } = useBacktest();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -176,7 +176,7 @@ export default function Workspace() {
   const [showCloseout, setShowCloseout] = useState(false);
   const [notes, setNotes] = useState('');
   const [backtestName, setBacktestName] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(() => currentStrategy ? [currentStrategy] : []);
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -642,7 +642,7 @@ export default function Workspace() {
   };
   const resetTrade = () => {
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false);
-    setNotes(''); setBacktestName(''); setTags([]); setTagDraft(null); setSaveError('');
+    setNotes(''); setBacktestName(''); setTags(currentStrategy ? [currentStrategy] : []); setTagDraft(null); setSaveError('');
   };
   useEffect(() => {
     if (!closedTrade || backtestName) return;

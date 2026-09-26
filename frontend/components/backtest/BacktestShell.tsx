@@ -19,6 +19,11 @@ function activeTab(pathname: string): TabKey {
   return 'log';
 }
 
+function sectionLabel(pathname: string, tab: TabKey): string {
+  if (pathname.startsWith('/backtest/strategies')) return 'Strategies';
+  return SECTION_LABEL[tab];
+}
+
 export function Icon({ name, className = '' }: { name: string; className?: string }) {
   return <span aria-hidden="true" className={`material-symbols-outlined ${className}`}>{name}</span>;
 }
@@ -26,7 +31,7 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
 export default function BacktestShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const tab = activeTab(pathname);
-  const { simBalance, activeSymbol } = useBacktest();
+  const { simBalance, activeSymbol, currentStrategy } = useBacktest();
   const [initials, setInitials] = useState('');
 
   useEffect(() => {
@@ -55,9 +60,15 @@ export default function BacktestShell({ children }: { children: React.ReactNode 
                 <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase tw:hidden tw:sm:inline-block">Backtest</span>
               </div>
               <div className="tw:flex tw:items-center tw:gap-space-xs tw:min-w-0">
-                <span className="tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase tw:whitespace-nowrap">{SECTION_LABEL[tab]}</span>
+                <span className="tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase tw:whitespace-nowrap">{sectionLabel(pathname, tab)}</span>
                 <span className="tw:text-on-surface-variant tw:font-body-sm tw:text-body-sm">•</span>
                 <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface tw:font-bold tw:bg-surface-container-high tw:px-space-xs tw:py-0.5 tw:rounded tw:truncate">{activeSymbol}</span>
+                {tab === 'workspace' && currentStrategy && (
+                  <>
+                    <span className="tw:text-on-surface-variant tw:font-body-sm tw:text-body-sm">•</span>
+                    <span className="tw:font-label-action tw:text-label-action tw:text-primary tw:bg-primary-container/40 tw:px-space-xs tw:py-0.5 tw:rounded tw:truncate" title="Active strategy">{currentStrategy}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>

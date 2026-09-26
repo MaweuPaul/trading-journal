@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 
 export const SIM_STARTING_BALANCE = 100_000;
 const ACTIVE_SYMBOL_KEY = 'bt-active-symbol';
+const CURRENT_STRATEGY_KEY = 'bt-current-strategy';
 
 export interface BacktestTrade {
   _id: string;
@@ -68,6 +69,8 @@ interface BacktestData {
   simBalance: number;
   activeSymbol: string;
   setActiveSymbol: (symbol: string) => void;
+  currentStrategy: string;
+  setCurrentStrategy: (name: string) => void;
 }
 
 const BacktestContext = createContext<BacktestData | null>(null);
@@ -83,6 +86,7 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeSymbol, setActiveSymbolState] = useState('XAUUSD');
+  const [currentStrategy, setCurrentStrategyState] = useState('');
   const [strategyInfo, setStrategyInfo] = useState<StrategyInfo[]>([]);
 
   const reloadStrategies = useCallback(async () => {
@@ -114,6 +118,9 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     const stored = localStorage.getItem(ACTIVE_SYMBOL_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage
     if (stored) setActiveSymbolState(stored);
+    const storedStrategy = localStorage.getItem(CURRENT_STRATEGY_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage
+    if (storedStrategy) setCurrentStrategyState(storedStrategy);
     void reload();
     void reloadStrategies();
   }, [reload, reloadStrategies]);
@@ -123,6 +130,15 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     if (!clean) return;
     setActiveSymbolState(clean);
     try { localStorage.setItem(ACTIVE_SYMBOL_KEY, clean); } catch { /* storage unavailable */ }
+  }, []);
+
+  const setCurrentStrategy = useCallback((name: string) => {
+    const clean = name.trim();
+    setCurrentStrategyState(clean);
+    try {
+      if (clean) localStorage.setItem(CURRENT_STRATEGY_KEY, clean);
+      else localStorage.removeItem(CURRENT_STRATEGY_KEY);
+    } catch { /* storage unavailable */ }
   }, []);
 
   const removeTrade = useCallback(async (id: string) => {
@@ -154,8 +170,8 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     // before this feature existed, so older data keeps showing up.
     const strategies = Array.from(new Set([...strategyInfo.map(s => s.name), ...trades.flatMap(tagsOf)])).sort((a, b) => a.localeCompare(b));
     const simBalance = SIM_STARTING_BALANCE + trades.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    return { trades, loading, error, reload, removeTrade, addTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol };
-  }, [trades, loading, error, reload, removeTrade, addTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol]);
+    return { trades, loading, error, reload, removeTrade, addTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
+  }, [trades, loading, error, reload, removeTrade, addTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
 
   return <BacktestContext.Provider value={value}>{children}</BacktestContext.Provider>;
 }

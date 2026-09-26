@@ -3437,10 +3437,10 @@ router.get('/export/status', auth, ownerOnly, async (req, res) => {
     if (fs.existsSync(OFFLINE_SCREENSHOTS_DIR)) {
       const tradeDirs = fs.readdirSync(OFFLINE_SCREENSHOTS_DIR);
       for (const d of tradeDirs) {
-        const files = fs.readdirSync(path.join(OFFLINE_SCREENSHOTS_DIR, d)).catch(() => []);
-        if (Array.isArray(files)) {
-          pendingOfflineScreenshots += files.filter(f => !f.endsWith('.meta.json')).length;
-        }
+        const dirPath = path.join(OFFLINE_SCREENSHOTS_DIR, d);
+        if (!fs.statSync(dirPath).isDirectory()) continue;
+        const files = fs.readdirSync(dirPath);
+        pendingOfflineScreenshots += files.filter(f => !f.endsWith('.meta.json')).length;
       }
     }
 

@@ -44,7 +44,7 @@ export default function AgentKeys() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
-  const [copied, setCopied] = useState<'key' | 'command' | null>(null);
+  const [copied, setCopied] = useState<'key' | 'command' | 'desktop' | null>(null);
 
   const load = useCallback(() => fetchKeys().then(setKeys, err => setError(err instanceof Error ? err.message : 'Could not load access keys')), []);
   useEffect(() => {
@@ -55,6 +55,18 @@ export default function AgentKeys() {
 
   const endpoint = typeof window !== 'undefined' ? `${window.location.origin}/api/mcp` : '/api/mcp';
   const command = created ? `claude mcp add --transport http tradejournal ${endpoint} --header "Authorization: Bearer ${created.key}"` : '';
+  // Claude Desktop can't send a custom header itself, so it goes through the
+  // mcp-remote bridge. The "Bearer ..." value lives in env because Claude
+  // Desktop on Windows doesn't escape spaces inside args.
+  const desktopConfig = created ? JSON.stringify({
+    mcpServers: {
+      tradejournal: {
+        command: 'npx',
+        args: ['-y', 'mcp-remote', endpoint, '--transport', 'http-only', ...(endpoint.startsWith('http://') ? ['--allow-http'] : []), '--header', 'Authorization:${TJ_AUTH}'],
+        env: { TJ_AUTH: `Bearer ${created.key}` },
+      },
+    },
+  }, null, 2) : '';
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -82,7 +94,7 @@ export default function AgentKeys() {
     await load();
   }
 
-  async function copy(text: string, what: 'key' | 'command') {
+  async function copy(text: string, what: 'key' | 'command' | 'desktop') {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(what);
@@ -121,10 +133,20 @@ export default function AgentKeys() {
               <button className="btn-ghost" style={small} onClick={() => copy(command, 'command')}>
                 {copied === 'command' ? <Check size={12} /> : <Copy size={12} />} {copied === 'command' ? 'Copied' : 'Copy command'}
               </button>
+            </div>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 }}>
+              Connect Claude Desktop: open Settings → Developer → Edit Config, add this to <code>claude_desktop_config.json</code> (merge it into
+              any existing <code>mcpServers</code>), then quit and reopen Claude. Needs Node.js installed.
+            </span>
+            <pre style={{ ...codeStyle, margin: 0, whiteSpace: 'pre-wrap' }}>{desktopConfig}</pre>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn-ghost" style={small} onClick={() => copy(desktopConfig, 'desktop')}>
+                {copied === 'desktop' ? <Check size={12} /> : <Copy size={12} />} {copied === 'desktop' ? 'Copied' : 'Copy config'}
+              </button>
               <button className="btn-ghost" style={small} onClick={() => setCreated(null)}>I&apos;ve saved it</button>
             </div>
             <span style={{ color: 'var(--text-muted)', fontSize: 11.5, lineHeight: 1.5 }}>
-              Claude Desktop and custom agents connect to <code>{endpoint}</code> with the same <code>Authorization: Bearer</code> header.
+              Custom agents send JSON-RPC to <code>{endpoint}</code> with an <code>Authorization: Bearer</code> header.
               Custom connectors on claude.ai (web) need OAuth sign-in, which this journal doesn&apos;t offer yet.
             </span>
           </div>

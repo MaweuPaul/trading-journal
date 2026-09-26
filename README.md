@@ -24,6 +24,7 @@ A self-hosted, offline-resilient, multi-user trading journal that syncs closed M
 | Screenshot Uploads | Attach chart screenshots with Cloudinary hosting and embedded recovery metadata |
 | Screenshot Reconstruction | Reattach images or recreate a missing core trade from metadata stored on its screenshot asset |
 | Trade Replay | Request exact historical candles from a connected cTrader Open API account, cache them briefly, and replay price action |
+| AI Agent Backtesting (MCP) | Let Claude Code, Claude Desktop or your own agent backtest a strategy on cTrader history, bar by bar with the future hidden, and log its trades to the Backtest Log as AGENT runs kept out of your own stats |
 | Offline Screenshots | Stage screenshots on disk while MongoDB is unavailable and upload them after reconnection |
 | Data Export | Download full JSON backups and flat CSV exports from the Backup page |
 | Automatic Backup | Mirror MongoDB into local JSON every 24 hours and on startup |
@@ -109,6 +110,107 @@ Share one account's performance with someone who has no login on this app — no
 4. **Rotate password** issues a new password without changing the account number a saved link points to. **Revoke access** disables it instantly — even an already-issued, unexpired session is locked out on its very next request, because every investor request re-checks the live database rather than trusting the token alone.
 
 Investor sessions are scoped by JWT to exactly three read-only endpoints (summary, trade list, and per-trade replay) and one account; they cannot reach any owner route, regardless of what the token contains.
+
+## AI Agent Backtesting (MCP)
+
+The backend runs a [Model Context Protocol](https://modelcontextprotocol.io) server at `/api/mcp`, so an AI agent can backtest your strategies for you. It replays historical candles from your connected cTrader account one bar at a time, places simulated trades, and logs them to the Backtest Log.
+
+- **No hindsight.** The replay clock lives on the server, and no candle that closes after it is ever sent to the agent. A candle that touches both the stop and the target is settled on smaller candles, down to 1 minute, the same way the Backtest chart does it.
+- **Blind mode.** Start a session with `blind: true` and the server picks a random window, shifts the dates into 1990 (weekday and time of day stay real) and rescales prices, so the model's memory of what the market did can't leak into its decisions. Your log still stores the real dates and prices.
+- **Kept apart from your stats.** Agent trades carry an **AGENT** badge (**AGENT · BLIND** for blind sessions). Every Backtest page has a **Mine / Agent / All** switch, set to **Mine** by default, so agent runs never change your own numbers unless you choose to include them.
+- **Limits.** At most 10 active sessions per user, 40 cTrader candle requests a minute per user, and 120 MCP requests a minute per key.
+
+Requirements: cTrader connected on the Accounts page (it supplies the candles), and a database connection (sessions and keys are stored in MongoDB).
+
+### 1. Create an access key
+
+On the **Accounts** page, under **AI agent access**, enter a name (e.g. "Claude Code laptop") and click **Create access key**. The key (`tjk_…`) is shown **once**, together with ready-to-copy connection settings for Claude Code and Claude Desktop, with the key filled in. Only a hash is stored, so a lost key can't be recovered: revoke it and create a new one.
+
+An access key only works on `/api/mcp`. It can't read or change anything else in the journal, and revoking it cuts access off on the very next request.
+
+The MCP URL is your **frontend** address plus `/api/mcp`, e.g. `https://your-journal.example.com/api/mcp`, or `http://localhost:3000/api/mcp` locally. The frontend forwards it to the backend like every other `/api` route.
+
+### 2a. Claude Code
+
+```bash
+claude mcp add --transport http tradejournal https://your-journal.example.com/api/mcp \
+  --header "Authorization: Bearer tjk_YOUR_KEY"
+```
+
+Then run `/mcp` inside Claude Code to check that `tradejournal` is connected.
+
+### 2b. Claude Desktop
+
+Claude Desktop can't send a custom header to a remote server itself, so it connects through [`mcp-remote`](https://github.com/geelen/mcp-remote), a small local bridge that adds the header. You need [Node.js](https://nodejs.org) installed.
+
+1. In Claude Desktop, open **Settings → Developer → Edit Config**. This opens `claude_desktop_config.json`:
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+2. Add the server (merge it into `mcpServers` if you already have others):
+
+   ```json
+   {
+     "mcpServers": {
+       "tradejournal": {
+         "command": "npx",
+         "args": [
+           "-y",
+           "mcp-remote",
+           "https://your-journal.example.com/api/mcp",
+           "--transport",
+           "http-only",
+           "--header",
+           "Authorization:${TJ_AUTH}"
+         ],
+         "env": {
+           "TJ_AUTH": "Bearer tjk_YOUR_KEY"
+         }
+       }
+     }
+   }
+   ```
+
+   - Keep `Authorization:${TJ_AUTH}` exactly as written, with no space after the colon. Claude Desktop on Windows doesn't escape spaces inside `args`, which is why the `Bearer …` value goes in `env`.
+   - For a local install, use `http://localhost:3000/api/mcp` and add `"--allow-http"` to `args`: `mcp-remote` only allows plain `http` with that flag.
+3. Quit Claude Desktop completely and reopen it. The journal's tools appear in the chat's tools menu.
+
+The Accounts page shows this config with your key already filled in, so you can copy it straight from there.
+
+### 2c. Custom agents
+
+Send JSON-RPC 2.0 requests to `POST /api/mcp` (stateless Streamable HTTP, JSON responses) with:
+
+```
+Authorization: Bearer tjk_YOUR_KEY
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+Call `initialize`, then `tools/list` and `tools/call`. Keys are only accepted in the `Authorization` header, never in the URL (URLs end up in server logs). `GET` and `DELETE` return 405. Custom connectors on claude.ai (web) need OAuth sign-in, which isn't built yet.
+
+### 3. Run a backtest
+
+Ask your agent something like:
+
+> List my backtest strategies. Start a blind 15-minute session on XAUUSD for the Breakout strategy, trade it strictly by the strategy's description, log every trade with notes explaining the setup, and show me the metrics at the end.
+
+| Tool | What it does |
+|---|---|
+| `list_symbols`, `list_strategies`, `create_strategy` | Symbols on your cTrader account; your strategies (their descriptions are the rules the agent follows) with agent results so far; create or update one |
+| `start_session` | Start a replay (`symbol`, `interval`, `from`/`to`, or `blind: true` with `lengthDays`); returns the last closed candles before the start |
+| `get_candles` | Closed candles on any timeframe before the clock, plus the still-forming higher-timeframe candle; `before` pages further back |
+| `step` | Reveal the next candles: one by default, or `bars`, `untilPrice` or `untilTime`; stops when a trade exits (`stopOnTradeExit`) |
+| `set_timeframe`, `get_state` | Change the stepping timeframe; clock, progress, last candle and open trade with unrealised R |
+| `open_trade`, `close_trade` | Enter at the last close with a required stop and an optional target and USD risk; exit manually |
+| `log_trade`, `discard_trade` | Record the closed trade in the Backtest Log (with notes, lesson, quality scores and tags), or drop it |
+| `list_sessions`, `end_session`, `get_metrics` | Your sessions; finish one; win rate, average/total R, profit factor, expectancy and max drawdown in R, overall and per strategy |
+
+### Troubleshooting
+
+- **401**: the key is wrong or revoked, or the header is missing `Bearer `.
+- **"cTrader is not connected"**: connect cTrader on the Accounts page; the agent can't fix this itself.
+- **Rate limit messages**: wait a minute. Agents should use `step` with `bars`, `untilPrice` or `stopOnTradeExit` rather than one call per candle.
+- **Claude Desktop shows no tools**: check its MCP log (`~/Library/Logs/Claude/mcp-server-tradejournal.log` on macOS, `%APPDATA%\Claude\logs\` on Windows). If `npx` isn't found, put the full path to `npx` in `command`.
 
 ## Data Redundancy and Reconstruction
 
@@ -347,6 +449,9 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 | `/api/ctrader/sync` / `/api/ctrader/sync/:ctidTraderAccountId` | POST | Sync every connected cTrader account, or just one |
 | `/api/investor/login` | POST *(public, rate-limited)* | Exchange an investor account number + password for a scoped read-only token |
 | `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | Balance, headline stats, equity curve, and a financial-fields-only trade list |
+| `/api/api-keys` | GET / POST | List the caller's AI agent access keys, or create one (the plaintext key is returned once) |
+| `/api/api-keys/:id` | DELETE | Revoke an access key |
+| `/api/mcp` | POST *(access key)* | MCP server for AI agent backtesting (stateless Streamable HTTP); see [AI Agent Backtesting](#ai-agent-backtesting-mcp) |
 | `/api/investor/trades/:id/replay` | GET *(investor token)* | The same historical candles as owner Replay, sanitized to chart-only fields (no notes/emotion/grade) |
 
 All endpoints require authentication except login and health checks. Export and recovery routes work with the same authenticated user scope as trade routes.

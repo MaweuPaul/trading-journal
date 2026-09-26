@@ -8,7 +8,7 @@ import type { PlaybookRule, PlaybookBlock, PlaybookSnapshot, Playbook } from '@/
 import {
   SlidersHorizontal, ChevronLeft, ChevronRight, List,
   X, Award, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun, Plus
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
@@ -102,6 +102,7 @@ interface Trade {
   playbookVersionId?: string;
   playbookSnapshot?: PlaybookSnapshot | null;
   playbookResponses?: Record<string, unknown>;
+  manualEntry?: boolean;
 }
 
 const GRADES = ['A', 'B', 'C', 'D', 'F'];
@@ -280,6 +281,7 @@ function TradesPageContent() {
   const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
   const [activePlaybookPhase, setActivePlaybookPhase] = useState<JournalPhase>('plan');
   const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
+  const [showAddTrade, setShowAddTrade] = useState(false);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -709,6 +711,10 @@ function TradesPageContent() {
             <h2>Trades</h2>
             <p>{total.toLocaleString()} closed positions synced from MT5</p>
           </div>
+          <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
+            <Plus size={14} />
+            Add Trade
+          </button>
         </div>
       </div>
 
@@ -867,6 +873,13 @@ function TradesPageContent() {
                         </td>
                         <td className="text" style={{ fontWeight: 600 }}>
                           <span>{t.symbol}</span>
+                          {t.manualEntry && (
+                            <span style={{
+                              display: 'inline-block', marginLeft: 5, fontSize: 9, fontWeight: 700,
+                              background: 'var(--bg-hover)', color: 'var(--text-muted)',
+                              border: '1px solid var(--border)', borderRadius: 4, padding: '1px 4px', verticalAlign: 'middle',
+                            }} title="Hand-entered, not synced from a broker">MANUAL</span>
+                          )}
                           {t.accountType && <span className={`trade-account-type ${t.accountType}`}>{t.accountType}</span>}
                           {t.accountLogin && <span className="trade-account-id" title={[t.accountName, t.accountLogin, t.accountServer].filter(Boolean).join(' · ')}>#{t.accountLogin}</span>}
                         </td>
@@ -1595,6 +1608,141 @@ function TradesPageContent() {
         canNavigatePrev={trades.findIndex(trade => trade._id === replayTradeId) > 0}
         canNavigateNext={(() => { const i = trades.findIndex(trade => trade._id === replayTradeId); return i >= 0 && i < trades.length - 1; })()}
       />}
+      {showAddTrade && (
+        <AddTradeModal
+          onClose={() => setShowAddTrade(false)}
+          onSaved={() => { setShowAddTrade(false); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddTradeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [symbol, setSymbol] = useState('');
+  const [direction, setDirection] = useState<'BUY' | 'SELL'>('BUY');
+  const [entryPrice, setEntryPrice] = useState('');
+  const [exitPrice, setExitPrice] = useState('');
+  const [lotSize, setLotSize] = useState('');
+  const [pnlUSD, setPnlUSD] = useState('');
+  const [openTime, setOpenTime] = useState('');
+  const [closeTime, setCloseTime] = useState('');
+  const [accountType, setAccountType] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const field: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 8,
+    background: 'var(--bg-surface)', border: '1px solid var(--border)',
+    color: 'var(--text-primary)', fontSize: 13,
+  };
+  const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 };
+
+  const submit = async () => {
+    setError('');
+    if (!symbol.trim()) { setError('Symbol is required.'); return; }
+    if (!entryPrice || !exitPrice || !lotSize || !pnlUSD) { setError('Entry price, exit price, lot size, and P&L are all required.'); return; }
+    if (!openTime || !closeTime) { setError('Open and close time are both required.'); return; }
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API}/trades/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          symbol: symbol.trim(), direction,
+          entryPrice: parseFloat(entryPrice), exitPrice: parseFloat(exitPrice),
+          lotSize: parseFloat(lotSize), pnlUSD: parseFloat(pnlUSD),
+          openTime: new Date(openTime).toISOString(), closeTime: new Date(closeTime).toISOString(),
+          accountType, notes,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Could not save trade'); setSaving(false); return; }
+      onSaved();
+    } catch (e: any) {
+      setError(e?.message || 'Could not save trade');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <div className="drawer" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+        <div className="drawer-header">
+          <div>
+            <h3>Add Trade</h3>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>For a trade your broker never recorded</span>
+          </div>
+          <button className="drawer-close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="drawer-body" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div>
+              <label style={label}>Symbol</label>
+              <input style={field} value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="e.g. XAUUSD" />
+            </div>
+            <div>
+              <label style={label}>Direction</label>
+              <select style={field} value={direction} onChange={e => setDirection(e.target.value as 'BUY' | 'SELL')}>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={label}>Entry price</label>
+              <input style={field} type="number" step="any" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} />
+            </div>
+            <div>
+              <label style={label}>Exit price</label>
+              <input style={field} type="number" step="any" value={exitPrice} onChange={e => setExitPrice(e.target.value)} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={label}>Lot size</label>
+              <input style={field} type="number" step="any" value={lotSize} onChange={e => setLotSize(e.target.value)} />
+            </div>
+            <div>
+              <label style={label}>P&amp;L ($)</label>
+              <input style={field} type="number" step="any" value={pnlUSD} onChange={e => setPnlUSD(e.target.value)} placeholder="Negative for a loss" />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={label}>Open time</label>
+              <input style={field} type="datetime-local" value={openTime} onChange={e => setOpenTime(e.target.value)} />
+            </div>
+            <div>
+              <label style={label}>Close time</label>
+              <input style={field} type="datetime-local" value={closeTime} onChange={e => setCloseTime(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label style={label}>Account type (optional)</label>
+            <select style={field} value={accountType} onChange={e => setAccountType(e.target.value)}>
+              <option value="">Unspecified</option>
+              <option value="live">Live</option>
+              <option value="demo">Demo</option>
+            </select>
+          </div>
+          <div>
+            <label style={label}>Notes (optional)</label>
+            <textarea className="drawer-textarea" style={{ minHeight: 60, fontSize: 12 }} value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+          {error && (
+            <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red-border)', color: 'var(--red)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+              {error}
+            </div>
+          )}
+          <button className="btn btn-primary" disabled={saving} onClick={submit} style={{ justifyContent: 'center' }}>
+            {saving ? 'Saving...' : 'Save Trade'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

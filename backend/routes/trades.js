@@ -1862,6 +1862,59 @@ router.get('/trades/latest-close', auth, async (req, res) => {
   }
 });
 
+// POST /api/trades/manual  hand-entered trade, e.g. one your broker never
+// recorded. Only the computed fields (duration, running balance) are
+// derived here; everything else is exactly what the trader typed in.
+router.post('/trades/manual', auth, ownerOnly, async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Manual trade entry needs a connected database. Unavailable while running offline.' });
+  }
+  try {
+    const { symbol, direction, entryPrice, exitPrice, lotSize, pnlUSD, openTime, closeTime, notes, accountType } = req.body;
+
+    if (!symbol || typeof symbol !== 'string') return res.status(400).json({ error: 'Symbol is required' });
+    if (direction !== 'BUY' && direction !== 'SELL') return res.status(400).json({ error: 'Direction must be BUY or SELL' });
+    const entry = Number(entryPrice), exit = Number(exitPrice), lots = Number(lotSize), pnl = Number(pnlUSD);
+    if (!Number.isFinite(entry) || entry <= 0) return res.status(400).json({ error: 'Entry price must be a positive number' });
+    if (!Number.isFinite(exit) || exit <= 0) return res.status(400).json({ error: 'Exit price must be a positive number' });
+    if (!Number.isFinite(lots) || lots <= 0) return res.status(400).json({ error: 'Lot size must be a positive number' });
+    if (!Number.isFinite(pnl)) return res.status(400).json({ error: 'P&L must be a number' });
+    const openDate = new Date(openTime);
+    const closeDate = new Date(closeTime);
+    if (Number.isNaN(openDate.getTime())) return res.status(400).json({ error: 'Open time is required' });
+    if (Number.isNaN(closeDate.getTime())) return res.status(400).json({ error: 'Close time is required' });
+    if (closeDate < openDate) return res.status(400).json({ error: 'Close time cannot be before open time' });
+
+    // Best-effort running balance: chain off whichever trade most recently
+    // closed before this one. Unlike a broker sync, a manual insert doesn't
+    // shift every later trade's balance -- Fix Balances can re-anchor from a
+    // real account balance later if this drifts.
+    const priorTrade = await Trade.findOne({ user: req.user.userId, closeTime: { $lte: closeDate } }).sort({ closeTime: -1 }).select('runningBalance').lean();
+    const runningBalance = (priorTrade?.runningBalance || 0) + pnl;
+
+    const trade = await Trade.create({
+      dealId: `manual-${new mongoose.Types.ObjectId().toString()}`,
+      symbol: symbol.trim().toUpperCase(),
+      direction,
+      entryPrice: entry,
+      exitPrice: exit,
+      lotSize: lots,
+      pnlUSD: pnl,
+      openTime: openDate,
+      closeTime: closeDate,
+      durationMinutes: Math.max(0, Math.round((closeDate - openDate) / 60000)),
+      runningBalance,
+      notes: String(notes || '').slice(0, 2000),
+      accountType: accountType === 'live' || accountType === 'demo' ? accountType : '',
+      manualEntry: true,
+      user: req.user.userId,
+    });
+    res.status(201).json(trade);
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not save manual trade' });
+  }
+});
+
 // GET /api/trades  all trades, newest frst, wth optonal flters
 router.get('/trades', auth, ownerOnly, async (req, res) => {
   try {

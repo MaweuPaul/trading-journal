@@ -179,9 +179,8 @@ export default function ManualPage() {
             <div className="manual-sub">Maintenance tools</div>
             <ul className="manual-feature-list">
               <li><b>Resync</b> <span className="muted">— requests a fresh pull from your broker (the Desktop Sync App or cTrader connection needs to be active).</span></li>
-              <li><b>Remove duplicates</b> <span className="muted">— de-dupes any doubled-up trade rows, with a confirmation first.</span></li>
-              <li><b>Fix Balances</b> <span className="muted">— re-anchors every trade&apos;s running balance from a current MT5 balance you type in. Pick a single account first if you have more than one connected.</span></li>
             </ul>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12.5, marginTop: -4, marginBottom: 9 }}>Remove duplicates and Fix Balances still exist under the hood for recovery situations, just without buttons on screen — ask whoever runs your instance if you ever need one run.</p>
             <Callout icon="Tip">A warning banner appears whenever the numbers on screen are blending more than one broker account — balance and drawdown aren&apos;t meaningful mixed together, so switch to the account selector when you see it.</Callout>
           </Chapter>
 
@@ -191,6 +190,7 @@ export default function ManualPage() {
               <li>Filter by <b>Symbol</b>, <b>Direction</b>, <b>Account type</b> (Live/Demo), <b>Trading account</b>, and a date range — filters are saved in the URL, so a filtered view can be bookmarked or shared.</li>
               <li><b>Group by session</b> clusters trades under Tokyo / London / London–NY Overlap / New York / Pacific headers, each with its own trade count, net P&amp;L, and win rate.</li>
               <li>Re-entries appear nested under their parent trade (indented, tagged &quot;RE-ENT of #ticket&quot;); trades sharing a position get a colored stripe down the left edge.</li>
+              <li><b>Add Trade</b> <span className="muted">— for a fill your broker never recorded. Type in symbol, direction, entry/exit price, lot size, P&amp;L, and open/close time; it&apos;s saved as a real trade (running balance chained off the trade before it) and tagged &quot;MANUAL&quot; in the symbol column so it&apos;s never confused with a synced one.</span></li>
             </ul>
             <div className="manual-sub">The Journal Drawer</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 10 }}>Click any row to open it. This is where a closed trade turns into a journaled one.</p>
@@ -202,7 +202,7 @@ export default function ManualPage() {
               <li><b>Re-entry linking</b> <span className="muted">— mark a trade as a re-entry, search for its parent by ticket number, and note why you re-entered.</span></li>
               <li><b>Trade Replay</b> <span className="muted">— opens a candlestick chart of exactly what happened, with Prev/Next buttons to step to the next trade without closing the modal.</span></li>
             </ul>
-            <Callout icon="Not here" warn>There&apos;s no manual trade entry, price/lot editing, deletion, bulk actions, or CSV export on this page — trades are read-only records from your broker. (Full exports live under Backup.)</Callout>
+            <Callout icon="Not here" warn>Synced trades still can&apos;t be edited, deleted, or bulk-actioned — a broker-synced fill&apos;s price, lot size, and P&amp;L are permanent facts. Manually-added trades are the one exception where you control those numbers, since you typed them in yourself. (Full exports live under Backup.)</Callout>
           </Chapter>
 
           <Chapter id="calendar" num="03" route="/calendar" title="Calendar" purpose="A month grid of daily P&L, for spotting the days and weeks that actually make or break your month.">

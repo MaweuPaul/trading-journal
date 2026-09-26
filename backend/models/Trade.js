@@ -82,6 +82,11 @@ const tradeSchema = new mongoose.Schema({
     uploadedAt: { type: Date, default: Date.now },
   }],
   synced: { type: Date, default: Date.now },
+  // True for a trade typed in by hand on the Trades page rather than synced
+  // from a broker -- useful for a trade your broker never recorded (a
+  // backtest you want in real history, an OTC fill, etc). Never touched by
+  // the MT5/cTrader sync pipeline's dealId matching.
+  manualEntry: { type: Boolean, default: false },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
 }, { timestamps: true });
 

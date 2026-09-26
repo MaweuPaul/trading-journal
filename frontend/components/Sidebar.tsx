@@ -170,6 +170,7 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
           <span className="sync-dot" />
           <span>{accountSummary.total === 0 ? 'No trading accounts' : `${accountSummary.connected}/${accountSummary.enabled} accounts connected`}</span>
         </div>
+        <Link href="/privacy" className="sidebar-privacy-link" onClick={onClose}>Privacy &amp; data use</Link>
       </div>
     </>
   );
@@ -179,7 +180,7 @@ export default function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
 
-  if (path === '/login' || path === '/signup' || path.startsWith('/investor')) return null;
+  if (path === '/login' || path === '/signup' || path === '/privacy' || path.startsWith('/investor')) return null;
 
   return (
     <>

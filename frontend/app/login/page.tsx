@@ -133,6 +133,9 @@ export default function LoginPage() {
         <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
           🔒 Secure Private Session
         </div>
+        <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '6px' }}>
+          <Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link>
+        </div>
       </div>
     </div>
   );

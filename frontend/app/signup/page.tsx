@@ -88,6 +88,7 @@ export default function SignupPage() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12 }}><Link href="/login" style={{ color: 'var(--accent)', fontWeight: 700 }}>Already have an account? Sign in</Link></div>
+        <div style={{ textAlign: 'center', marginTop: 8, fontSize: 11 }}><Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link></div>
       </div>
     </div>
   );

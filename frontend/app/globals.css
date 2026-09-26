@@ -294,6 +294,16 @@ body {
 .sync-pill.attention .sync-dot { background: var(--amber); box-shadow: 0 0 0 2px #f59e0b33; animation: none; }
 .sync-pill.attention span { color: var(--amber); }
 
+.sidebar-privacy-link {
+  display: block;
+  text-align: center;
+  margin-top: 10px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.sidebar-privacy-link:hover { color: var(--text-secondary); text-decoration: underline; }
+
 /* ══════════════════════════════
    TOPBAR (mobile)
 ══════════════════════════════ */
@@ -2618,6 +2628,12 @@ body:has(.login-container) .main-content {
    240px margin .main-content normally reserves for it just wastes space
    and clips wide content (like the trades table) instead of using it. */
 body:has(.investor-view) .main-content {
+  margin-left: 0 !important;
+}
+
+/* Privacy page has no Sidebar when reached from login/signup (see Sidebar.tsx's
+   path check) — drop the margin the sidebar would otherwise leave behind. */
+body:has(.privacy-page) .main-content {
   margin-left: 0 !important;
 }
 

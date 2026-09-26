@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { Hash, Lock, Eye, Loader2, AlertCircle } from 'lucide-react';
 
 const API = '/api';
@@ -92,6 +93,9 @@ function InvestorLoginForm() {
 
         <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
           🔒 Read-only — no changes can be made from this view
+        </div>
+        <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '10px' }}>
+          <Link href="/privacy" style={{ color: 'var(--text-muted)' }}>What data can I see here?</Link>
         </div>
       </div>
     </div>

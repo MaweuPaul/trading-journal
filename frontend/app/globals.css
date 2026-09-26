@@ -3530,11 +3530,21 @@ ul.manual-feature-list > li .muted { color: var(--text-muted); font-weight: 400;
 }
 .manual-steps > li b { display: block; margin-bottom: 2px; color: var(--text-primary); }
 .manual-steps > li span.d { color: var(--text-muted); font-size: 12.5px; line-height: 1.5; }
+.manual-steps > li span.d b { display: inline; margin: 0; }
+
+.manual-code {
+  margin: 10px 0 14px; padding: 12px 14px; overflow-x: auto;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font: 500 11.5px/1.6 var(--font-mono); color: var(--text-primary); white-space: pre;
+}
+.manual-code code { font: inherit; background: none; padding: 0; border: 0; }
 
 .manual-table-wrap { overflow-x: auto; }
 table.manual-ref { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12.5px; }
 table.manual-ref th, table.manual-ref td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
 table.manual-ref th { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); font-weight: 700; }
+/* The app-wide `tbody td` rule is for data tables (mono, no wrap); manual tables are prose. */
+table.manual-ref td:not(.term) { font-family: var(--font-sans); white-space: normal; }
 table.manual-ref td.term { font-family: var(--font-mono); font-weight: 700; color: var(--accent); white-space: nowrap; }
 table.manual-ref td:not(.term) { color: var(--text-secondary); }
 

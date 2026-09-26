@@ -17,9 +17,10 @@ const SECTIONS: Section[] = [
   { id: 'pretrade', num: '08', route: '/pretrade', group: 'Strategy', title: 'Pre-Trade Analysis' },
   { id: 'knowledge', num: '09', route: '/knowledge', group: 'Strategy', title: 'Knowledge Base' },
   { id: 'backtest', num: '10', route: '/backtest', group: 'Strategy', title: 'Backtest' },
-  { id: 'accounts', num: '11', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
-  { id: 'backup', num: '12', route: '/archive', group: 'Account & data', title: 'Backup & export' },
-  { id: 'investor', num: '13', route: '/investor', group: 'Account & data', title: 'Investor mode' },
+  { id: 'ai-agents', num: '11', route: '/api/mcp', group: 'Strategy', title: 'AI agent backtesting' },
+  { id: 'accounts', num: '12', route: '/accounts', group: 'Account & data', title: 'Accounts & syncing' },
+  { id: 'backup', num: '13', route: '/archive', group: 'Account & data', title: 'Backup & export' },
+  { id: 'investor', num: '14', route: '/investor', group: 'Account & data', title: 'Investor mode' },
   { id: 'glossary', num: '—', title: 'Glossary' },
 ];
 
@@ -50,6 +51,41 @@ function Pills({ items }: { items: string[] }) {
     </div>
   );
 }
+function Code({ children }: { children: string }) {
+  return <pre className="manual-code"><code>{children}</code></pre>;
+}
+
+const CLAUDE_CODE_CMD = `claude mcp add --transport http tradejournal \\
+  https://YOUR-JOURNAL-ADDRESS/api/mcp \\
+  --header "Authorization: Bearer tjk_YOUR_KEY"`;
+const DESKTOP_CONFIG = `{
+  "mcpServers": {
+    "tradejournal": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://YOUR-JOURNAL-ADDRESS/api/mcp",
+        "--transport",
+        "http-only",
+        "--header",
+        "Authorization:\${TJ_AUTH}"
+      ],
+      "env": {
+        "TJ_AUTH": "Bearer tjk_YOUR_KEY"
+      }
+    }
+  }
+}`;
+const AGENT_HEADERS = `POST https://YOUR-JOURNAL-ADDRESS/api/mcp
+Authorization: Bearer tjk_YOUR_KEY
+Content-Type: application/json
+Accept: application/json, text/event-stream`;
+const FIRST_PROMPT = `List my backtest strategies. Start a blind 15-minute session on XAUUSD
+for the Breakout strategy, trade it strictly by the strategy's description,
+log every trade with notes explaining the setup, and show me the metrics
+at the end.`;
+
 function Chapter({ id, num, route, title, purpose, children }: { id: string; num: string; route?: string; title: string; purpose: string; children: ReactNode }) {
   return (
     <section className="manual-chapter" id={id}>
@@ -328,12 +364,113 @@ export default function ManualPage() {
             <div className="manual-sub">Log &amp; Metrics</div>
             <ul className="manual-feature-list">
               <li><b>Log</b> lists every saved backtest, filterable by strategy, symbol, and outcome, with search and sort; each row opens an inspector with its snapshot and a &quot;Load in Workspace&quot; button.</li>
+              <li>Trades logged by an AI agent carry an <b>AGENT</b> badge and are hidden from your stats until you pick <b>Agent</b> or <b>All</b> in the header switch. See <a href="#ai-agents">AI agent backtesting</a>.</li>
               <li><b>Metrics</b> — Profit Factor, Expectancy, SQN Rating, Avg Win/Loss, plus Sharpe, Sortino, Calmar, Half Kelly, Annualized R, and Volatility, all computed from your backtest log.</li>
             </ul>
             <Callout icon="Note">Backtest trades never touch your real account balance or history — they&apos;re entirely separate from the synced trades everywhere else in the app.</Callout>
           </Chapter>
 
-          <Chapter id="accounts" num="11" route="/accounts" title="Accounts & syncing" purpose="Where every broker connection, the Desktop Sync App, and investor access are all managed.">
+          <Chapter id="ai-agents" num="11" route="/api/mcp" title="AI agent backtesting" purpose="Connect Claude Code, Claude Desktop or your own AI agent so it can backtest a strategy for you: replaying cTrader history bar by bar with the future hidden, placing simulated trades, and logging them to your Backtest Log.">
+            <div className="manual-sub">Before you start</div>
+            <ul className="manual-feature-list">
+              <li><b>cTrader connected</b> on the Accounts page. It supplies the historical candles; without it every session fails with &quot;cTrader is not connected&quot;.</li>
+              <li><b>At least one strategy with a description</b> (Backtest → Strategies). The agent reads the description as the rules it must follow, so write it the way you&apos;d explain the setup to another trader: entry trigger, stop placement, target, and when not to trade.</li>
+              <li><b>Your journal&apos;s address.</b> The MCP address is the address you open the journal at, plus <code>/api/mcp</code>. For example <code>https://my-journal.example.com/api/mcp</code>, or <code>http://localhost:3000/api/mcp</code> when running it on your own computer.</li>
+            </ul>
+
+            <div className="manual-sub">Step 1 · Create an access key</div>
+            <ol className="manual-steps">
+              <li><b>Open Accounts</b><span className="d">Scroll to the bottom, to the <b>AI agent access</b> card.</span></li>
+              <li><b>Name the key</b><span className="d">Use the device or agent it&apos;s for, e.g. &quot;Claude Desktop laptop&quot;. One key per device makes it easy to revoke just one later.</span></li>
+              <li><b>Click Create access key</b><span className="d">The key (it starts with <code>tjk_</code>) appears <b>once</b>, together with a ready-to-copy Claude Code command and Claude Desktop config with the key already filled in. Copy what you need before clicking <b>I&apos;ve saved it</b>.</span></li>
+            </ol>
+            <Callout icon="Security" warn>Treat the key like a password. It can only reach the backtest tools (it can&apos;t read or change your trades, accounts or anything else), but anyone holding it can run backtests as you. Only a fingerprint is stored, so a lost key can&apos;t be shown again: revoke it and create a new one.</Callout>
+
+            <div className="manual-sub">Step 2a · Connect Claude Code</div>
+            <ol className="manual-steps">
+              <li><b>Open a terminal</b><span className="d">Any folder works; the connection is saved to your Claude Code settings.</span></li>
+              <li><b>Run the command from the Accounts card</b><span className="d">It looks like this, with your address and key in place:</span></li>
+            </ol>
+            <Code>{CLAUDE_CODE_CMD}</Code>
+            <ol className="manual-steps" start={3} style={{ counterReset: 'mstep 2' }}>
+              <li><b>Check the connection</b><span className="d">Start <code>claude</code> and type <code>/mcp</code>. <code>tradejournal</code> should be listed as connected, with 15 tools.</span></li>
+            </ol>
+
+            <div className="manual-sub">Step 2b · Connect Claude Desktop</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Claude Desktop can&apos;t attach an access key to a remote server by itself, so it connects through <b>mcp-remote</b>, a small free bridge that runs on your computer and adds the key to every request. Claude Desktop starts and stops it for you.</p>
+            <ol className="manual-steps">
+              <li><b>Install Node.js</b><span className="d">Download the LTS version from nodejs.org and install it (the bridge runs on it). Skip this if you already have it: running <code>node -v</code> in a terminal prints a version number.</span></li>
+              <li><b>Open Claude Desktop&apos;s config file</b><span className="d">In Claude Desktop go to <b>Settings → Developer → Edit Config</b>. This opens <code>claude_desktop_config.json</code>. On a Mac it lives in <code>~/Library/Application Support/Claude/</code>; on Windows in <code>%APPDATA%\Claude\</code>.</span></li>
+              <li><b>Paste the config from the Accounts card</b><span className="d">Use the <b>Copy config</b> button: your address and key are already filled in. It looks like this. If the file already has an <code>mcpServers</code> section, add the <code>&quot;tradejournal&quot;: {'{ … }'}</code> part inside it rather than pasting a second one.</span></li>
+            </ol>
+            <Code>{DESKTOP_CONFIG}</Code>
+            <ol className="manual-steps" start={4} style={{ counterReset: 'mstep 3' }}>
+              <li><b>Save the file and restart Claude Desktop</b><span className="d">Fully quit it (on Mac, Claude → Quit; on Windows, right-click the tray icon → Quit), then open it again. Closing the window isn&apos;t enough.</span></li>
+              <li><b>Check the connection</b><span className="d">In a new chat, open the tools menu (the sliders icon under the message box). <b>tradejournal</b> should be listed with its tools. The first time the agent uses a tool, Claude asks for permission: choose <b>Allow always</b> to avoid being asked on every step.</span></li>
+            </ol>
+            <Callout icon="Tip">Keep <code>Authorization:${'{'}TJ_AUTH{'}'}</code> exactly as written, with no space after the colon. Claude Desktop on Windows breaks arguments that contain spaces, which is why the <code>Bearer …</code> part lives in <code>env</code>. Running the journal locally on <code>http://localhost:3000</code>? Add <code>&quot;--allow-http&quot;</code> to <code>args</code> (the Accounts card does this for you when you&apos;re on http).</Callout>
+
+            <div className="manual-sub">Step 2c · Connect your own agent</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Any MCP client that supports the Streamable HTTP transport can connect. Send JSON-RPC requests with these headers, starting with <code>initialize</code>, then <code>tools/list</code> and <code>tools/call</code>:</p>
+            <Code>{AGENT_HEADERS}</Code>
+            <ul className="manual-feature-list">
+              <li>The key is only accepted in the <code>Authorization</code> header, never in the address (addresses end up in server logs).</li>
+              <li>claude.ai in the browser can&apos;t connect yet: its custom connectors need an OAuth sign-in, which the journal doesn&apos;t offer.</li>
+            </ul>
+
+            <div className="manual-sub">Step 3 · Run your first backtest</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Ask in plain language. Name the strategy, the symbol and the timeframe, and ask it to explain each trade:</p>
+            <Code>{FIRST_PROMPT}</Code>
+            <ul className="manual-feature-list">
+              <li>The agent starts a session, reads candles, steps forward until its setup forms, opens a trade with a stop (and usually a target), steps until the trade exits, and logs it with notes.</li>
+              <li><b>Blind sessions</b> (ask for &quot;blind&quot;): the server picks a random date range, shifts the dates into 1990 and rescales prices, so the agent can&apos;t recognise the period from memory. Weekdays and times of day stay real. Your log still records the real dates and prices.</li>
+              <li><b>No hindsight:</b> the agent is never sent a candle that closes after the replay clock, on any timeframe. A candle touching both stop and target is settled on smaller candles, down to 1 minute, exactly like the Workspace chart.</li>
+            </ul>
+
+            <div className="manual-sub">Where the results show up</div>
+            <ul className="manual-feature-list">
+              <li>Agent trades appear in <b>Backtest → Log</b> with an <b>AGENT</b> badge (<b>AGENT · BLIND</b> for blind sessions), filed under the session&apos;s strategy.</li>
+              <li>They are <b>kept out of your own numbers</b> by default. Once an agent has logged something, a <b>Mine / Agent / All</b> switch appears in the Backtest header (top of the Log on phones). Every Backtest page (Overview, Log, Metrics, Strategies) follows it.</li>
+              <li>Open any agent trade to read its notes, lesson and quality scores, the same way as your own backtests.</li>
+            </ul>
+
+            <div className="manual-sub">What the agent can do</div>
+            <div className="manual-table-wrap">
+              <table className="manual-ref">
+                <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+                <tbody>
+                  <tr><td className="term">list_symbols</td><td>Symbol names on your cTrader account.</td></tr>
+                  <tr><td className="term">list_strategies</td><td>Your strategies, their descriptions (the rules), and agent results so far. <code>create_strategy</code> adds one.</td></tr>
+                  <tr><td className="term">start_session</td><td>Start a replay on a symbol, timeframe and date range, or a blind one.</td></tr>
+                  <tr><td className="term">get_candles</td><td>Closed candles on any timeframe before the clock, plus the still-forming higher-timeframe candle.</td></tr>
+                  <tr><td className="term">step</td><td>Reveal the next candles: one at a time, a number of bars, until a price or time, or until the open trade exits.</td></tr>
+                  <tr><td className="term">open_trade</td><td>Enter at the last close with a required stop, optional target and USD risk. <code>close_trade</code> exits manually.</td></tr>
+                  <tr><td className="term">log_trade</td><td>Save the closed trade to the Backtest Log with notes. <code>discard_trade</code> drops it instead.</td></tr>
+                  <tr><td className="term">get_metrics</td><td>Win rate, average and total R, profit factor, expectancy and max drawdown, overall and per strategy.</td></tr>
+                  <tr><td className="term">sessions</td><td><code>list_sessions</code>, <code>get_state</code>, <code>set_timeframe</code> and <code>end_session</code> manage a replay. Sessions expire a week after last use.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="manual-sub">Limits</div>
+            <KvGrid items={[
+              { label: 'Active sessions', value: '10 per user' },
+              { label: 'Agent requests', value: '120 / min per key' },
+              { label: 'Candle downloads', value: '40 / min per user' },
+              { label: 'Session expiry', value: '7 days idle' },
+            ]} />
+
+            <div className="manual-sub">Troubleshooting</div>
+            <ul className="manual-feature-list">
+              <li><b>401 / &quot;invalid or has been revoked&quot;</b>: the key is wrong or revoked, or <code>Bearer </code> is missing in front of it. Create a new key and update your config.</li>
+              <li><b>&quot;cTrader is not connected&quot;</b>: connect cTrader on the Accounts page. The agent can&apos;t fix this for you.</li>
+              <li><b>Rate limit messages</b>: wait a minute. Tell the agent to step several bars at a time (or until a price) instead of one call per candle.</li>
+              <li><b>Claude Desktop shows no tradejournal tools</b>: check the file is valid JSON (a missing comma is the usual culprit), that Node.js is installed, and that you fully restarted Claude. Its log is at <code>~/Library/Logs/Claude/mcp-server-tradejournal.log</code> on Mac, or in <code>%APPDATA%\Claude\logs\</code> on Windows. If it says <code>npx</code> isn&apos;t found, replace <code>&quot;npx&quot;</code> with its full path (run <code>which npx</code> on Mac or <code>where npx</code> on Windows).</li>
+              <li><b>Revoking a key</b>: Accounts → AI agent access → Revoke. Any agent using it is cut off on its very next request.</li>
+            </ul>
+          </Chapter>
+
+          <Chapter id="accounts" num="12" route="/accounts" title="Accounts & syncing" purpose="Where every broker connection, the Desktop Sync App, and investor access are all managed.">
             <div className="manual-sub">Connecting MT5</div>
             <ol className="manual-steps">
               <li><b>Add account</b><span className="d">Give it a label, your MT5 login number, broker server, and your MT5 <i>investor</i> (read-only) password — never your trading password.</span></li>
@@ -353,9 +490,13 @@ export default function ManualPage() {
               <li><b>Copy investor link</b> gives you a shareable <code>/investor/login</code> URL; copy the password separately.</li>
               <li><b>Rotate password</b> issues a new one; <b>Revoke access</b> disables the link entirely.</li>
             </ul>
+            <div className="manual-sub">AI agent access</div>
+            <ul className="manual-feature-list">
+              <li>Create, list and revoke the access keys that let AI agents run backtests for you. Full connection steps are in <a href="#ai-agents">AI agent backtesting</a>.</li>
+            </ul>
           </Chapter>
 
-          <Chapter id="backup" num="12" route="/archive" title="Backup & export" purpose="Confirm your data is safe and pull a full export — this page reads and downloads, it doesn't restore.">
+          <Chapter id="backup" num="13" route="/archive" title="Backup & export" purpose="Confirm your data is safe and pull a full export — this page reads and downloads, it doesn't restore.">
             <ul className="manual-feature-list">
               <li>A single status strip confirms your trade count is backed up, with a Refresh button and the last-updated time — the account-level and database-internal detail behind that lives on the server, not in front of you.</li>
               <li>If any screenshots are still uploading from an earlier offline moment, a banner shows how many are pending; they finish syncing automatically once you&apos;re back online.</li>
@@ -364,7 +505,7 @@ export default function ManualPage() {
             <Callout icon="One-way only" warn>There&apos;s no restore/import button on this page, even though the JSON export is restore-capable. Treat this page as export-only.</Callout>
           </Chapter>
 
-          <Chapter id="investor" num="13" route="/investor" title="Investor mode" purpose="A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.">
+          <Chapter id="investor" num="14" route="/investor" title="Investor mode" purpose="A no-signup, read-only window into one specific account's performance — for a partner, fund investor, or anyone you report to.">
             <div className="manual-sub">What the investor sees</div>
             <KvGrid items={[
               { label: 'Balance', value: 'Live' },
@@ -393,6 +534,9 @@ export default function ManualPage() {
               <table className="manual-ref">
                 <thead><tr><th>Term</th><th>What it means here</th></tr></thead>
                 <tbody>
+                  <tr><td className="term">MCP</td><td>Model Context Protocol: the standard way AI apps like Claude connect to outside tools. The journal&apos;s MCP server lives at <code>/api/mcp</code>.</td></tr>
+                  <tr><td className="term">Access key</td><td>A <code>tjk_…</code> key that lets an AI agent use the backtest tools, and nothing else in the journal.</td></tr>
+                  <tr><td className="term">Blind session</td><td>An agent backtest where dates are shifted and prices rescaled, so the agent can&apos;t recognise the period.</td></tr>
                   <tr><td className="term">R / Avg R</td><td>Result measured as a multiple of what you risked. A trade risking $100 that made $250 is &quot;2.5R.&quot;</td></tr>
                   <tr><td className="term">Setup vs. Ticket</td><td>A &quot;ticket&quot; is one broker execution; a &quot;setup&quot; groups a ticket with any of its re-entries.</td></tr>
                   <tr><td className="term">PDH / PDL</td><td>Previous Day High / Previous Day Low.</td></tr>

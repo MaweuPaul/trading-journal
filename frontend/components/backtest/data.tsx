@@ -18,6 +18,8 @@ export interface BacktestTrade {
   source?: 'replay' | 'quick' | 'agent';
   /** Agent run in a blind session: the agent never saw the real dates or prices. */
   blind?: boolean;
+  /** Version of the strategy's rules the trade was taken under (null/absent = version 1). */
+  strategyVersion?: number | null;
   symbol: string;
   interval: string;
   direction: 'long' | 'short';
@@ -65,7 +67,11 @@ export function fmtDate(iso: string | number) {
 export interface StrategyInfo {
   _id?: string; name: string; description: string; trades: number; winRate: number; avgR: number;
   agentTrades?: number; agentWinRate?: number; agentAvgR?: number;
+  /** Rule history saved by AI agents (update_strategy_rules); empty until the rules are first revised. */
+  versions?: StrategyVersion[];
+  holdoutFrom?: string | null;
 }
+export interface StrategyVersion { version: number; rules: string; change: string; createdAt?: string; holdoutSeenBefore?: boolean }
 
 interface BacktestData {
   /** The trades the current `agentRuns` view counts -- what every view shows and computes stats from. */

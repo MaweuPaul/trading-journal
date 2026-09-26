@@ -5,6 +5,37 @@ import { Icon } from './BacktestShell';
 import { fmtR, intervalLabel, tagsOf, useBacktest } from './data';
 import { computeStats } from './stats';
 import { ConfidenceLine } from '../Confidence';
+import type { BacktestTrade, StrategyInfo } from './data';
+
+/** Every version of a strategy's rules, newest first, with how each version's trades did. */
+function RuleHistory({ info, trades }: { info: StrategyInfo; trades: BacktestTrade[] }) {
+  const versions = [...(info.versions ?? [])].sort((a, b) => b.version - a.version);
+  if (!versions.length) return null;
+  return (
+    <details className="tw:rounded tw:border tw:border-surface-container-highest tw:bg-surface-container-low tw:px-3 tw:py-2">
+      <summary className="tw:cursor-pointer tw:text-body-sm tw:font-semibold tw:text-on-surface">Rules history ({versions.length} versions)</summary>
+      <ol className="tw:mt-2 tw:flex tw:flex-col tw:gap-3">
+        {versions.map(v => {
+          const own = trades.filter(t => (t.strategyVersion ?? 1) === v.version);
+          const s = own.length ? computeStats(own) : null;
+          return (
+            <li key={v.version} className="tw:flex tw:flex-col tw:gap-1">
+              <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2 tw:text-body-sm">
+                <span className="tw:font-mono-metric-md tw:font-bold tw:text-primary">v{v.version}</span>
+                {v.createdAt && <span className="tw:text-outline tw:text-[11px]">{new Date(v.createdAt).toLocaleDateString()}</span>}
+                <span className="tw:text-on-surface-variant tw:text-[11px]">{s ? `${s.n} backtests · ${s.winRate.toFixed(0)}% win · ${fmtR(s.avgR)}` : 'no backtests yet'}</span>
+                {s && <ConfidenceLine confidence={s.confidence} />}
+              </div>
+              {v.change && <p className="tw:text-body-sm tw:text-on-surface"><span className="tw:font-semibold">What changed: </span>{v.change}</p>}
+              <p className="tw:text-[12px] tw:leading-relaxed tw:text-on-surface-variant tw:whitespace-pre-wrap">{v.rules}</p>
+              {v.holdoutSeenBefore && <p className="tw:text-[11px] tw:text-error">Written after held-out results were seen, so its held-out test isn&apos;t clean.</p>}
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
+}
 import { draftProgress, sessionIdFor, useSessions, clearDraft, WorkspaceDraft } from './session';
 
 const card = 'tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-lg tw:p-4 tw:flex tw:flex-col tw:gap-3';
@@ -46,7 +77,7 @@ export default function StrategiesView() {
   const rows = useMemo(() => strategies.map(s => {
     const info = strategyInfo.find(i => i.name === s);
     const own = trades.filter(t => tagsOf(t).includes(s));
-    return { name: s, info, stats: own.length ? computeStats(own) : null, session: sessions[sessionIdFor(s)] ?? null };
+    return { name: s, info, own, stats: own.length ? computeStats(own) : null, session: sessions[sessionIdFor(s)] ?? null };
   }).sort((a, b) => (b.session?.savedAt ?? 0) - (a.session?.savedAt ?? 0) || a.name.localeCompare(b.name)), [strategies, strategyInfo, trades, sessions]);
   const untagged = sessions[sessionIdFor('')];
 
@@ -101,7 +132,14 @@ export default function StrategiesView() {
           <section key={r.name} className={card} aria-label={r.name}>
             <div className="tw:flex tw:items-start tw:justify-between tw:gap-3">
               <div className="tw:min-w-0">
-                <h2 className="tw:font-semibold tw:text-on-surface tw:truncate">{r.name}</h2>
+                <h2 className="tw:font-semibold tw:text-on-surface tw:truncate tw:flex tw:items-center tw:gap-2">
+                  {r.name}
+                  {!!r.info?.versions?.length && (
+                    <span title={`Version ${r.info.versions[r.info.versions.length - 1].version} of this strategy's rules`} className="tw:shrink-0 tw:px-1.5 tw:py-0.5 tw:rounded tw:bg-primary-container/40 tw:text-primary tw:text-[10px] tw:font-bold tw:font-mono-metric-md">
+                      v{r.info.versions[r.info.versions.length - 1].version}
+                    </span>
+                  )}
+                </h2>
                 {r.info?.description && <p className="tw:text-body-sm tw:text-on-surface-variant tw:mt-0.5">{r.info.description}</p>}
               </div>
               <button type="button" onClick={() => void remove(r.name)} title="Delete strategy" aria-label={`Delete ${r.name}`}
@@ -122,6 +160,8 @@ export default function StrategiesView() {
             </div>
 
             {r.stats && <ConfidenceLine confidence={r.stats.confidence} range="winRate" />}
+
+            {r.info && <RuleHistory info={r.info} trades={r.own} />}
 
             {r.session ? <SessionLine d={r.session} /> : <p className="tw:text-body-sm tw:text-outline">No replay in progress.</p>}
 

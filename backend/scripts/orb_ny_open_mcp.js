@@ -202,7 +202,6 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
           notes: `Marking range ${cfg.candleMinutes}m before 9:30 NY: high ${high}, low ${low} (width ${width.toFixed(3)}). ${cfg.bias ? `Bias: ${biasText}. ` : ''}`
             + `First M1 close beyond the range at ${breakout.candle.time} (close ${entry}). Stop at the opposite side, target ${cfg.targetMult}x range width.`,
           planFollowed: true,
-          tags: ['ORB', `${cfg.candleMinutes}m range`],
         });
       } else {
         await call('discard_trade', { sessionId: sid });

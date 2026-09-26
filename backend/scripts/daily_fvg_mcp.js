@@ -224,7 +224,6 @@ function structureTrend(bars, len) {
             + `Price traded back into it on ${bars[k].time.slice(0, 10)} (low ${bars[k].low}). ${cfg.bias ? `${cfg.biasTf.toUpperCase()} structure bullish. ` : ''}`
             + `Stop = gap bottom - ${cfg.atrMult} ATR, target ${cfg.rr}R.`,
           planFollowed: true,
-          tags: ['FVG', cfg.bias ? `${cfg.biasTf.toUpperCase()} bias` : 'no bias'],
           features,
         });
       } else {

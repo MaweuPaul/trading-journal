@@ -1,5 +1,5 @@
 'use client';
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon } from './BacktestShell';
@@ -10,6 +10,7 @@ import { CHART_INTERVALS, INTERVAL_DAYS, LOOKBACK_BARS, maxRangeMs, suggestInter
 const QUICK = ['XAUUSD', 'NAS100', 'EURUSD', 'BTCUSD', 'SPX500'];
 const PRESETS = [{ label: 'Last week', days: 7 }, { label: 'Last month', days: 30 }, { label: 'Last 3 months', days: 90 }] as const;
 const DAY = 86_400_000;
+const NEW_STRATEGY = '__new__';
 
 function iso(offset: number) { const d = new Date(); d.setUTCDate(d.getUTCDate() + offset); return d.toISOString().slice(0, 10); }
 function tfLabel(v: string) { return CHART_INTERVALS.find(i => i.value === v)?.label ?? v; }
@@ -25,19 +26,49 @@ const chip = (on: boolean) => on
   ? 'tw:bg-primary-fixed tw:border tw:border-primary tw:text-primary tw:font-semibold'
   : 'tw:bg-surface-container-lowest tw:hover:bg-surface-container-high tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:transition-colors';
 
-/** Searchable list of the symbols the connected cTrader account can serve. */
+// cTrader symbol lists mix FX, metals, indices and hundreds of single stocks;
+// group them so the picker opens on the markets people actually backtest.
+const CATEGORIES = ['Popular', 'Forex', 'Metals', 'Indices', 'Commodities', 'Crypto', 'Stocks'] as const;
+type Category = typeof CATEGORIES[number];
+const POPULAR = ['XAUUSD', 'XAGUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'GBPJPY', 'AUDUSD', 'USDCAD', 'NAS100', 'US 100', 'US 30', 'US 500', 'SPX500', 'GER40', 'GERMANY 40', 'UK 100', 'BTCUSD', 'ETHUSD', 'XTIUSD', 'USOIL'];
+// Anchored on instrument codes so company names ("Goldman Sachs", "LinkedIn",
+// "Tokyo Gas") stay under Stocks.
+const METAL = /^(X(AU|AG|PT|PD)[A-Z]{3}|GOLD|SILVER|PLATINUM|PALLADIUM)$/;
+const CRYPTO = /^(BTC|ETH|LTC|XRP|BCH|ADA|DOGE|DOT|SOL|BNB|LNK|XLM|EOS|TRX|AVAX|MATIC|SHIB)(USD|EUR|GBP|JPY|USDT)$/;
+const INDEX = /^(US|UK|JAPAN|GERMANY|FRANCE|EUROPE|SPAIN|ITALY|AUSTRALIA|HONG KONG|CHINA|SWISS|NETHERLANDS|CANADA|NAS|SPX|GER|DJ|JP|HK|AUS|FRA|EU|ESP|STOXX|DE|F)\s?\d{2,4}$|^(VIX|DXY|USDX|NIKKEI|DAX)$/;
+const COMMODITY = /^(X(TI|BR|NG)[A-Z]{3}|NAT\.?\s?GAS|GAS NATURAL|BRENT|WTI|US\s?OIL|UK\s?OIL|COPPER|COCOA|COFFEE|SUGAR|CORN|WHEAT|SOYBEANS?|COTTON)$/;
+function categoryOf(s: string): Exclude<Category, 'Popular'> {
+  const u = s.toUpperCase();
+  if (METAL.test(u)) return 'Metals';
+  if (CRYPTO.test(u)) return 'Crypto';
+  if (COMMODITY.test(u)) return 'Commodities';
+  if (INDEX.test(u)) return 'Indices';
+  if (/^[A-Z]{6}$/.test(u) && symbolDescription(u)) return 'Forex';
+  return 'Stocks';
+}
+
+/** Searchable, grouped list of the symbols the connected cTrader account can serve. */
 function SymbolPicker({ value, onChange, symbols }: { value: string; onChange: (s: string) => void; symbols: string[] | null }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [cat, setCat] = useState<Category>('Popular');
   const boxRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const q = query.trim().toUpperCase();
-  const all = symbols?.length ? symbols : QUICK;
-  const matches = (q
+  const all = useMemo(() => (symbols?.length ? symbols : QUICK), [symbols]);
+  const byCat = useMemo(() => {
+    const groups = Object.fromEntries(CATEGORIES.map(c => [c, [] as string[]])) as Record<Category, string[]>;
+    for (const s of all) groups[categoryOf(s)].push(s);
+    const have = new Set(all);
+    groups.Popular = POPULAR.filter(s => have.has(s));
+    if (!groups.Popular.length) groups.Popular = all.filter(s => categoryOf(s) !== 'Stocks').slice(0, 20);
+    return groups;
+  }, [all]);
+  const matches = q
     ? all.filter(s => s.includes(q) || (symbolDescription(s)?.[0] ?? '').toUpperCase().includes(q))
-      .sort((a, b) => Number(!a.startsWith(q)) - Number(!b.startsWith(q)) || a.localeCompare(b))
-    : all).slice(0, 200);
+      .sort((a, b) => Number(!a.startsWith(q)) - Number(!b.startsWith(q)) || a.localeCompare(b)).slice(0, 200)
+    : byCat[cat];
   const desc = symbolDescription(value);
 
   useEffect(() => {
@@ -49,7 +80,10 @@ function SymbolPicker({ value, onChange, symbols }: { value: string; onChange: (
   useEffect(() => { listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' }); }, [active]);
 
   const pick = (s: string) => { onChange(s); setQuery(''); setOpen(false); };
-  const show = () => { setQuery(''); setActive(Math.max(0, all.indexOf(value))); setOpen(true); };
+  const show = () => {
+    const c: Category = byCat.Popular.includes(value) || !all.includes(value) ? 'Popular' : categoryOf(value);
+    setCat(c); setQuery(''); setActive(Math.max(0, byCat[c].indexOf(value))); setOpen(true);
+  };
 
   return (
     <div ref={boxRef} className="tw:relative">
@@ -72,11 +106,25 @@ function SymbolPicker({ value, onChange, symbols }: { value: string; onChange: (
         <Icon name={open ? 'expand_less' : 'expand_more'} className="tw:text-[18px]" />
       </button>
       {open && (
-        <ul id="bt-symbol-list" ref={listRef} role="listbox" aria-label="Symbols"
-          className="tw:absolute tw:z-30 tw:left-0 tw:right-0 tw:top-full tw:mt-1 tw:max-h-72 tw:overflow-y-auto tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded tw:shadow-lg tw:py-1">
-          <li className="tw:px-3 tw:py-1 tw:text-[10px] tw:uppercase tw:tracking-wider tw:text-outline">
-            {symbols === null ? 'Loading your cTrader symbols…' : symbols.length ? `${matches.length === 200 ? '200+' : matches.length} of ${symbols.length} cTrader symbols` : 'cTrader list unavailable — common symbols'}
-          </li>
+        <div className="tw:absolute tw:z-30 tw:left-0 tw:right-0 tw:top-full tw:mt-1 tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded tw:shadow-lg tw:overflow-hidden">
+        {q ? (
+          <p className="tw:px-3 tw:py-1.5 tw:text-[10px] tw:uppercase tw:tracking-wider tw:text-outline tw:border-b tw:border-surface-container-highest">
+            {matches.length === 200 ? '200+' : matches.length} matches in {all.length} cTrader symbols
+          </p>
+        ) : (
+          <div className="tw:flex tw:flex-wrap tw:gap-1 tw:px-2 tw:py-1.5 tw:border-b tw:border-surface-container-highest" role="tablist" aria-label="Market type">
+            {CATEGORIES.filter(c => byCat[c].length).map(c => (
+              <button key={c} type="button" role="tab" aria-selected={cat === c}
+                onMouseDown={e => { e.preventDefault(); setCat(c); setActive(0); listRef.current?.scrollTo({ top: 0 }); }}
+                className={`tw:px-2 tw:py-0.5 tw:rounded tw:text-[11px] ${cat === c ? 'tw:bg-primary/15 tw:text-primary tw:font-semibold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
+                {c} <span className="tw:text-outline">{byCat[c].length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <ul id="bt-symbol-list" ref={listRef} role="listbox" aria-label="Symbols" className="tw:max-h-72 tw:overflow-y-auto tw:py-1">
+          {symbols === null && <li className="tw:px-3 tw:py-1 tw:text-[11px] tw:text-outline">Loading your cTrader symbols…</li>}
+          {symbols?.length === 0 && <li className="tw:px-3 tw:py-1 tw:text-[11px] tw:text-outline">cTrader list unavailable — showing common symbols</li>}
           {matches.map((s, i) => {
             const d = symbolDescription(s);
             return (
@@ -94,6 +142,7 @@ function SymbolPicker({ value, onChange, symbols }: { value: string; onChange: (
             </li>
           )}
         </ul>
+        </div>
       )}
     </div>
   );
@@ -101,7 +150,7 @@ function SymbolPicker({ value, onChange, symbols }: { value: string; onChange: (
 
 export default function NewBacktestSetup() {
   const router = useRouter();
-  const { activeSymbol, strategyInfo, strategies, currentStrategy, setActiveSymbol, setCurrentStrategy } = useBacktest();
+  const { activeSymbol, strategyInfo, strategies, currentStrategy, setActiveSymbol, setCurrentStrategy, createStrategy } = useBacktest();
   const [symbols, setSymbols] = useState<string[] | null>(null);
   const [symbol, setSymbol] = useState(activeSymbol || 'XAUUSD');
   const [from, setFrom] = useState(iso(-30));
@@ -109,6 +158,10 @@ export default function NewBacktestSetup() {
   const [custom, setCustom] = useState(false);
   const [pickedInterval, setPickedInterval] = useState<string | null>(null);
   const [strategy, setStrategy] = useState(currentStrategy);
+  // Non-null while the trader is naming a brand-new strategy inline.
+  const [newStrategy, setNewStrategy] = useState<string | null>(null);
+  const [newStrategyIdea, setNewStrategyIdea] = useState('');
+  const [strategyError, setStrategyError] = useState('');
   const [name, setName] = useState<string | null>(null);
   const fromRef = useRef<HTMLInputElement>(null);
 
@@ -140,15 +193,29 @@ export default function NewBacktestSetup() {
     if (el) { el.focus(); try { el.showPicker(); } catch { /* not supported */ } }
   };
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault(); setActiveSymbol(symbol); setCurrentStrategy(strategy);
-    const q = new URLSearchParams({ symbol, interval, from, to, name: sessionName, strategy, autostart: '1' });
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    let chosen = strategy;
+    const typed = newStrategy?.trim();
+    if (newStrategy != null) {
+      if (!typed) { setStrategyError('Name the new strategy, or pick an existing one.'); return; }
+      const existing = strategies.find(s => s.toLowerCase() === typed.toLowerCase());
+      if (existing) chosen = existing;
+      else {
+        setStrategyError('');
+        const res = await createStrategy(typed, newStrategyIdea.trim());
+        if (!res.ok) { setStrategyError(res.error || 'Could not save the strategy'); return; }
+        chosen = typed;
+      }
+    }
+    setActiveSymbol(symbol); setCurrentStrategy(chosen);
+    const q = new URLSearchParams({ symbol, interval, from, to, name: sessionName, strategy: chosen, autostart: '1' });
     router.push(`/backtest/workspace?${q}`);
   };
 
   return (
     <div className="tw:flex-1 tw:bg-background tw:p-4 tw:sm:p-6">
-      <form onSubmit={submit} className="tw:w-full tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-lg tw:p-5 tw:sm:p-6 tw:flex tw:flex-col tw:gap-5 tw:shadow-sm">
+      <form onSubmit={e => void submit(e)} className="tw:w-full tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-lg tw:p-5 tw:sm:p-6 tw:flex tw:flex-col tw:gap-5 tw:shadow-sm">
         <div>
           <h1 className="tw:text-headline-md tw:font-semibold tw:text-on-surface">New backtest</h1>
           <p className="tw:text-body-sm tw:text-on-surface-variant tw:mt-1">Pick a market and a date range. Candles are revealed one at a time, so you trade without seeing the future.</p>
@@ -222,15 +289,28 @@ export default function NewBacktestSetup() {
               <Link href="/backtest/strategies" className="tw:text-[11px] tw:text-primary tw:hover:underline">Manage</Link>
             </div>
             <div className="tw:relative">
-              <select id="bt-strategy" value={strategy} onChange={e => setStrategy(e.target.value)} className={`${input} tw:px-3 tw:py-2 tw:appearance-none`}>
+              <select id="bt-strategy" value={newStrategy != null ? NEW_STRATEGY : strategy}
+                onChange={e => { if (e.target.value === NEW_STRATEGY) setNewStrategy(''); else { setNewStrategy(null); setStrategy(e.target.value); } }}
+                className={`${input} tw:px-3 tw:py-2 tw:appearance-none`}>
                 <option value="">No strategy</option>
                 {strategies.map(s => {
                   const info = strategyInfo.find(i => i.name === s);
                   return <option key={s} value={s}>{s}{info?.description ? ` — ${info.description.slice(0, 50)}` : ''}</option>;
                 })}
+                <option value={NEW_STRATEGY}>+ New strategy…</option>
               </select>
               <div className="tw:absolute tw:inset-y-0 tw:right-0 tw:pr-3 tw:flex tw:items-center tw:pointer-events-none tw:text-outline"><Icon name="expand_more" className="tw:text-[18px]" /></div>
             </div>
+            {newStrategy != null && (
+              <div className="tw:flex tw:flex-col tw:gap-1.5 tw:p-2.5 tw:rounded tw:border tw:border-primary/40 tw:bg-primary/5">
+                <input autoFocus aria-label="New strategy name" maxLength={60} value={newStrategy} onChange={e => setNewStrategy(e.target.value)}
+                  placeholder="Strategy name, e.g. London Breakout" className={`${input} tw:px-3 tw:py-2`} />
+                <input aria-label="Strategy idea (optional)" maxLength={200} value={newStrategyIdea} onChange={e => setNewStrategyIdea(e.target.value)}
+                  placeholder="The idea in one line (optional)" className={`${input} tw:px-3 tw:py-1.5 tw:text-body-sm`} />
+                <p className={hint}>Saved when you start the backtest.</p>
+              </div>
+            )}
+            {strategyError && <p className="tw:text-[11px] tw:text-error">{strategyError}</p>}
           </div>
           <div className="tw:flex tw:flex-col tw:gap-2">
             <label htmlFor="bt-name" className={label}>Session name</label>

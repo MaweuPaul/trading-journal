@@ -34,10 +34,9 @@ export const CHART_INTERVALS = [
 ] as const;
 export const SPEEDS = [0.5, 1, 3, 5, 10];
 
-// cTrader returns at most 1500 bars per request, no matter how wide the
-// requested date range is. Rather than make the trader pick a timeframe that
-// happens to fit their date range, pick the finest one that comfortably does
-// -- they can still override it from the dropdown.
+// Suggest the finest timeframe that keeps the replay a sensible length
+// (~1200 candles to step through); the trader can pick a finer one, up to the
+// MAX_CHART_BARS cap below.
 export const INTERVAL_DAYS: Record<string, number> = {
   '1min': 1 / 1440, '5min': 5 / 1440, '15min': 15 / 1440, '1h': 1 / 24, '4h': 4 / 24, '1day': 1,
 };
@@ -54,10 +53,13 @@ export function suggestInterval(fromDate: string, toDate: string): string {
 // opens already showing the lead-up to the setup instead of cutting off
 // abruptly right at the date you picked.
 export const LOOKBACK_BARS = 100;
-// cTrader returns at most 1500 bars per request and the request also covers
-// the lookback bars, so the From..To window itself must stay under this.
-const MAX_WINDOW_BARS = 1500 - LOOKBACK_BARS - 50;
-/** Longest From..To window (ms) that fits one request at this timeframe (1m: ~22h). */
+// The backend pages through cTrader (1500 bars per request) up to
+// MAX_CHART_BARS per chart -- keep in sync with backend/routes/backtestTrades.js.
+// The request also covers the lookback bars, so the From..To window itself
+// must stay under this.
+const MAX_CHART_BARS = 20000;
+const MAX_WINDOW_BARS = MAX_CHART_BARS - LOOKBACK_BARS - 50;
+/** Longest From..To window (ms) that fits one chart at this timeframe (1m: ~13.8 days). */
 export function maxRangeMs(interval: string): number {
   return MAX_WINDOW_BARS * (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400000;
 }

@@ -219,7 +219,7 @@ export default function LogView() {
                 {OPTIONAL_COLS.map(([key, label]) => (
                   <label key={key} className="tw:flex tw:items-center tw:justify-between tw:gap-2 tw:px-2 tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:text-body-sm">
                     <span>{label}</span>
-                    <input type="checkbox" checked={show(key)} onChange={() => toggleCol(key)} className="tw:accent-[#f59e0b]" />
+                    <input type="checkbox" checked={show(key)} onChange={() => toggleCol(key)} className="tw:accent-primary" />
                   </label>
                 ))}
               </div>

@@ -55,16 +55,15 @@ function normalizeSnapshot(value) {
 }
 
 const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
-// cTrader caps each GET_TRENDBARS_REQ response at 1500 bars (ctraderReplay.js),
-// regardless of how wide a fromTimestamp/toTimestamp window is requested. A
-// flat day-count cap doesn't fit every timeframe -- 400 days of 1min bars is
-// already ~576,000 bars (way over), while 400 days of 1day bars is only 400
-// bars (way under). Scale the cap to the chosen interval instead, so a daily
-// chart can go back years and a 1-minute chart is kept to what cTrader can
-// actually return in one request.
+// getTrendbars pages through cTrader 1500 bars at a time, so a window can span
+// up to MAX_CHART_BARS bars. A flat day-count cap doesn't fit every timeframe,
+// so the cap scales with the interval: a daily chart can go back decades, a
+// 1-minute chart about two weeks. Keep in sync with MAX_CHART_BARS in
+// frontend/components/backtest-tools/types.ts.
+const MAX_CHART_BARS = 20000;
 const INTERVAL_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3 };
 function maxRangeMsFor(interval) {
-  return (INTERVAL_MS[interval] || INTERVAL_MS['15min']) * 1500;
+  return (INTERVAL_MS[interval] || INTERVAL_MS['15min']) * MAX_CHART_BARS;
 }
 
 // GET /backtest-trades/chart  candles for an explicit, arbitrary historical
@@ -86,7 +85,7 @@ router.get('/backtest-trades/chart', auth, ownerOnly, async (req, res) => {
       return res.status(400).json({ error: `That date range is too wide for ${interval} candles -- narrow it to ${maxDays} days or less, or pick a larger timeframe.` });
     }
 
-    const candleData = await getTrendbars({ userId: req.user.userId, symbol, periodLabel: interval, fromMs, toMs });
+    const candleData = await getTrendbars({ userId: req.user.userId, symbol, periodLabel: interval, fromMs, toMs, maxPages: Math.ceil(MAX_CHART_BARS / 1500) + 1 });
     if (!candleData.candles.length) {
       return res.status(422).json({ error: `cTrader returned no candles for ${symbol} (${interval}) in that range.` });
     }

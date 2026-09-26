@@ -312,9 +312,16 @@ async function listAccountSymbols({ userId, preferredCtidTraderAccountId }) {
   throw lastError;
 }
 
+const TRENDBARS_PER_REQUEST = 1500;
+// Upper bound on pages per call (~21k bars) so one chart request can't hammer
+// the cTrader connection.
+const MAX_TRENDBAR_PAGES = 14;
+
 // The core Replay data call: historical candles for one symbol/window from
 // the owner's connected cTrader account.
-async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferredCtidTraderAccountId }) {
+// `maxPages` > 1 opts into paging past the 1500-bar-per-request limit
+// (Backtest charts); other callers keep the single newest page.
+async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferredCtidTraderAccountId, maxPages = 1 }) {
   const period = PERIOD_BY_LABEL[periodLabel];
   if (!period) throw new Error(`Unsupported replay interval: ${periodLabel}`);
 
@@ -333,20 +340,35 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
     throw err;
   }
 
-  const res = await client.request(PAYLOAD_TYPE.GET_TRENDBARS_REQ, {
-    ctidTraderAccountId: Number(connectionInfo.ctidTraderAccountId),
-    fromTimestamp: Math.floor(fromMs),
-    toTimestamp: Math.floor(toMs),
-    period,
-    symbolId,
-    count: 1500,
-  });
+  // cTrader returns at most TRENDBARS_PER_REQUEST bars per GET_TRENDBARS_REQ
+  // (the newest ones before toTimestamp), so walk backwards page by page until
+  // the window is covered, then stitch the pages together.
+  const fromSeconds = Math.floor(fromMs / 1000);
+  const toSeconds = Math.ceil(toMs / 1000);
+  const bars = [];
+  let cursorMs = Math.floor(toMs);
+  const pages = Math.max(1, Math.min(MAX_TRENDBAR_PAGES, Math.floor(maxPages)));
+  for (let page = 0; page < pages; page++) {
+    const res = await client.request(PAYLOAD_TYPE.GET_TRENDBARS_REQ, {
+      ctidTraderAccountId: Number(connectionInfo.ctidTraderAccountId),
+      fromTimestamp: Math.floor(fromMs),
+      toTimestamp: cursorMs,
+      period,
+      symbolId,
+      count: TRENDBARS_PER_REQUEST,
+    });
+    const pageBars = res.trendbar || [];
+    if (!pageBars.length) break;
+    bars.push(...pageBars);
+    const earliestMs = Math.min(...pageBars.map(b => Number(b.utcTimestampInMinutes) * 60000));
+    if (earliestMs <= fromMs || pageBars.length < TRENDBARS_PER_REQUEST || earliestMs >= cursorMs) break;
+    cursorMs = earliestMs - 1;
+  }
 
   // Prices are transmitted as 1/100000ths of a unit, and open/high/close are
   // deltas above the bar's low (see OpenApiModelMessages.proto ProtoOATrendbar).
-  const fromSeconds = Math.floor(fromMs / 1000);
-  const toSeconds = Math.ceil(toMs / 1000);
-  const candles = (res.trendbar || [])
+  const seen = new Set();
+  const candles = bars
     .map(bar => {
       const low = Number(bar.low) / 100000;
       return {
@@ -363,7 +385,7 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
     // set -- it just returns `count` bars ending at toTimestamp, which can
     // reach years further back than requested. Enforce the requested lower
     // bound ourselves instead of trusting the broker to honor it.
-    .filter(c => c.time >= fromSeconds && c.time <= toSeconds)
+    .filter(c => c.time >= fromSeconds && c.time <= toSeconds && !seen.has(c.time) && seen.add(c.time))
     .sort((a, b) => a.time - b.time);
 
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };

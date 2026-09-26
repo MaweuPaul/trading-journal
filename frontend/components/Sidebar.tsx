@@ -2,8 +2,9 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
+import LogoMark from './LogoMark';
 
 const navGroups = [
   {
@@ -109,12 +110,10 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
     <>
       <div className="sidebar-logo">
         <div className="sidebar-logo-inner">
-          <div className="logo-icon">
-            <TrendingUp size={18} />
-          </div>
+          <LogoMark size={36} />
           <div className="logo-text">
             <h1>TradeJournal</h1>
-            <span>MT5 Analytics</span>
+            <span>Trading journal</span>
           </div>
         </div>
       </div>
@@ -192,9 +191,7 @@ export default function Sidebar() {
       {/* Mobile topbar */}
       <header className="topbar">
         <div className="topbar-logo">
-          <div className="logo-icon">
-            <TrendingUp size={14} />
-          </div>
+          <LogoMark size={28} />
           TradeJournal
         </div>
         <button className="hamburger" onClick={() => setOpen(true)} aria-label="Open menu">

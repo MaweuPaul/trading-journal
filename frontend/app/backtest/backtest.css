@@ -141,7 +141,7 @@
 }
 :root[data-theme='dark'] .bt-shell {
   color-scheme: dark;
-  --bt-on-primary: #201a0a;
+  --bt-on-primary: #0f172a;
   --bt-on-secondary: #0c2c25; --bt-on-secondary-container: #0c2c25;
   --bt-on-tertiary: #35151d; --bt-on-error-container: #35151d;
 }

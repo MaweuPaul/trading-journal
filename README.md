@@ -253,7 +253,6 @@ backend/
     TradingAccount.js       # MT5 credentials + investor access, per account
     CTraderConnection.js    # one row per connected cTrader account
     ReplayJournal.js        # Replay annotations, timeline events, quick review, drafts
-    ReplaySession.js
     SyncRequest.js
   routes/
     auth.js

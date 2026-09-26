@@ -17,11 +17,11 @@ import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
-  CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
+  CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure,
-  findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, drawReplayStartMarker, OverlayPalette,
+  findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 
@@ -42,17 +42,17 @@ const WORKSPACE_TOOLS: { id: ToolId; icon: string; label: string }[] = [
   { id: 'text-annotation', icon: 'title', label: 'Text note' },
 ];
 const STYLE_SWATCHES = [
-  { color: '#f59e0b', cls: 'tw:bg-primary-container', label: 'Amber' },
-  { color: '#4edea3', cls: 'tw:bg-secondary', label: 'Green' },
-  { color: '#ffb4ab', cls: 'tw:bg-error', label: 'Red' },
-  { color: '#22d3ee', cls: 'tw:bg-cyan-400', label: 'Cyan' },
+  { color: '#3b82f6', cls: 'tw:bg-[#3b82f6]', label: 'Blue' },
+  { color: '#16a34a', cls: 'tw:bg-[#16a34a]', label: 'Green' },
+  { color: '#dc2626', cls: 'tw:bg-[#dc2626]', label: 'Red' },
+  { color: '#f59e0b', cls: 'tw:bg-[#f59e0b]', label: 'Amber' },
 ];
 const VIEW_INTERVALS = CHART_INTERVALS;
 const DAY = 86_400_000;
 
 // A drawing being placed: `placed` anchors are fixed, the rest follow the
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
-interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number }
+interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
 
 function drawingFactory(type: string, data: SerializedDrawing) {
@@ -102,6 +102,9 @@ export default function Workspace() {
   const [interval, setInterval_] = useState(() => params.get('interval') || suggestInterval(isoDaysAgo(30), isoDaysAgo(0)));
   const intervalTouchedRef = useRef(Boolean(params.get('interval')));
   const [candles, setCandles] = useState<Candle[] | null>(null);
+  // After switching to a higher timeframe mid-replay, the candle still forming
+  // is shown as rebuilt from revealed candles (no peeking at its real close).
+  const [partial, setPartial] = useState<{ idx: number; candle: Candle } | null>(null);
   const [analysisStartIdx, setAnalysisStartIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -128,7 +131,8 @@ export default function Workspace() {
   const measureDragRef = useRef<(MeasureRange & { x1: number; y1: number; x2: number; y2: number }) | null>(null);
 
   // ── Chart view extras ──────────────────────────────────────────────────────
-  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: true, volume: true });
+  // EMAs only by default; RSI and volume stay available in the Indicators menu.
+  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false });
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -312,7 +316,7 @@ export default function Workspace() {
       setFromDate(adjusted);
       setToast(`${CHART_INTERVALS.find(t => t.value === overrideInterval)?.label ?? overrideInterval} candles cover up to ${span} — From moved to ${adjusted}`);
     }
-    setLoading(true); setError(''); setIsSetupError(false); setPlaying(false);
+    setLoading(true); setError(''); setIsSetupError(false); setPlaying(false); setPartial(null);
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false); setPlacingDirection(null);
     setSelectedDrawingId(null); setActiveDrawType(null); setMeasureActive(false); setMeasureRange(null);
     drawingHistoryRef.current = []; setHistoryDepth(0);
@@ -345,11 +349,62 @@ export default function Workspace() {
       .catch(e => { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
   }, [symbol, fromDate, toDate, setActiveSymbol]);
   const loadChart = useCallback(() => loadChartWithInterval(interval), [loadChartWithInterval, interval]);
+  // Switching timeframe mid-replay keeps the replay clock where it is: the new
+  // timeframe shows only candles that had closed by then, and if the new
+  // timeframe is higher, the candle still forming is rebuilt from the candles
+  // already revealed -- so switching never shows the future. Drawings and an
+  // open trade carry over.
   const switchInterval = (tf: string) => {
-    if (tf === interval || openTrade || closedTrade) return;
+    if (tf === interval || closedTrade) return;
     intervalTouchedRef.current = true;
-    setInterval_(tf);
-    if (candles) loadChartWithInterval(tf);
+    if (!candles || loading) { setInterval_(tf); return; }
+    const oldSec = (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400;
+    const newSec = (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * 86400;
+    const seen = candles.slice(0, replayIdx + 1);
+    const clock = Number(seen[seen.length - 1].time) + oldSec; // close time of the current candle
+    const sessionFromMs = new Date(fromDate).getTime();
+    const sessionToMs = new Date(toDate).getTime() + DAY;
+    // Window: 300 candles of context before the clock, then as far ahead as one chart holds.
+    const fetchFromMs = clock * 1000 - 300 * newSec * 1000;
+    const fetchToMs = Math.min(sessionToMs, fetchFromMs + maxRangeMs(tf));
+    const drawings = managerRef.current?.exportDrawings() ?? [];
+    setLoading(true); setPlaying(false); setPlacingDirection(null); setMeasureRange(null);
+    fetch(`/api/backtest-trades/chart?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&interval=${tf}&fromMs=${Math.floor(fetchFromMs)}&toMs=${Math.floor(fetchToMs)}`, { headers: authHeaders() })
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok) { setToast(data.error || 'Could not load that timeframe'); setLoading(false); return; }
+        const loaded: Candle[] = (data.candles || []).map((c: Candle) => ({ ...c, time: Number(c.time) as UTCTimestamp }));
+        // Last candle that is fully closed by the clock...
+        let idx = -1;
+        for (let i = 0; i < loaded.length && Number(loaded[i].time) + newSec <= clock; i++) idx = i;
+        // ...plus, when zooming out, the forming candle built from what's already revealed.
+        let built: { idx: number; candle: Candle } | null = null;
+        const forming = loaded[idx + 1];
+        if (forming && Number(forming.time) < clock) {
+          const parts = seen.filter(c => Number(c.time) >= Number(forming.time));
+          if (parts.length) {
+            built = {
+              idx: idx + 1,
+              candle: {
+                ...forming, open: parts[0].open, close: parts[parts.length - 1].close,
+                high: Math.max(...parts.map(c => c.high)), low: Math.min(...parts.map(c => c.low)),
+                volume: parts.reduce((s, c) => s + (c.volume ?? 0), 0),
+              },
+            };
+            idx += 1;
+          }
+        }
+        if (idx < 0) { setToast('No candles for that timeframe at this point in the replay'); setLoading(false); return; }
+        pendingRestoreRef.current = { drawings } as unknown as WorkspaceDraft;
+        setInterval_(tf);
+        setAnalysisStartIdx(Math.max(0, loaded.findIndex(c => Number(c.time) * 1000 >= sessionFromMs)));
+        setCandles(loaded);
+        setPartial(built);
+        setReplayIdx(idx);
+        if (fetchToMs < sessionToMs) setToast(`${CHART_INTERVALS.find(t => t.value === tf)?.label ?? tf} loaded up to ${new Date(fetchToMs).toISOString().slice(0, 10)}`);
+        setLoading(false);
+      })
+      .catch(e => { setToast(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
   };
 
   // Deep link from the Log's "Load in Workspace".
@@ -375,7 +430,7 @@ export default function Workspace() {
       layout: { background: { type: ColorType.Solid, color: bg }, textColor: text, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, panes: { separatorColor: grid } },
       grid: { vertLines: { color: hexAlpha(grid, 0.6) }, horzLines: { color: hexAlpha(grid, 0.9) } },
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { borderColor: grid, timeVisible: true, secondsVisible: false, rightOffset: 8 },
+      timeScale: { borderColor: grid, timeVisible: true, secondsVisible: false, rightOffset: 2 },
       rightPriceScale: { borderColor: grid },
     });
     chartRef.current = chart;
@@ -445,9 +500,9 @@ export default function Workspace() {
   // ── Indicator values (computed once per load, sliced per replay step) ──────
   const indicatorData = useMemo(() => {
     if (!candles) return null;
-    const closes = candles.map(c => c.close);
+    const closes = candles.map((c, i) => (partial && i === partial.idx ? partial.candle.close : c.close));
     return { emas: EMA_CONFIG.map(cfg => ema(closes, cfg.period)), rsi: rsi(closes, 14) };
-  }, [candles]);
+  }, [candles, partial]);
 
   // ── Indicator / chart-type visibility ──────────────────────────────────────
   const showIndicators = true;
@@ -482,12 +537,9 @@ export default function Workspace() {
     const up = cssVar(root, '--bt-secondary', '#4edea3');
     const down = cssVar(root, '--bt-error', '#ffb4ab');
     const shown = candles.slice(0, replayIdx + 1);
-    // Lookback candles before "From" are muted, so the analysis window stands out.
-    series.setData(shown.map((c, i) => {
-      if (i >= analysisStartIdx) return c;
-      const color = hexAlpha(c.close >= c.open ? up : down, 0.35);
-      return { ...c, color, wickColor: color };
-    }));
+    if (partial && partial.idx < shown.length) shown[partial.idx] = partial.candle;
+    // Context candles before "From" look like any other candle -- they're real history.
+    series.setData(shown);
     lineRef.current?.setData(shown.map(c => ({ time: c.time, value: c.close })));
     volumeRef.current?.setData(shown.map(c => ({ time: c.time, value: c.volume ?? 0, color: hexAlpha(c.close >= c.open ? up : down, 0.35) })));
     emaRefs.current.forEach((s, k) => s.setData(shown.flatMap((c, i) => {
@@ -498,9 +550,10 @@ export default function Workspace() {
       const v = indicatorData.rsi[i];
       return v == null ? [] : [{ time: c.time, value: v }];
     }));
-  }, [candles, replayIdx, analysisStartIdx, indicatorData, resolvedTheme, indicators.rsi]);
+  }, [candles, replayIdx, partial, indicatorData, resolvedTheme, indicators.rsi]);
 
-  // Fit to the revealed data on a fresh load only (not on every replay step).
+  // Fit to the revealed data on a fresh load only (not on every replay step),
+  // so the chart ends on the current candle with nothing hanging off the right.
   useEffect(() => {
     if (!candles || !chartRef.current) return;
     chartRef.current.timeScale().fitContent();
@@ -534,10 +587,18 @@ export default function Workspace() {
     setReplayIdx(Math.max(0, Math.min(candles.length - 1, index)));
   }, [candles]);
 
+  // Once the replay steps past the rebuilt forming candle, the real one is history.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- replay moved past the rebuilt candle
+    if (partial && replayIdx > partial.idx) setPartial(null);
+  }, [partial, replayIdx]);
+  /** The candle as the trader may see it at index i (the rebuilt one while it's still forming). */
+  const barAt = (i: number) => (partial && i === partial.idx ? partial.candle : candles?.[i]);
+
   // ── Resolve the open trade against each newly revealed candle ──────────────
   useEffect(() => {
     if (!candles || !openTrade || closedTrade) return;
-    const candle = candles[replayIdx];
+    const candle = partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx];
     if (!candle || candle.time <= openTrade.entryTime) return;
     const { direction, entryPrice, stopLoss, takeProfit } = openTrade;
     let exitPrice: number | null = null;
@@ -557,19 +618,19 @@ export default function Workspace() {
     setPlaying(false);
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
     setShowCloseout(true);
-  }, [candles, replayIdx, openTrade, closedTrade]);
+  }, [candles, replayIdx, partial, openTrade, closedTrade]);
 
   const unrealizedR = useMemo(() => {
     if (!openTrade || !candles) return 0;
-    const px = candles[replayIdx]?.close ?? openTrade.entryPrice;
+    const px = (partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx])?.close ?? openTrade.entryPrice;
     const risk = Math.abs(openTrade.entryPrice - openTrade.stopLoss);
     const gain = openTrade.direction === 'long' ? px - openTrade.entryPrice : openTrade.entryPrice - px;
     return risk ? gain / risk : 0;
-  }, [openTrade, candles, replayIdx]);
+  }, [openTrade, candles, replayIdx, partial]);
 
   const closeTradeNow = () => {
     if (!candles || !openTrade) return;
-    const candle = candles[replayIdx]; if (!candle) return;
+    const candle = barAt(replayIdx); if (!candle) return;
     const exitPrice = candle.close;
     const outcome: ClosedTrade['outcome'] = Math.abs(exitPrice - openTrade.entryPrice) < 1e-9 ? 'breakeven' : unrealizedR > 0 ? 'win' : 'loss';
     setPlaying(false);
@@ -680,12 +741,11 @@ export default function Workspace() {
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const colors = palette();
-    if (analysisStartIdx > 0) drawReplayStartMarker(ctx, chart, canvas, Number(candles[analysisStartIdx].time), colors);
     const trade = closedTrade || openTrade;
     if (trade) drawTradeOverlay({ ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle: draggingHandleRef.current, palette: colors });
     const activeMeasure = measureDragRef.current || measureRange;
     if (activeMeasure) drawMeasureOverlay({ ctx, chart, series, range: activeMeasure, candles, resolvedTheme: resolvedTheme === 'dark' ? 'dark' : 'light' });
-  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, analysisStartIdx, palette]);
+  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, palette]);
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 
   // ── Pointer handling on the overlay canvas ─────────────────────────────────
@@ -712,16 +772,24 @@ export default function Workspace() {
     setActiveDrawType(null);
     setDrawingCount(managerRef.current?.getAllDrawings().length ?? 0);
   };
+  // Shift held: lock the line horizontal (same price) or vertical (same time),
+  // whichever the mouse has moved further along.
+  const constrain = (pending: PendingDrawing, anchor: Anchor, x: number, y: number, shift: boolean): Anchor => {
+    if (!shift) return anchor;
+    return Math.abs(x - pending.startX) >= Math.abs(y - pending.startY)
+      ? { time: anchor.time, price: pending.origin.price }
+      : { time: pending.origin.time, price: anchor.price };
+  };
   const moveFreeAnchors = (pending: PendingDrawing, anchor: Anchor) => {
     for (let i = pending.placed; i < pending.required; i++) pending.drawing.updateAnchor(i, anchor);
     pending.drawing.requestUpdate();
   };
-  const handleDrawMouseDown = (x: number, y: number) => {
+  const handleDrawMouseDown = (x: number, y: number, shift = false) => {
     const manager = managerRef.current; if (!manager || !activeDrawType) return;
     const anchor = anchorAt(x, y); if (!anchor) return;
     const pending = pendingDrawingRef.current;
     if (pending) {
-      moveFreeAnchors(pending, anchor);
+      moveFreeAnchors(pending, constrain(pending, anchor, x, y, shift));
       pending.placed += 1;
       if (pending.placed >= pending.required) finishPendingDrawing();
       return;
@@ -731,17 +799,17 @@ export default function Workspace() {
     const id = `${activeDrawType}-${crypto.randomUUID().slice(0, 8)}`;
     const drawing = registry.createDrawing(activeDrawType, id, Array.from({ length: required }, () => ({ ...anchor })), { lineColor: drawColor });
     if (!drawing) return;
-    pendingDrawingRef.current = { drawing, required, placed: 1, startX: x, startY: y };
+    pendingDrawingRef.current = { drawing, required, placed: 1, startX: x, startY: y, origin: anchor };
     manager.addDrawing(drawing);
     // The text tool's `drawing:added` handler may have removed it (prompt cancelled).
     if (!manager.getDrawing(id)) { pendingDrawingRef.current = null; activateSelectMode(); return; }
     if (required === 1) finishPendingDrawing();
   };
-  const handleDrawMouseUp = (x: number, y: number) => {
+  const handleDrawMouseUp = (x: number, y: number, shift = false) => {
     const pending = pendingDrawingRef.current;
     // A press-drag-release fixes the second anchor; a plain click waits for the next click.
     if (!pending || pending.placed !== 1 || Math.hypot(x - pending.startX, y - pending.startY) < 5) return;
-    const anchor = anchorAt(x, y); if (anchor) moveFreeAnchors(pending, anchor);
+    const anchor = anchorAt(x, y); if (anchor) moveFreeAnchors(pending, constrain(pending, anchor, x, y, shift));
     pending.placed = 2;
     if (pending.placed >= pending.required) finishPendingDrawing();
   };
@@ -751,7 +819,7 @@ export default function Workspace() {
   };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = localPoint(e);
-    if (activeDrawType) { handleDrawMouseDown(x, y); return; }
+    if (activeDrawType) { handleDrawMouseDown(x, y, e.shiftKey); return; }
     if (placingDirection) {
       const anchor = anchorAt(x, y); if (!anchor || !candles) return;
       // Entries happen on the current replay candle (like TradingView's replay
@@ -774,7 +842,7 @@ export default function Workspace() {
     if (activeDrawType) {
       const pending = pendingDrawingRef.current;
       const anchor = pending ? anchorAt(x, y) : null;
-      if (pending && anchor) moveFreeAnchors(pending, anchor);
+      if (pending && anchor) moveFreeAnchors(pending, constrain(pending, anchor, x, y, e.shiftKey));
       return;
     }
     if (draggingHandleRef.current) {
@@ -790,7 +858,7 @@ export default function Workspace() {
   };
   const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = localPoint(e);
-    if (activeDrawType) { handleDrawMouseUp(x, y); return; }
+    if (activeDrawType) { handleDrawMouseUp(x, y, e.shiftKey); return; }
     if (draggingHandleRef.current) { draggingHandleRef.current = null; return; }
     if (measureActive && measureDragRef.current) {
       const { time1, price1, time2, price2 } = measureDragRef.current;
@@ -833,8 +901,8 @@ export default function Workspace() {
 
   // ── Derived display values ─────────────────────────────────────────────────
   const total = candles?.length ?? 0;
-  const current = candles?.[replayIdx] ?? null;
-  const legendCandle = candles && hoverIdx != null && hoverIdx <= replayIdx ? candles[hoverIdx] : current;
+  const current = barAt(replayIdx) ?? null;
+  const legendCandle = candles && hoverIdx != null && hoverIdx <= replayIdx ? barAt(hoverIdx) ?? null : current;
   const legendPrev = candles && legendCandle ? candles[Math.max(0, candles.indexOf(legendCandle) - 1)] : null;
   const progressPct = total ? ((replayIdx + 1) / total) * 100 : 0;
   const analysisBars = total ? replayIdx - analysisStartIdx + 1 : 0;
@@ -851,9 +919,9 @@ export default function Workspace() {
   // ── Shared pieces ──────────────────────────────────────────────────────────
   const timeframeChips = (activeCls: string) => (
     <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:gap-0.5 tw:shrink-0" role="group" aria-label="Timeframe"
-      title={tradeLocked ? 'Close or discard the current trade before changing timeframe' : undefined}>
+      title={closedTrade ? 'Log or discard the closed trade before changing timeframe' : undefined}>
       {VIEW_INTERVALS.map(tf => (
-        <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={tradeLocked && interval !== tf.value} onClick={() => switchInterval(tf.value)}
+        <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={(Boolean(closedTrade) || loading) && interval !== tf.value} onClick={() => switchInterval(tf.value)}
           className={`tw:px-space-sm tw:py-0.5 tw:rounded tw:font-label-caps tw:text-label-caps tw:disabled:opacity-40 ${interval === tf.value ? activeCls : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
           {tf.label}
         </button>
@@ -904,7 +972,7 @@ export default function Workspace() {
   const railTool = (t: { id: ToolId; icon: string; label: string }, cls: string, activeCls: string, idleCls: string) => (
     <button key={t.id} type="button" title={t.label} aria-label={t.label} aria-pressed={isToolActive(t.id)} disabled={!candles || (t.id === 'position' && tradeLocked)}
       onClick={() => activateTool(t.id)} className={`${cls} tw:disabled:opacity-40 ${isToolActive(t.id) ? activeCls : idleCls}`}>
-      <Icon name={t.icon} className="tw:text-[16px]" />
+      <Icon name={t.icon} className="tw:text-[20px]" />
     </button>
   );
   const hint = activeDrawType
@@ -951,7 +1019,7 @@ export default function Workspace() {
                 {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume']] as const).map(([k, label]) => (
                   <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                     <span>{label}</span>
-                    <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-[#f59e0b]" />
+                    <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                   </label>
                 ))}
               </div>
@@ -972,9 +1040,9 @@ export default function Workspace() {
       <section className="tw:h-10 tw:bg-surface-container-low/90 tw:border-b tw:border-outline-variant tw:px-3 tw:flex tw:items-center tw:justify-between tw:gap-3 tw:shrink-0 tw:text-[11px]">
         <div className="tw:flex tw:items-center tw:gap-2 tw:min-w-0">
           <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:p-0.5 tw:border tw:border-outline-variant tw:font-mono-metric-md" role="group" aria-label="Timeframe"
-            title={tradeLocked ? 'Close or discard the current trade before changing timeframe' : undefined}>
+            title={closedTrade ? 'Log or discard the closed trade before changing timeframe' : undefined}>
             {VIEW_INTERVALS.map(tf => (
-              <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={tradeLocked && interval !== tf.value} onClick={() => switchInterval(tf.value)}
+              <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={(Boolean(closedTrade) || loading) && interval !== tf.value} onClick={() => switchInterval(tf.value)}
                 className={`tw:px-2 tw:py-0.5 tw:rounded tw:transition tw:disabled:opacity-40 ${interval === tf.value ? 'tw:bg-primary-container tw:text-on-primary tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{tf.label}</button>
             ))}
           </div>
@@ -1068,12 +1136,6 @@ export default function Workspace() {
             ))}
           </div>
         )}
-      </div>
-      <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
-        <span className="tw:text-[10px] tw:font-body-sm tw:uppercase tw:tracking-wider tw:text-on-surface-variant">Simulation Playhead:</span>
-        <span className="tw:px-2 tw:py-0.5 tw:rounded tw:bg-surface-container-high tw:border tw:border-outline-variant tw:text-primary-container tw:text-[10px]">
-          {candles ? `Candle #${Math.max(0, analysisBars)}` : '—'}
-        </span>
       </div>
     </div>
   );
@@ -1302,7 +1364,7 @@ export default function Workspace() {
                     {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume']] as const).map(([k, label]) => (
                       <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                         <span>{label}</span>
-                        <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-[#f59e0b]" />
+                        <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                       </label>
                     ))}
                   </div>
@@ -1337,32 +1399,32 @@ export default function Workspace() {
 
       {/* Chart canvas dock -- one element for both layouts so the chart survives resizes. */}
       <div className="tw:relative tw:w-full tw:flex tw:bg-surface-container-lowest">
-        <aside className="tw:w-9 tw:bg-surface-container-low tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-space-xs tw:shrink-0 tw:z-20 tw:shadow-md tw:overflow-y-auto tw:no-scrollbar" aria-label="Drawing tools">
-          {WORKSPACE_TOOLS.map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
-          <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1 tw:shrink-0" />
+        <aside className="tw:w-12 tw:bg-surface-container-low tw:border-r tw:border-surface-container-highest tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-1 tw:shrink-0 tw:z-20 tw:shadow-md tw:overflow-y-auto tw:no-scrollbar" aria-label="Drawing tools">
+          {WORKSPACE_TOOLS.map(t => railTool(t, 'tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors', 'tw:bg-primary/15 tw:text-primary tw:ring-1 tw:ring-primary/40', 'tw:text-on-surface tw:hover:bg-surface-container-high'))}
+          <div className="tw:w-6 tw:h-px tw:bg-surface-container-highest tw:my-1 tw:shrink-0" />
           <button type="button" onClick={() => setMagnet(m => !m)} aria-pressed={magnet} title="Magnet mode (snap to OHLC)" aria-label="Magnet mode"
-            className={`tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 ${magnet ? 'tw:bg-surface-container-high tw:text-primary' : 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'}`}>
-            <Icon name="all_inclusive" className="tw:text-[16px]" />
+            className={`tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors ${magnet ? 'tw:bg-primary/15 tw:text-primary tw:ring-1 tw:ring-primary/40' : 'tw:text-on-surface tw:hover:bg-surface-container-high'}`}>
+            <Icon name="all_inclusive" className="tw:text-[20px]" />
           </button>
           {selectedDrawingId && (
             <button type="button" onClick={deleteSelectedDrawing} title="Delete selected drawing" aria-label="Delete selected drawing"
-              className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error">
-              <Icon name="delete" className="tw:text-[16px]" />
+              className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error">
+              <Icon name="delete" className="tw:text-[20px]" />
             </button>
           )}
           <button type="button" onClick={undoDrawing} disabled={!historyDepth} title="Undo" aria-label="Undo drawing"
-            className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface tw:disabled:opacity-40">
-            <Icon name="undo" className="tw:text-[16px]" />
+            className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface tw:disabled:opacity-40">
+            <Icon name="undo" className="tw:text-[20px]" />
           </button>
           <button type="button" onClick={clearAllDrawings} disabled={!drawingCount} title="Clear canvas markups" aria-label="Clear all drawings"
-            className="tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:disabled:opacity-40">
-            <Icon name="delete_sweep" className="tw:text-[16px]" />
+            className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:disabled:opacity-40">
+            <Icon name="delete_sweep" className="tw:text-[20px]" />
           </button>
-          <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1 tw:shrink-0" />
+          <div className="tw:w-6 tw:h-px tw:bg-surface-container-highest tw:my-1 tw:shrink-0" />
           <div className="tw:flex tw:flex-col tw:items-center tw:gap-1 tw:p-1 tw:bg-surface-container-lowest tw:rounded" role="radiogroup" aria-label="Drawing color">
             {STYLE_SWATCHES.map(s => (
               <button key={s.color} type="button" role="radio" aria-checked={drawColor === s.color} aria-label={s.label} title={s.label} onClick={() => pickColor(s.color)}
-                className={`tw:w-3 tw:h-3 tw:rounded-full tw:shrink-0 ${s.cls} ${drawColor === s.color ? 'tw:ring-2 tw:ring-primary/40' : ''}`} />
+                className={`tw:w-5 tw:h-5 tw:rounded-full tw:shrink-0 tw:border-2 ${s.cls} ${drawColor === s.color ? 'tw:border-on-surface' : 'tw:border-transparent'}`} />
             ))}
           </div>
         </aside>
@@ -1371,12 +1433,6 @@ export default function Workspace() {
           <div className={`tw:relative tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
             onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />
-          {candles && (
-            <div className="tw:absolute tw:top-2 tw:left-2 tw:z-10 tw:flex tw:items-center tw:gap-space-xs tw:bg-surface-container-lowest/80 tw:backdrop-blur tw:px-space-sm tw:py-0.5 tw:rounded tw:pointer-events-none">
-              <span className="tw:w-2 tw:h-2 tw:rounded-full tw:bg-secondary tw:animate-pulse" />
-              <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface tw:uppercase">Historical Simulation Window</span>
-            </div>
-          )}
           {candles && indicators.ema && !isDesktop && (
             <div className="tw:absolute tw:top-2 tw:right-2 tw:z-10 tw:flex tw:flex-wrap tw:items-center tw:gap-space-sm tw:bg-surface-container-lowest/80 tw:backdrop-blur-md tw:px-space-sm tw:py-1 tw:rounded tw:pointer-events-none">
               {EMA_CONFIG.map((cfg, k) => (

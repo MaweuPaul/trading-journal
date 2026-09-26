@@ -91,9 +91,9 @@ export default function ArchivePage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
             <div style={{
               width: 44, height: 44, borderRadius: 12,
-              background: 'linear-gradient(135deg, #d4af37 0%, #b8860b 100%)',
+              background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 14px rgba(212,175,55,0.35)',
+              boxShadow: '0 4px 14px rgba(59,130,246,0.35)',
             }}>
               <HardDrive size={22} color="#fff" />
             </div>
@@ -197,7 +197,7 @@ export default function ArchivePage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
             <ExportCard
               icon={<FileJson size={28} />}
-              color="#b8860b"
+              color="#2563eb"
               title="Full JSON Backup"
               subtitle="All trades + account events"
               description={`${status?.tradeCount ?? '…'} trades · ${status?.eventCount ?? '…'} account events · Complete schema`}

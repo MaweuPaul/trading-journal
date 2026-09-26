@@ -146,23 +146,3 @@ export function drawTradeOverlay(params: {
     }
   }
 }
-
-/** Dashed vertical marker + "REPLAY FROM" tag at the start of the analysis window. */
-export function drawReplayStartMarker(ctx: CanvasRenderingContext2D, chart: IChartApi, canvas: HTMLCanvasElement, time: number, palette: OverlayPalette) {
-  const x = chart.timeScale().timeToCoordinate(time as UTCTimestamp);
-  const paneRight = chart.timeScale().width() || canvas.width;
-  if (x == null || x < 0 || x > paneRight) return;
-  ctx.save();
-  ctx.strokeStyle = palette.accent; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.font = '700 9.5px "JetBrains Mono", monospace';
-  const text = 'REPLAY FROM';
-  const w = ctx.measureText(text).width + 14;
-  const tagLeft = Math.min(x + 2, paneRight - w - 2);
-  ctx.fillStyle = palette.accent;
-  ctx.fillRect(tagLeft, 8, w, 15);
-  ctx.fillStyle = '#2a1700'; ctx.textBaseline = 'middle';
-  ctx.fillText(text, tagLeft + 7, 16);
-  ctx.restore();
-}

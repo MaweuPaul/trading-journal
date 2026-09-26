@@ -154,8 +154,8 @@ export default function InvestorDashboardPage() {
             <AreaChart data={summary.equityCurve} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="investorBalGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d4af37" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="#d4af37" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -170,7 +170,7 @@ export default function InvestorDashboardPage() {
                   </div>
                 );
               }} />
-              <Area type="monotone" dataKey="balance" stroke="#b8860b" strokeWidth={2.5} fill="url(#investorBalGrad)" dot={false} />
+              <Area type="monotone" dataKey="balance" stroke="#2563eb" strokeWidth={2.5} fill="url(#investorBalGrad)" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>

@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Mail, Lock, TrendingUp, Loader2, AlertCircle } from 'lucide-react';
+import { Mail, Lock, Loader2, AlertCircle } from 'lucide-react';
+import LogoMark from '@/components/LogoMark';
 
 const API = '/api';
 
@@ -65,9 +66,7 @@ export default function LoginPage() {
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-          <div className="login-logo">
-            <TrendingUp size={24} />
-          </div>
+          <div className="login-logo-mark"><LogoMark size={52} /></div>
           <h2>TradeJournal</h2>
           <p>Sign in to access your personal MT5 trade analytics</p>
         </div>

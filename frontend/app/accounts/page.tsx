@@ -548,7 +548,7 @@ export default function TradingAccountsPage() {
                   )}
 
                   {investorReveal?.accountId === account.id && (
-                    <div style={{ background: 'var(--amber-bg, rgba(212,175,55,0.12))', border: '1px solid var(--gold, #d4af37)', borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ background: 'var(--amber-bg, rgba(59,130,246,0.12))', border: '1px solid var(--gold, #3b82f6)', borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <strong style={{ fontSize: 11.5 }}>Save this now — the password won't be shown again</strong>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Password</span>

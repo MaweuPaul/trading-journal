@@ -10,7 +10,7 @@ import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-dra
 import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from './data';
-import { EMA_CONFIG, ema, rsi, sessionLabel, symbolDescription } from './indicators';
+import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
   CHART_INTERVALS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
@@ -22,8 +22,7 @@ import {
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
-// `type` is the lightweight-charts-drawing registry key. The Workspace strip
-// and the Chart view's rail show different subsets, as in the Stitch screens.
+// `type` is the lightweight-charts-drawing registry key.
 type ToolId = 'select' | 'measure' | 'position' | string;
 const WORKSPACE_TOOLS: { id: ToolId; icon: string; label: string }[] = [
   { id: 'select', icon: 'filter_center_focus', label: 'Crosshair / select' },
@@ -37,15 +36,6 @@ const WORKSPACE_TOOLS: { id: ToolId; icon: string; label: string }[] = [
   { id: 'arrow', icon: 'north_east', label: 'Arrow' },
   { id: 'measure', icon: 'straighten', label: 'Measure' },
   { id: 'text-annotation', icon: 'title', label: 'Text note' },
-];
-const RAIL_TOOLS: { id: ToolId; icon: string; label: string }[] = [
-  { id: 'select', icon: 'file_download_done', label: 'Crosshair cursor' },
-  { id: 'trend-line', icon: 'timeline', label: 'Trend line' },
-  { id: 'fib-retracement', icon: 'linear_scale', label: 'Fibonacci retracement' },
-  { id: 'rectangle', icon: 'crop_square', label: 'Rectangle / zone' },
-  { id: 'text-annotation', icon: 'text_fields', label: 'Text note' },
-  { id: 'position', icon: 'calculate', label: 'Risk:reward position tool' },
-  { id: 'measure', icon: 'straighten', label: 'Price range ruler' },
 ];
 const STYLE_SWATCHES = [
   { color: '#f59e0b', cls: 'tw:bg-primary-container', label: 'Amber' },
@@ -117,7 +107,6 @@ function fmtTick(unixSeconds: number) {
 
 export default function Workspace() {
   const params = useSearchParams();
-  const view: 'workspace' | 'chart' = params.get('view') === 'chart' ? 'chart' : 'workspace';
   const { resolvedTheme } = useTheme();
   const { activeSymbol, setActiveSymbol, strategies, addTrade } = useBacktest();
 
@@ -493,8 +482,7 @@ export default function Workspace() {
   }, [candles]);
 
   // ── Indicator / chart-type visibility ──────────────────────────────────────
-  // Indicators are part of the Chart Analysis view; the Workspace stays clean.
-  const showIndicators = view === 'chart';
+  const showIndicators = true;
   useEffect(() => {
     const chart = chartRef.current; if (!chart || !candles) return;
     const candlesVisible = chartType === 'candles';
@@ -542,7 +530,7 @@ export default function Workspace() {
       const v = indicatorData.rsi[i];
       return v == null ? [] : [{ time: c.time, value: v }];
     }));
-  }, [candles, replayIdx, analysisStartIdx, indicatorData, resolvedTheme, view, indicators.rsi]);
+  }, [candles, replayIdx, analysisStartIdx, indicatorData, resolvedTheme, indicators.rsi]);
 
   // Fit to the revealed data on a fresh load only (not on every replay step).
   useEffect(() => {
@@ -759,12 +747,12 @@ export default function Workspace() {
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const colors = palette();
-    if (view === 'workspace' && analysisStartIdx > 0) drawReplayStartMarker(ctx, chart, canvas, Number(candles[analysisStartIdx].time), colors);
+    if (analysisStartIdx > 0) drawReplayStartMarker(ctx, chart, canvas, Number(candles[analysisStartIdx].time), colors);
     const trade = closedTrade || openTrade;
     if (trade) drawTradeOverlay({ ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle: draggingHandleRef.current, palette: colors });
     const activeMeasure = measureDragRef.current || measureRange;
     if (activeMeasure) drawMeasureOverlay({ ctx, chart, series, range: activeMeasure, candles, resolvedTheme: resolvedTheme === 'dark' ? 'dark' : 'light' });
-  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, analysisStartIdx, view, palette]);
+  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, analysisStartIdx, palette]);
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 
   // ── Pointer handling on the overlay canvas ─────────────────────────────────
@@ -1009,8 +997,7 @@ export default function Workspace() {
         </div>
       )}
 
-      {view === 'workspace' ? (
-        <>
+      <>
           {/* 1. Setup ribbon */}
           <section className="tw:flex tw:flex-col tw:gap-space-sm tw:px-gutter tw:py-space-sm tw:bg-surface-container-low tw:shadow-sm">
             <div className="tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-space-sm">
@@ -1105,10 +1092,8 @@ export default function Workspace() {
               </div>
             )}
           </section>
-        </>
-      ) : (
-        <>
-          {/* Chart view: ticker micro-bar + 24h stats */}
+
+          {/* 3. Ticker micro-bar + 24h stats */}
           <section className="tw:bg-surface-container-low tw:px-gutter tw:py-space-sm tw:shadow-sm tw:flex tw:flex-col tw:gap-space-xs">
             <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm">
               <div className="tw:flex tw:items-center tw:gap-space-xs tw:min-w-0">
@@ -1131,7 +1116,7 @@ export default function Workspace() {
               <div className="tw:flex tw:items-center tw:gap-space-xs"><span>VOL</span><span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-primary">{dayStats ? fmtVolume(dayStats.volume) : '—'}</span></div>
             </div>
           </section>
-          {/* Control strip */}
+          {/* 4. Control strip */}
           <section className="tw:bg-surface-container tw:px-gutter tw:py-space-xs tw:flex tw:items-center tw:justify-between tw:gap-space-xs tw:shadow-inner tw:relative">
             <div className="tw:overflow-x-auto tw:no-scrollbar">{timeframeChips('tw:bg-primary-container tw:text-on-primary-container tw:font-bold')}</div>
             <div className="tw:flex tw:items-center tw:gap-space-xs tw:shrink-0">
@@ -1163,7 +1148,7 @@ export default function Workspace() {
               </button>
             </div>
           </section>
-          {/* OHLC legend */}
+          {/* 5. OHLC legend */}
           <section className="tw:bg-surface-container-lowest tw:px-gutter tw:py-1 tw:flex tw:items-center tw:justify-between tw:text-on-surface-variant tw:font-mono-metric-md tw:text-mono-metric-md">
             <div className="tw:flex tw:items-center tw:gap-space-sm tw:overflow-x-auto tw:no-scrollbar tw:whitespace-nowrap">
               {legendCandle ? (
@@ -1174,7 +1159,7 @@ export default function Workspace() {
                   <span>C: <span className={`tw:font-semibold ${up(legendCandle.close - legendCandle.open)}`}>{fmtPrice(legendCandle.close)}</span></span>
                   {legendPrev && <span className={up(legendCandle.close - legendPrev.close)}>({legendCandle.close >= legendPrev.close ? '+' : ''}{(((legendCandle.close - legendPrev.close) / legendPrev.close) * 100).toFixed(2)}%)</span>}
                 </>
-              ) : <span>Load a chart in the Workspace tab to start.</span>}
+              ) : <span>Pick a symbol above to start.</span>}
             </div>
             <div className="tw:flex tw:items-center tw:gap-1 tw:shrink-0 tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase">
               <span className={`tw:w-1.5 tw:h-1.5 tw:rounded-full ${playing ? 'tw:bg-secondary tw:animate-pulse' : 'tw:bg-on-surface-variant'}`} />
@@ -1182,12 +1167,11 @@ export default function Workspace() {
             </div>
           </section>
         </>
-      )}
 
       {/* Chart canvas dock -- same element in both views so the chart survives tab switches. */}
       <div className="tw:relative tw:w-full tw:flex tw:bg-surface-container-lowest">
         <aside className="tw:w-9 tw:bg-surface-container-low tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-space-xs tw:shrink-0 tw:z-20 tw:shadow-md tw:overflow-y-auto tw:no-scrollbar" aria-label="Drawing tools">
-          {(view === 'chart' ? RAIL_TOOLS : WORKSPACE_TOOLS).map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
+          {WORKSPACE_TOOLS.map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
           <div className="tw:w-4 tw:h-px tw:bg-surface-variant tw:my-1 tw:shrink-0" />
           <button type="button" onClick={() => setMagnet(m => !m)} aria-pressed={magnet} title="Magnet mode (snap to OHLC)" aria-label="Magnet mode"
             className={`tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0 ${magnet ? 'tw:bg-surface-container-high tw:text-primary' : 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'}`}>
@@ -1215,17 +1199,17 @@ export default function Workspace() {
             ))}
           </div>
         </aside>
-        <div className={`tw:relative tw:flex-1 tw:min-w-0 ${view === 'chart' ? 'tw:h-[clamp(360px,calc(100dvh-400px),860px)]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
+        <div className="tw:relative tw:flex-1 tw:min-w-0 tw:h-[clamp(360px,calc(100dvh-330px),900px)]"
           onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />
-          {candles && view === 'workspace' && (
+          {candles && (
             <div className="tw:absolute tw:top-2 tw:left-2 tw:z-10 tw:flex tw:items-center tw:gap-space-xs tw:bg-surface-container-lowest/80 tw:backdrop-blur tw:px-space-sm tw:py-0.5 tw:rounded tw:pointer-events-none">
               <span className="tw:w-2 tw:h-2 tw:rounded-full tw:bg-secondary tw:animate-pulse" />
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface tw:uppercase">Historical Simulation Window</span>
             </div>
           )}
-          {candles && view === 'chart' && indicators.ema && (
-            <div className="tw:absolute tw:top-2 tw:left-2 tw:z-10 tw:flex tw:flex-wrap tw:items-center tw:gap-space-sm tw:bg-surface-container-lowest/80 tw:backdrop-blur-md tw:px-space-sm tw:py-1 tw:rounded tw:pointer-events-none">
+          {candles && indicators.ema && (
+            <div className="tw:absolute tw:top-2 tw:right-2 tw:z-10 tw:flex tw:flex-wrap tw:items-center tw:gap-space-sm tw:bg-surface-container-lowest/80 tw:backdrop-blur-md tw:px-space-sm tw:py-1 tw:rounded tw:pointer-events-none">
               {EMA_CONFIG.map((cfg, k) => (
                 <div key={cfg.period} className="tw:flex tw:items-center tw:gap-1">
                   <span className="tw:w-2 tw:h-0.5 tw:rounded-full" style={{ background: cfg.color }} />
@@ -1234,7 +1218,7 @@ export default function Workspace() {
               ))}
             </div>
           )}
-          {candles && view === 'chart' && indicators.rsi && (
+          {candles && indicators.rsi && (
             <div className="tw:absolute tw:bottom-[84px] tw:left-2 tw:z-10 tw:flex tw:items-center tw:gap-space-sm tw:font-label-caps tw:text-label-caps tw:pointer-events-none">
               <span className="tw:text-primary tw:font-bold">RSI (14)</span>
               <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${rsiValue == null ? 'tw:text-on-surface-variant' : rsiValue >= 70 ? 'tw:text-error' : rsiValue <= 30 ? 'tw:text-secondary' : 'tw:text-secondary'}`}>{rsiValue != null ? rsiValue.toFixed(2) : '—'}</span>
@@ -1281,7 +1265,7 @@ export default function Workspace() {
                   <Icon name="query_stats" className="tw:text-[32px] tw:text-primary" />
                   <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">Load a symbol to start replaying</h3>
                   <p className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:max-w-sm">
-                    {view === 'chart' ? 'Pick a symbol and date range in the Workspace tab, then come back here for indicators.' : 'Pick a symbol, a past date range and a timeframe, then press Load Chart.'}
+                    Pick a symbol, a past date range and a timeframe, then press Load Chart.
                   </p>
                 </>
               )}
@@ -1290,54 +1274,38 @@ export default function Workspace() {
         </div>
       </div>
 
-      {view === 'workspace' ? (
-        /* 5. Replay controller */
-        <section className="tw:flex tw:flex-col tw:bg-surface-container-high tw:px-gutter tw:py-space-sm tw:gap-space-xs tw:shadow-md">
-          <div className="tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-space-sm">
-            {transport(false)}
-            {speedPills(SPEEDS, false)}
-            <div className="tw:flex tw:items-center tw:gap-space-xs">
-              <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant">TICK:</span>
-              <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-primary tw:font-semibold">{current ? `${fmtTick(Number(current.time))} (${sessionLabel(Number(current.time))})` : '—'}</span>
-            </div>
-          </div>
-          {scrubber('tw:bg-surface-container-lowest', 'tw:h-2')}
-        </section>
-      ) : (
-        <>
-          <section className="tw:bg-surface-container-high tw:px-gutter tw:py-space-sm tw:flex tw:flex-col tw:gap-space-xs tw:shadow-md">
-            <div className="tw:flex tw:items-center tw:justify-between tw:text-on-surface-variant tw:font-label-caps tw:text-label-caps">
-              <div className="tw:flex tw:items-center tw:gap-space-xs"><Icon name="history" className="tw:text-[14px] tw:text-primary" /><span>HISTORICAL BAR REPLAY</span></div>
-              <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface">Bar <span className="tw:text-primary tw:font-bold">{Math.max(0, analysisBars)}</span> / {analysisTotal}</div>
-            </div>
-            {scrubber('tw:bg-on-primary', 'tw:h-1.5')}
-            <div className="tw:flex tw:items-center tw:justify-between">
-              {transport(true)}
-              {speedPills(SPEEDS, true)}
-            </div>
-          </section>
-          <section className="tw:p-gutter tw:bg-surface-container-lowest tw:flex tw:items-center tw:gap-space-sm tw:shadow-xl">
-            <button type="button" onClick={logSetup} disabled={!openTrade && !closedTrade} title={openTrade || closedTrade ? 'Log this trade to the Backtest Log' : 'Place a Long or Short first'}
-              className="tw:min-h-[44px] tw:px-space-md tw:bg-surface-container-high tw:hover:bg-surface-bright tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action tw:flex tw:items-center tw:gap-1 tw:shrink-0 tw:disabled:opacity-40">
-              <Icon name="post_add" className="tw:text-primary tw:text-[18px]" /><span>Log Setup</span>
-            </button>
-            <div className="tw:grid tw:grid-cols-2 tw:gap-space-sm tw:flex-1 tw:min-w-0">
-              <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'}
-                className={`tw:min-h-[44px] tw:bg-secondary-container tw:text-on-secondary-container tw:hover:opacity-95 tw:font-label-action tw:text-label-action tw:font-semibold tw:rounded tw:flex tw:items-center tw:justify-center tw:gap-1 tw:shadow-sm tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:ring-2 tw:ring-secondary' : ''}`}>
-                <Icon name="arrow_upward" className="tw:text-[18px]" /><span>+ Long</span>
-              </button>
-              <button type="button" onClick={() => startPlacing('short')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'short'}
-                className={`tw:min-h-[44px] tw:bg-error-container tw:text-[#ffdad6] tw:hover:opacity-95 tw:font-label-action tw:text-label-action tw:font-semibold tw:rounded tw:flex tw:items-center tw:justify-center tw:gap-1 tw:shadow-sm tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:ring-2 tw:ring-error' : ''}`}>
-                <Icon name="arrow_downward" className="tw:text-[18px]" /><span>+ Short</span>
-              </button>
-            </div>
-            <button type="button" onClick={downloadSnapshot} disabled={!candles} title="Take chart snapshot" aria-label="Take chart snapshot"
-              className="tw:min-h-[44px] tw:min-w-[44px] tw:bg-surface-container-high tw:hover:bg-surface-bright tw:rounded tw:text-on-surface-variant tw:hover:text-on-surface tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:disabled:opacity-40">
-              <Icon name="photo_camera" className="tw:text-[20px]" />
-            </button>
-          </section>
-        </>
-      )}
+      {/* 6. Replay controller */}
+      <section className="tw:bg-surface-container-high tw:px-gutter tw:py-space-sm tw:flex tw:flex-col tw:gap-space-xs tw:shadow-md">
+        <div className="tw:flex tw:items-center tw:justify-between tw:text-on-surface-variant tw:font-label-caps tw:text-label-caps">
+          <div className="tw:flex tw:items-center tw:gap-space-xs"><Icon name="history" className="tw:text-[14px] tw:text-primary" /><span>HISTORICAL BAR REPLAY</span></div>
+          <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface">Bar <span className="tw:text-primary tw:font-bold">{Math.max(0, analysisBars)}</span> / {analysisTotal}</div>
+        </div>
+        {scrubber('tw:bg-on-primary', 'tw:h-1.5')}
+        <div className="tw:flex tw:items-center tw:justify-between">
+          {transport(true)}
+          {speedPills(SPEEDS, true)}
+        </div>
+      </section>
+      <section className="tw:p-gutter tw:bg-surface-container-lowest tw:flex tw:items-center tw:gap-space-sm tw:shadow-xl">
+        <button type="button" onClick={logSetup} disabled={!openTrade && !closedTrade} title={openTrade || closedTrade ? 'Log this trade to the Backtest Log' : 'Place a Long or Short first'}
+          className="tw:min-h-[44px] tw:px-space-md tw:bg-surface-container-high tw:hover:bg-surface-bright tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action tw:flex tw:items-center tw:gap-1 tw:shrink-0 tw:disabled:opacity-40">
+          <Icon name="post_add" className="tw:text-primary tw:text-[18px]" /><span>Log Setup</span>
+        </button>
+        <div className="tw:grid tw:grid-cols-2 tw:gap-space-sm tw:flex-1 tw:min-w-0">
+          <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'}
+            className={`tw:min-h-[44px] tw:bg-secondary-container tw:text-on-secondary-container tw:hover:opacity-95 tw:font-label-action tw:text-label-action tw:font-semibold tw:rounded tw:flex tw:items-center tw:justify-center tw:gap-1 tw:shadow-sm tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:ring-2 tw:ring-secondary' : ''}`}>
+            <Icon name="arrow_upward" className="tw:text-[18px]" /><span>+ Long</span>
+          </button>
+          <button type="button" onClick={() => startPlacing('short')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'short'}
+            className={`tw:min-h-[44px] tw:bg-error-container tw:text-[#ffdad6] tw:hover:opacity-95 tw:font-label-action tw:text-label-action tw:font-semibold tw:rounded tw:flex tw:items-center tw:justify-center tw:gap-1 tw:shadow-sm tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:ring-2 tw:ring-error' : ''}`}>
+            <Icon name="arrow_downward" className="tw:text-[18px]" /><span>+ Short</span>
+          </button>
+        </div>
+        <button type="button" onClick={downloadSnapshot} disabled={!candles} title="Take chart snapshot" aria-label="Take chart snapshot"
+          className="tw:min-h-[44px] tw:min-w-[44px] tw:bg-surface-container-high tw:hover:bg-surface-bright tw:rounded tw:text-on-surface-variant tw:hover:text-on-surface tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:disabled:opacity-40">
+          <Icon name="photo_camera" className="tw:text-[20px]" />
+        </button>
+      </section>
 
       {/* 6. Log Trade Outcome modal */}
       {closedTrade && showCloseout && (

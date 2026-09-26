@@ -1,22 +1,21 @@
 'use client';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { fmtUSD, useBacktest } from './data';
 
 const TABS = [
   { key: 'workspace', label: 'Workspace', icon: 'query_stats', href: '/backtest/workspace' },
-  { key: 'chart', label: 'Chart', icon: 'candlestick_chart', href: '/backtest/workspace?view=chart' },
   { key: 'log', label: 'Log', icon: 'table_chart', href: '/backtest' },
   { key: 'metrics', label: 'Metrics', icon: 'analytics', href: '/backtest/metrics' },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
-const SECTION_LABEL: Record<TabKey, string> = { workspace: 'Workspace', chart: 'Chart Analysis', log: 'Log', metrics: 'Metrics' };
+const SECTION_LABEL: Record<TabKey, string> = { workspace: 'Workspace', log: 'Log', metrics: 'Metrics' };
 
-function activeTab(pathname: string, view: string | null): TabKey {
+function activeTab(pathname: string): TabKey {
   if (pathname.startsWith('/backtest/metrics')) return 'metrics';
-  if (pathname.startsWith('/backtest/workspace')) return view === 'chart' ? 'chart' : 'workspace';
+  if (pathname.startsWith('/backtest/workspace')) return 'workspace';
   return 'log';
 }
 
@@ -26,8 +25,7 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
 
 export default function BacktestShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const view = useSearchParams().get('view');
-  const tab = activeTab(pathname, view);
+  const tab = activeTab(pathname);
   const { simBalance, activeSymbol } = useBacktest();
   const [initials, setInitials] = useState('');
 

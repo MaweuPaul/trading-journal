@@ -5,26 +5,52 @@ import { useState, useEffect } from 'react';
 import { LayoutDashboard, List, BarChart2, TrendingUp, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
-const navItems = [
-  { href: '/',            label: 'Dashboard',    icon: LayoutDashboard },
-  { href: '/trades',      label: 'Trades',       icon: List },
-  { href: '/calendar',    label: 'Calendar',     icon: Calendar },
-  { href: '/stats',       label: 'Analytics',    icon: BarChart2 },
-  { href: '/performance', label: 'Performance',  icon: LineChart },
-  { href: '/coach',       label: 'Edge Coach',   icon: Brain },
-  { href: '/backtest',    label: 'Backtest',     icon: FlaskConical },
-  { href: '/knowledge',   label: 'Knowledge Base', icon: BookOpen },
-  { href: '/archive',     label: 'Backup',       icon: HardDrive },
-  { href: '/rules',       label: 'Playbooks',     icon: SlidersHorizontal },
-  { href: '/accounts',    label: 'Accounts',      icon: Landmark },
-  { href: '/manual',      label: 'Manual',        icon: BookMarked },
+const navGroups = [
+  {
+    label: 'Overview',
+    items: [
+      { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: 'Trading',
+    items: [
+      { href: '/trades', label: 'Trades', icon: List },
+      { href: '/calendar', label: 'Calendar', icon: Calendar },
+      { href: '/stats', label: 'Analytics', icon: BarChart2 },
+      { href: '/performance', label: 'Performance', icon: LineChart },
+    ],
+  },
+  {
+    label: 'Improve',
+    items: [
+      { href: '/coach', label: 'Edge Coach', icon: Brain },
+      { href: '/backtest', label: 'Backtest', icon: FlaskConical },
+      { href: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
+      { href: '/rules', label: 'Playbooks', icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: 'Setup',
+    items: [
+      { href: '/accounts', label: 'Accounts', icon: Landmark },
+      { href: '/archive', label: 'Backup', icon: HardDrive },
+      { href: '/manual', label: 'Manual', icon: BookMarked },
+    ],
+  },
 ];
+
+function fmtPnl(n: number) {
+  const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+  return `${n > 0 ? '+' : n < 0 ? '-' : ''}$${abs}`;
+}
 
 function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
   const router = useRouter();
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [accountSummary, setAccountSummary] = useState({ connected: 0, enabled: 0, total: 0 });
+  const [pnlSnapshot, setPnlSnapshot] = useState<{ week: number; month: number } | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -50,6 +76,22 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
           })
           .catch(() => {});
 
+        fetch('/api/calendar', { headers: { Authorization: `Bearer ${token}` } })
+          .then(response => response.ok ? response.json() : Promise.reject())
+          .then(body => {
+            const days: Record<string, { pnl: number }> = body?.days || {};
+            const now = new Date();
+            const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay()); weekStart.setHours(0, 0, 0, 0);
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            let week = 0, month = 0;
+            for (const [dateStr, day] of Object.entries(days)) {
+              const d = new Date(`${dateStr}T00:00:00`);
+              if (d >= monthStart) month += day.pnl;
+              if (d >= weekStart) week += day.pnl;
+            }
+            setPnlSnapshot({ week, month });
+          })
+          .catch(() => {});
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -78,21 +120,37 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
       </div>
 
       <nav className="sidebar-nav">
-        <span className="nav-section-label">Menu</span>
-        {navItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={`nav-item ${path === href ? 'active' : ''}`}
-            onClick={onClose}
-          >
-            <Icon size={16} />
-            {label}
-          </Link>
+        {navGroups.map(group => (
+          <div key={group.label} className="nav-group">
+            <span className="nav-section-label">{group.label}</span>
+            {group.items.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`nav-item ${path === href ? 'active' : ''}`}
+                onClick={onClose}
+              >
+                <Icon size={16} />
+                {label}
+              </Link>
+            ))}
+          </div>
         ))}
       </nav>
 
       <div className="sidebar-footer">
+        {pnlSnapshot && (
+          <div className="sidebar-pnl">
+            <div className="sidebar-pnl-cell">
+              <span className="sidebar-pnl-label">This Week</span>
+              <span className={`sidebar-pnl-value ${pnlSnapshot.week > 0 ? 'positive' : pnlSnapshot.week < 0 ? 'negative' : ''}`}>{fmtPnl(pnlSnapshot.week)}</span>
+            </div>
+            <div className="sidebar-pnl-cell">
+              <span className="sidebar-pnl-label">This Month</span>
+              <span className={`sidebar-pnl-value ${pnlSnapshot.month > 0 ? 'positive' : pnlSnapshot.month < 0 ? 'negative' : ''}`}>{fmtPnl(pnlSnapshot.month)}</span>
+            </div>
+          </div>
+        )}
         <div className="sidebar-theme">
           <span>Appearance</span>
           <ThemeToggle />

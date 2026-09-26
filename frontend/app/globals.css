@@ -215,6 +215,39 @@ body {
 
 .nav-item svg { flex-shrink: 0; }
 
+.nav-group + .nav-group { margin-top: 6px; }
+
+.sidebar-pnl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sidebar-pnl-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+.sidebar-pnl-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.sidebar-pnl-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.sidebar-pnl-value.positive { color: var(--green); }
+.sidebar-pnl-value.negative { color: var(--red); }
+
 .sidebar-footer {
   padding: 18px 20px;
   border-top: 1px solid var(--border);

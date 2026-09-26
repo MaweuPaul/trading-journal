@@ -44,20 +44,32 @@
   --color-on-surface-variant: var(--bt-on-surface-variant);
   --color-outline: var(--bt-outline);
   --color-outline-variant: var(--bt-outline-variant);
+  --color-background: var(--bt-surface);
+  --color-surface-tint: var(--bt-primary-fixed-dim);
+  --color-primary-fixed: var(--bt-primary-fixed);
+  --color-on-primary-fixed: var(--bt-on-primary-fixed);
+  --color-on-secondary: var(--bt-on-secondary);
+  --color-secondary-fixed: var(--bt-secondary-fixed);
+  --color-secondary-fixed-dim: var(--bt-secondary-fixed-dim);
+  --color-on-tertiary: var(--bt-on-tertiary);
+  --color-tertiary-fixed-dim: var(--bt-tertiary-fixed-dim);
+  --color-on-error-container: var(--bt-on-error-container);
 }
 @theme {
-  --radius: 0.125rem;
-  --radius-lg: 0.25rem;
-  --radius-xl: 0.5rem;
-  --radius-full: 0.75rem;
+  /* App radii: controls 8px, cards 12px */
+  --radius: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
 
-  --spacing-gutter: 0.5rem;
-  --spacing-margin: 0.75rem;
-  --spacing-space-xs: 0.125rem;
-  --spacing-space-sm: 0.25rem;
-  --spacing-space-md: 0.5rem;
-  --spacing-space-lg: 0.75rem;
-  --spacing-space-xl: 1rem;
+  /* Roomier than the design's dense terminal spacing, to match the app's cards. */
+  --spacing-gutter: 0.75rem;
+  --spacing-margin: 1rem;
+  --spacing-space-xs: 0.375rem;
+  --spacing-space-sm: 0.5rem;
+  --spacing-space-md: 0.75rem;
+  --spacing-space-lg: 1rem;
+  --spacing-space-xl: 1.25rem;
 
   --font-label-caps: 'Inter', system-ui, sans-serif;
   --font-mono-metric-md: 'JetBrains Mono', monospace;
@@ -99,27 +111,39 @@
   --text-mono-metric-lg--font-weight: 600;
 }
 
+/* The design's roles are mapped onto the app's own tokens (globals.css), so
+   the section follows the same warm palette and switches with the app theme. */
 .bt-shell {
-  --bt-primary: #ffc174; --bt-primary-container: #f59e0b; --bt-on-primary: #472a00; --bt-on-primary-container: #613b00;
-  --bt-primary-fixed-dim: #ffb95f;
-  --bt-secondary: #4edea3; --bt-secondary-container: #00a572; --bt-on-secondary-container: #00311f;
-  --bt-tertiary: #ffbcb7; --bt-tertiary-container: #ff938c;
-  --bt-error: #ffb4ab; --bt-error-container: #93000a;
-  --bt-surface: #0f141b; --bt-surface-bright: #343941; --bt-surface-variant: #30353d;
-  --bt-surface-container-lowest: #090f15; --bt-surface-container-low: #171c23; --bt-surface-container: #1b2027;
-  --bt-surface-container-high: #252a32; --bt-surface-container-highest: #30353d;
-  --bt-on-surface: #dee2ec; --bt-on-surface-variant: #d8c3ad; --bt-outline: #a08e7a; --bt-outline-variant: #534434;
+  color-scheme: light;
+  --bt-surface: var(--bg-base);
+  --bt-surface-container-lowest: var(--bg-surface);
+  --bt-surface-container-low: var(--bg-elevated);
+  --bt-surface-container: var(--bg-card);
+  --bt-surface-container-high: var(--bg-hover);
+  --bt-surface-container-highest: var(--border);
+  --bt-surface-bright: var(--bg-hover);
+  --bt-surface-variant: var(--bg-hover);
+  --bt-on-surface: var(--text-primary);
+  --bt-on-surface-variant: var(--text-secondary);
+  --bt-outline: var(--text-muted);
+  --bt-outline-variant: var(--border-light);
+  --bt-primary: var(--accent);
+  --bt-primary-container: var(--accent);
+  --bt-primary-fixed-dim: var(--gold);
+  --bt-primary-fixed: var(--accent-soft);
+  --bt-on-primary-fixed: var(--text-primary);
+  --bt-on-primary: #ffffff;
+  --bt-on-primary-container: var(--text-primary);
+  --bt-secondary: var(--green); --bt-secondary-container: var(--green); --bt-on-secondary-container: #ffffff;
+  --bt-secondary-fixed: var(--green); --bt-secondary-fixed-dim: var(--green); --bt-on-secondary: #ffffff;
+  --bt-tertiary: var(--red); --bt-tertiary-container: var(--red); --bt-tertiary-fixed-dim: var(--red); --bt-on-tertiary: #ffffff;
+  --bt-error: var(--red); --bt-error-container: var(--red); --bt-on-error-container: #ffffff;
 }
-:root[data-theme='light'] .bt-shell {
-  --bt-primary: #8a5100; --bt-primary-container: #f59e0b; --bt-on-primary: #ffffff; --bt-on-primary-container: #3d2400;
-  --bt-primary-fixed-dim: #e89400;
-  --bt-secondary: #007a52; --bt-secondary-container: #00a572; --bt-on-secondary-container: #ffffff;
-  --bt-tertiary: #b3262d; --bt-tertiary-container: #d8434a;
-  --bt-error: #b3262d; --bt-error-container: #d8434a;
-  --bt-surface: #f6f7fa; --bt-surface-bright: #ffffff; --bt-surface-variant: #e4e8ef;
-  --bt-surface-container-lowest: #ffffff; --bt-surface-container-low: #fbfcfd; --bt-surface-container: #eef1f5;
-  --bt-surface-container-high: #e4e8ee; --bt-surface-container-highest: #d9dee6;
-  --bt-on-surface: #161b22; --bt-on-surface-variant: #5b5046; --bt-outline: #8a7b6a; --bt-outline-variant: #d6cabc;
+:root[data-theme='dark'] .bt-shell {
+  color-scheme: dark;
+  --bt-on-primary: #201a0a;
+  --bt-on-secondary: #0c2c25; --bt-on-secondary-container: #0c2c25;
+  --bt-on-tertiary: #35151d; --bt-on-error-container: #35151d;
 }
 
 /* Scoped preflight: just what the design markup relies on. */
@@ -146,6 +170,9 @@
    - padding: globals.css forces 16px (!important) on mobile.
    - overflow-x: clip instead of hidden, so .main-content isn't a scroll
      container and the sticky header/tab bar stick to the window. */
-body:has(.bt-shell) .main-content { padding: 0 !important; overflow-x: clip; background: #0f141b; }
-:root[data-theme='light'] body:has(.bt-shell) .main-content { background: #f6f7fa; }
+/* min-width: 0 so the flex item can't be widened past the window by a wide toolbar. */
+body:has(.bt-shell) .main-content { padding: 0 !important; overflow-x: clip; background: var(--bg-base); min-width: 0; }
+/* globals.css adds a 58px top margin only below 768px; the shell pads for the
+   app top bar itself (pt-[114px]) so it's the same at every mobile width. */
+body:has(.bt-shell) .main-content { margin-top: 0 !important; }
 .main-content > .bt-shell { animation: none; }

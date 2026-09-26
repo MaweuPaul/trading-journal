@@ -1,5 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, fmtR, fmtUSD, tagsOf, useBacktest } from './data';
 import { computeStats, profitFactorGrade, sqnGrade, GroupStats } from './stats';
@@ -8,6 +9,8 @@ type Range = 'all' | '30' | '90' | 'ytd';
 const RANGE_LABEL: Record<Range, string> = { all: 'All Time', '30': 'Last 30 Days', '90': 'Last 90 Days', ytd: 'Year to Date' };
 
 const EW = 400, EH = 160, DH = 80;
+// Below this sample size Sharpe/Sortino/Calmar/Kelly swing wildly and mislead.
+const MIN_SAMPLE = 30;
 
 function tone(n: number) { return n > 0 ? 'tw:text-secondary' : n < 0 ? 'tw:text-error' : 'tw:text-on-surface-variant'; }
 function fmtRatio(n: number) { return Number.isFinite(n) ? n.toFixed(2) : '∞'; }
@@ -19,10 +22,11 @@ function download(filename: string, content: string, type: string) {
 
 export default function MetricsView() {
   const { trades, loading, error, strategies } = useBacktest();
-  const [strategy, setStrategy] = useState('ALL');
+  const initialStrategy = useSearchParams().get('strategy');
+  const [strategy, setStrategy] = useState(initialStrategy || 'ALL');
   const [range, setRange] = useState<Range>('all');
   const [benchmark, setBenchmark] = useState(false);
-  const [breakdown, setBreakdown] = useState<'strategy' | 'symbol'>('strategy');
+  const [breakdown, setBreakdown] = useState<'strategy' | 'symbol' | 'timeframe' | 'direction'>('strategy');
   const [hover, setHover] = useState<number | null>(null);
   const [now] = useState(() => Date.now());
 
@@ -75,7 +79,7 @@ export default function MetricsView() {
       profitFactor: s.profitFactor, sqn: s.sqn, sharpe: s.sharpe, sortino: s.sortino, calmar: s.calmar,
       halfKellyPct: s.kellyPct / 2, annualizedR: s.annualizedR, volatilityR: s.volatilityR,
       maxDrawdownR: s.maxDrawdownR, maxWinStreak: s.maxWinStreak, maxLossStreak: s.maxLossStreak,
-      byStrategy: s.byStrategy, bySymbol: s.bySymbol,
+      byStrategy: s.byStrategy, bySymbol: s.bySymbol, byTimeframe: s.byTimeframe, byDirection: s.byDirection,
       log: filtered.map(({ _id, name, symbol, direction, interval, outcome, rMultiple, pnlUSD, createdAt, ...rest }) => ({ _id, name, tags: tagsOf({ tags: rest.tags, strategy: rest.strategy }), symbol, direction, interval, outcome, rMultiple, pnlUSD, createdAt })),
     };
     download(`backtest-quant-summary-${stamp}.json`, JSON.stringify(summary, null, 2), 'application/json');
@@ -95,7 +99,7 @@ export default function MetricsView() {
   return (
     <div className="tw:flex tw:flex-col tw:w-full tw:gap-space-md tw:p-gutter tw:pb-space-xl">
       {/* Header filter ribbon */}
-      <section className="tw:bg-surface-container-low tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-sm">
+      <section className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-sm">
         <div className="tw:flex tw:items-center tw:justify-between">
           <div className="tw:flex tw:items-center tw:gap-space-xs">
             <Icon name="insights" className="tw:text-primary tw:text-[18px] tw:[font-variation-settings:'FILL'_1]" />
@@ -151,7 +155,7 @@ export default function MetricsView() {
       </div>
 
       {/* Equity curve */}
-      <section className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-sm">
+      <section className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-sm">
         <div className="tw:flex tw:items-center tw:justify-between">
           <div className="tw:flex tw:items-center tw:gap-space-xs">
             <Icon name="stacked_line_chart" className="tw:text-secondary tw:text-[18px]" />
@@ -217,7 +221,7 @@ export default function MetricsView() {
       </section>
 
       {/* Underwater drawdown */}
-      <section className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-xs">
+      <section className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-xs">
         <div className="tw:flex tw:items-center tw:justify-between">
           <div className="tw:flex tw:items-center tw:gap-space-xs">
             <Icon name="south_east" className="tw:text-tertiary-container tw:text-[18px]" />
@@ -267,7 +271,7 @@ export default function MetricsView() {
           <span className="tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase">R-Multiple Basis</span>
         </div>
         <div className="tw:grid tw:grid-cols-2 tw:gap-space-xs tw:sm:grid-cols-3">
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Profit Factor</span>
               <span className={`tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded ${s.profitFactor >= 1 ? 'tw:bg-secondary/15 tw:text-secondary' : 'tw:bg-error/15 tw:text-error'}`}>{profitFactorGrade(s.profitFactor)}</span>
@@ -277,7 +281,7 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">G:L</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Expectancy</span>
               <Icon name={s.avgR >= 0 ? 'verified' : 'error'} className={`tw:text-[16px] ${tone(s.avgR)}`} />
@@ -287,7 +291,7 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">/trade</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container-high tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">SQN Rating</span>
               <span className="tw:bg-primary/20 tw:text-primary tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded">{sqn.badge}</span>
@@ -297,21 +301,21 @@ export default function MetricsView() {
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">{sqn.caption}</span>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Avg Win ({s.wins})</span>
             <div className="tw:mt-2">
               <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-secondary tw:font-bold">{fmtR(s.avgWinR)}</span>
               <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant">{fmtUSD(s.avgWinUSD)}</div>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Avg Loss ({s.losses})</span>
             <div className="tw:mt-2">
               <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-error tw:font-bold">{fmtR(s.avgLossR)}</span>
               <div className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant">{fmtUSD(s.avgLossUSD)}</div>
             </div>
           </div>
-          <div className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
+          <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Best vs Worst Trade</span>
             <div className="tw:mt-2 tw:flex tw:justify-between tw:items-center">
               <div>
@@ -326,7 +330,12 @@ export default function MetricsView() {
             </div>
           </div>
         </div>
-        <div className="tw:grid tw:grid-cols-3 tw:gap-space-xs">
+        {s.n < MIN_SAMPLE && (
+          <p className="tw:text-body-sm tw:text-on-surface-variant tw:px-space-xs">
+            Advanced ratios below need at least {MIN_SAMPLE} trades to mean anything — {s.n} logged so far, so they&apos;re greyed out.
+          </p>
+        )}
+        <div className={`tw:grid tw:grid-cols-3 tw:gap-space-xs ${s.n < MIN_SAMPLE ? 'tw:opacity-45' : ''}`}>
           {[
             { label: 'Sharpe', value: s.sharpe.toFixed(2), cls: 'tw:text-on-surface', hint: 'Annualized, R-based' },
             { label: 'Sortino', value: s.sortino.toFixed(2), cls: 'tw:text-on-surface', hint: 'Downside-adjusted, annualized' },
@@ -335,13 +344,13 @@ export default function MetricsView() {
             { label: 'Annualized R', value: fmtR(s.annualizedR, 1), cls: tone(s.annualizedR), hint: 'R per year of market time' },
             { label: 'Volatility', value: `${s.volatilityR.toFixed(2)}R`, cls: 'tw:text-on-surface-variant', hint: 'Std. dev. of R per trade' },
           ].map(m => (
-            <div key={m.label} title={m.hint} className="tw:bg-surface-container-low tw:rounded-lg tw:p-space-sm tw:flex tw:flex-col tw:transition-colors tw:duration-150 tw:hover:bg-surface-container">
+            <div key={m.label} title={m.hint} className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-lg tw:p-space-sm tw:flex tw:flex-col tw:transition-colors tw:duration-150 tw:hover:bg-surface-container">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">{m.label}</span>
               <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold tw:mt-0.5 ${m.cls}`}>{m.value}</span>
             </div>
           ))}
         </div>
-        <div className="tw:bg-surface-container-low tw:rounded-xl tw:p-space-md tw:flex tw:items-center tw:justify-between">
+        <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:items-center tw:justify-between">
           <div className="tw:flex tw:items-center tw:gap-space-sm">
             <div className="tw:w-8 tw:h-8 tw:rounded-full tw:bg-secondary/10 tw:flex tw:items-center tw:justify-center tw:text-secondary"><Icon name="bolt" className="tw:text-[18px]" /></div>
             <div className="tw:flex tw:flex-col">
@@ -361,19 +370,19 @@ export default function MetricsView() {
       </section>
 
       {/* Breakdown matrix */}
-      <section className="tw:bg-surface-container tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-md">
+      <section className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:shadow-md tw:flex tw:flex-col tw:gap-space-md">
         <div className="tw:flex tw:items-center tw:justify-between">
           <div className="tw:flex tw:items-center tw:gap-space-xs tw:bg-surface-container-lowest tw:p-0.5 tw:rounded-lg" role="tablist">
-            {(['strategy', 'symbol'] as const).map(k => (
+            {(['strategy', 'symbol', 'timeframe', 'direction'] as const).map(k => (
               <button key={k} type="button" role="tab" aria-selected={breakdown === k} onClick={() => setBreakdown(k)}
                 className={`tw:px-space-md tw:py-1 tw:rounded tw:font-label-action tw:text-label-action tw:transition-all ${breakdown === k ? 'tw:text-primary tw:bg-surface-container-high' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
-                {k === 'strategy' ? 'By Strategy' : 'By Symbol'}
+                {`By ${k[0].toUpperCase()}${k.slice(1)}`}
               </button>
             ))}
           </div>
           <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Performance Matrix</span>
         </div>
-        <BreakdownTable rows={breakdown === 'strategy' ? s.byStrategy : s.bySymbol} kind={breakdown} />
+        <BreakdownTable rows={breakdown === 'strategy' ? s.byStrategy : breakdown === 'symbol' ? s.bySymbol : breakdown === 'timeframe' ? s.byTimeframe : s.byDirection} kind={breakdown} />
       </section>
 
       {/* Export deck */}
@@ -397,14 +406,14 @@ export default function MetricsView() {
 
 const SYMBOL_DOTS = ['tw:bg-primary', 'tw:bg-secondary', 'tw:bg-primary-fixed-dim', 'tw:bg-error', 'tw:bg-tertiary-container'];
 
-function BreakdownTable({ rows, kind }: { rows: GroupStats[]; kind: 'strategy' | 'symbol' }) {
+function BreakdownTable({ rows, kind }: { rows: GroupStats[]; kind: 'strategy' | 'symbol' | 'timeframe' | 'direction' }) {
   if (!rows.length) {
     return <p className="tw:text-on-surface-variant tw:font-body-sm tw:text-body-sm tw:px-space-xs">{kind === 'strategy' ? 'Tag backtests with a strategy to compare them here.' : 'No trades in this range.'}</p>;
   }
   return (
     <div className="tw:flex tw:flex-col tw:gap-space-xs" role="table" aria-label={kind === 'strategy' ? 'Performance by strategy' : 'Performance by symbol'}>
       <div role="row" className="tw:grid tw:grid-cols-12 tw:px-space-xs tw:py-1 tw:text-on-surface-variant tw:font-label-caps tw:text-label-caps tw:uppercase">
-        <span role="columnheader" className="tw:col-span-5">{kind === 'strategy' ? 'Strategy' : 'Ticker'}</span>
+        <span role="columnheader" className="tw:col-span-5">{kind === 'strategy' ? 'Strategy' : kind === 'symbol' ? 'Ticker' : kind === 'timeframe' ? 'Timeframe' : 'Direction'}</span>
         <span role="columnheader" className="tw:col-span-2 tw:text-center">Trades</span>
         <span role="columnheader" className="tw:col-span-2 tw:text-center">Win%</span>
         <span role="columnheader" className="tw:col-span-3 tw:text-right">Total R</span>

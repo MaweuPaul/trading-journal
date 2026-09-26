@@ -21,6 +21,8 @@ export interface BacktestTrade {
   outcome: 'win' | 'loss' | 'breakeven';
   riskAmount: number; pnlUSD: number; rMultiple: number;
   notes: string;
+  planFollowed?: boolean; setupQuality?: number; executionQuality?: number;
+  mistakes?: string[]; lesson?: string; hasSnapshot?: boolean;
   createdAt: string;
 }
 
@@ -63,6 +65,7 @@ interface BacktestData {
   reload: () => Promise<void>;
   removeTrade: (id: string) => Promise<boolean>;
   addTrade: (trade: BacktestTrade) => void;
+  updateTrade: (id: string, patch: Partial<BacktestTrade>) => Promise<{ ok: boolean; error?: string }>;
   strategies: string[];
   strategyInfo: StrategyInfo[];
   createStrategy: (name: string, description?: string) => Promise<{ ok: boolean; error?: string }>;
@@ -147,6 +150,18 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     return res.ok;
   }, []);
   const addTrade = useCallback((trade: BacktestTrade) => setTrades(current => [trade, ...current]), []);
+  const updateTrade = useCallback(async (id: string, patch: Partial<BacktestTrade>) => {
+    try {
+      const res = await fetch(`/api/backtest-trades/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(patch) });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, error: data.error || 'Could not update backtest' };
+      // The PATCH response omits the snapshot flag; keep the one already known.
+      setTrades(current => current.map(t => (t._id === id ? { ...t, ...data, hasSnapshot: t.hasSnapshot } : t)));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Could not update backtest' };
+    }
+  }, []);
 
   const createStrategy = useCallback(async (name: string, description = '') => {
     const trimmed = name.trim();
@@ -170,8 +185,8 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     // before this feature existed, so older data keeps showing up.
     const strategies = Array.from(new Set([...strategyInfo.map(s => s.name), ...trades.flatMap(tagsOf)])).sort((a, b) => a.localeCompare(b));
     const simBalance = SIM_STARTING_BALANCE + trades.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    return { trades, loading, error, reload, removeTrade, addTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
-  }, [trades, loading, error, reload, removeTrade, addTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
+    return { trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
+  }, [trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
 
   return <BacktestContext.Provider value={value}>{children}</BacktestContext.Provider>;
 }

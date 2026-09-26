@@ -98,8 +98,10 @@ export function computeStats(input: BacktestTrade[]) {
     avgR, avgWinR, avgLossR, avgWinUSD, avgLossUSD, profitFactor, best, worst,
     totalR: cumulativeR, peakR, totalPnl, maxDrawdownR, maxDrawdownIndex, benchmarkR,
     maxWinStreak, maxLossStreak, sharpe, sortino, calmar, sqn, kellyPct, annualizedR, volatilityR,
-    byStrategy: groupBy(trades, tagsOf),
+    byStrategy: groupBy(trades, t => { const tags = tagsOf(t); return tags.length ? tags : ['Unclassified']; }),
     bySymbol: groupBy(trades, t => [t.symbol]),
+    byTimeframe: groupBy(trades, t => [t.interval || 'Unspecified']),
+    byDirection: groupBy(trades, t => [t.direction]),
   };
 }
 export type BacktestStats = ReturnType<typeof computeStats>;

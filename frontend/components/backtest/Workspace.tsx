@@ -1,15 +1,19 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
-import type { IChartApi, IPriceLine, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from './data';
+import JournalFields, { EMPTY_JOURNAL, JournalValues } from './JournalFields';
+import { WorkspaceDraft, readDraft, writeDraft, clearDraft } from './session';
+import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
@@ -51,36 +55,6 @@ const DAY = 86_400_000;
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
 
-// Autosaved workspace state -- so leaving mid-backtest (drawings on the
-// chart, maybe an open hypothetical trade) doesn't lose that work. Stored
-// client-side only; nothing here is logged until the trader explicitly
-// saves a closed trade to the Backtest Log.
-const DRAFT_KEY = 'backtest-workspace-draft-v1';
-const DRAFT_MAX_AGE_MS = 7 * 86_400_000;
-interface WorkspaceDraft {
-  symbol: string; fromDate: string; toDate: string; interval: string;
-  replayIdx: number; analysisStartIdx: number;
-  openTrade: OpenTrade | null;
-  backtestName: string; notes: string; tags: string[]; drawColor: string;
-  drawings: SerializedDrawing[];
-  savedAt: number;
-}
-function readDraft(): WorkspaceDraft | null {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as WorkspaceDraft;
-    if (!parsed?.symbol || Date.now() - parsed.savedAt > DRAFT_MAX_AGE_MS) return null;
-    return parsed;
-  } catch { return null; }
-}
-function writeDraft(draft: WorkspaceDraft) {
-  try { window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* storage full/unavailable -- autosave is best-effort */ }
-}
-function clearDraft() {
-  try { window.localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
-}
-
 function drawingFactory(type: string, data: SerializedDrawing) {
   return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
 }
@@ -94,11 +68,6 @@ function hexAlpha(hex: string, alpha: number) {
   const n = parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
-function fmtVolume(n: number) {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(Math.round(n));
-}
 function fmtTick(unixSeconds: number) {
   const d = new Date(unixSeconds * 1000);
   const p = (n: number) => String(n).padStart(2, '0');
@@ -106,9 +75,10 @@ function fmtTick(unixSeconds: number) {
 }
 
 export default function Workspace() {
+  const isDesktop = useIsDesktop();
   const params = useSearchParams();
   const { resolvedTheme } = useTheme();
-  const { activeSymbol, setActiveSymbol, strategies, addTrade, currentStrategy } = useBacktest();
+  const { activeSymbol, setActiveSymbol, strategies, addTrade, currentStrategy, setCurrentStrategy } = useBacktest();
 
   const rootRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +89,6 @@ export default function Workspace() {
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const emaRefs = useRef<ISeriesApi<'Line'>[]>([]);
   const rsiRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const alertLinesRef = useRef<Map<number, IPriceLine>>(new Map());
   const managerRef = useRef<DrawingManager | null>(null);
 
   // ── Session autosave ─────────────────────────────────────────────────────
@@ -128,7 +97,6 @@ export default function Workspace() {
 
   // ── Setup ──────────────────────────────────────────────────────────────────
   const [symbol, setSymbol] = useState(() => params.get('symbol') || activeSymbol || 'XAUUSD');
-  const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState(() => params.get('from') || isoDaysAgo(30));
   const [toDate, setToDate] = useState(() => params.get('to') || isoDaysAgo(0));
   const [interval, setInterval_] = useState(() => params.get('interval') || suggestInterval(isoDaysAgo(30), isoDaysAgo(0)));
@@ -163,20 +131,20 @@ export default function Workspace() {
   const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: true, volume: true });
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
-  const [alerts, setAlerts] = useState<number[]>([]);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   // ── Trade ──────────────────────────────────────────────────────────────────
   const [placingDirection, setPlacingDirection] = useState<'long' | 'short' | null>(null);
-  const [riskAmountInput, setRiskAmountInput] = useState('100');
+  const [riskAmountInput, setRiskAmountInput] = useState(() => params.get('risk') || '100');
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   const draggingHandleRef = useRef<TradeHandle | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
   const [showCloseout, setShowCloseout] = useState(false);
   const [notes, setNotes] = useState('');
-  const [backtestName, setBacktestName] = useState('');
-  const [tags, setTags] = useState<string[]>(() => currentStrategy ? [currentStrategy] : []);
+  const [journal, setJournal] = useState<JournalValues>(EMPTY_JOURNAL);
+  const [backtestName, setBacktestName] = useState(() => params.get('name') || '');
+  const [tags, setTags] = useState<string[]>(() => { const s = params.get('strategy') || currentStrategy; return s ? [s] : []; });
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -191,10 +159,8 @@ export default function Workspace() {
   }, [toast]);
 
   useEffect(() => {
-    fetch('/api/pre-trade-analyses/symbols', { headers: authHeaders() })
-      .then(res => (res.ok ? res.json() : { symbols: [] }))
-      .then(data => setAvailableSymbols(Array.isArray(data.symbols) ? data.symbols : []))
-      .catch(() => {});
+    const incomingStrategy = params.get('strategy');
+    if (incomingStrategy) setCurrentStrategy(incomingStrategy);
   }, []);
 
   // A deep link (from the Log's "Load in Workspace") always wins over a
@@ -216,6 +182,10 @@ export default function Workspace() {
     loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
   };
   const discardDraft = () => { clearDraft(); setDraftAvailable(null); };
+  const endSession = () => {
+    if (!window.confirm(`End the ${symbol.trim().toUpperCase()} session? Drawings and any open hypothetical trade are discarded. Saved backtests are not affected.`)) return;
+    setPlaying(false); resetTrade(); setCandles(null); clearDraft(); setDraftAvailable(null);
+  };
 
   // Autosave: whatever's currently on screen, so it survives a refresh or
   // an accidental nav-away. Best-effort and silent -- never blocks the UI.
@@ -224,7 +194,7 @@ export default function Workspace() {
     const t = setTimeout(() => {
       writeDraft({
         symbol: symbol.trim().toUpperCase(), fromDate, toDate, interval,
-        replayIdx, analysisStartIdx, openTrade,
+        replayIdx, analysisStartIdx, totalBars: candles.length, openTrade,
         backtestName, notes, tags, drawColor,
         drawings: managerRef.current?.exportDrawings() ?? [],
         savedAt: Date.now(),
@@ -345,7 +315,7 @@ export default function Workspace() {
     setLoading(true); setError(''); setIsSetupError(false); setPlaying(false);
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false); setPlacingDirection(null);
     setSelectedDrawingId(null); setActiveDrawType(null); setMeasureActive(false); setMeasureRange(null);
-    drawingHistoryRef.current = []; setHistoryDepth(0); setAlerts([]);
+    drawingHistoryRef.current = []; setHistoryDepth(0);
     setActiveSymbol(trimmed);
     // Fetch ~100 bars before "From" so the setup has visible context; the
     // replay still starts at the chosen date.
@@ -460,7 +430,6 @@ export default function Workspace() {
     const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); syncCanvas(); redraw(); });
     ro.observe(el);
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
-    const alertLines = alertLinesRef.current;
     return () => {
       unsubscribers.forEach(unsub => unsub());
       chart.unsubscribeCrosshairMove(onCrosshair);
@@ -468,7 +437,6 @@ export default function Workspace() {
       managerRef.current = null;
       ro.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw);
-      alertLines.clear();
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
     };
@@ -538,26 +506,6 @@ export default function Workspace() {
     chartRef.current.timeScale().fitContent();
   }, [candles]);
 
-  // ── Price alerts (Chart view) ─────────────────────────────────────────────
-  useEffect(() => {
-    const series = seriesRef.current; if (!series) return;
-    const lines = alertLinesRef.current;
-    for (const [price, line] of lines) if (!alerts.includes(price)) { series.removePriceLine(line); lines.delete(price); }
-    for (const price of alerts) {
-      if (lines.has(price)) continue;
-      lines.set(price, series.createPriceLine({ price, color: '#f59e0b', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: 'ALERT' }));
-    }
-  }, [alerts, candles, resolvedTheme]);
-  const addAlert = () => {
-    if (!candles) return;
-    const current = candles[replayIdx]?.close;
-    const raw = window.prompt('Alert price — replay pauses when a candle reaches it:', current != null ? fmtPrice(current) : '');
-    const price = Number(String(raw ?? '').replace(/,/g, ''));
-    if (!raw || !Number.isFinite(price)) return;
-    setAlerts(a => (a.includes(price) ? a : [...a, price]));
-    setToast(`Alert set at ${fmtPrice(price)}`);
-  };
-
   // Hide drawings anchored past the revealed candle -- no peeking at your own future analysis.
   useEffect(() => {
     const manager = managerRef.current; if (!manager || !candles) return;
@@ -585,18 +533,6 @@ export default function Workspace() {
     setPlaying(false);
     setReplayIdx(Math.max(0, Math.min(candles.length - 1, index)));
   }, [candles]);
-
-  // Alerts: pause when the newly revealed candle trades through an alert price.
-  useEffect(() => {
-    if (!candles || !alerts.length) return;
-    const c = candles[replayIdx]; if (!c) return;
-    const hit = alerts.filter(p => c.low <= p && p <= c.high);
-    if (!hit.length) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- replay reacting to the revealed candle
-    setPlaying(false);
-    setAlerts(a => a.filter(p => !hit.includes(p)));
-    setToast(`Alert hit at ${hit.map(fmtPrice).join(', ')}`);
-  }, [candles, replayIdx, alerts]);
 
   // ── Resolve the open trade against each newly revealed candle ──────────────
   useEffect(() => {
@@ -642,7 +578,7 @@ export default function Workspace() {
   };
   const resetTrade = () => {
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false);
-    setNotes(''); setBacktestName(''); setTags(currentStrategy ? [currentStrategy] : []); setTagDraft(null); setSaveError('');
+    setNotes(''); setJournal(EMPTY_JOURNAL); setBacktestName(''); setTags(currentStrategy ? [currentStrategy] : []); setTagDraft(null); setSaveError('');
   };
   useEffect(() => {
     if (!closedTrade || backtestName) return;
@@ -670,10 +606,6 @@ export default function Workspace() {
     const next = placingDirection === direction ? null : direction;
     activateSelectMode();
     setPlacingDirection(next);
-  };
-  const logSetup = () => {
-    if (closedTrade) setShowCloseout(true);
-    else if (openTrade) closeTradeNow();
   };
 
   // ── Snapshots ──────────────────────────────────────────────────────────────
@@ -717,13 +649,14 @@ export default function Workspace() {
           outcome: closedTrade.outcome, riskAmount: closedTrade.riskAmount,
           pnlUSD: closedTrade.pnlUSD, rMultiple: closedTrade.rMultiple,
           notes, chartAnnotations: managerRef.current?.exportDrawings() ?? [], snapshot,
+          ...journal,
         }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save backtest trade');
       addTrade(body as BacktestTrade);
       resetTrade();
-      setToast('Saved to Backtest Log');
+      setToast('Saved to Backtest Log — keep replaying for the next setup');
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Could not save backtest trade');
     } finally {
@@ -888,13 +821,15 @@ export default function Workspace() {
       if (typing || !candles) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) { e.preventDefault(); deleteSelectedDrawing(); }
       else if (e.key === ' ') { e.preventDefault(); setPlaying(p => !p); }
-      else if (e.key === 'ArrowRight' && e.shiftKey) { e.preventDefault(); jumpToReplayIndex(replayIdx + 1); }
-      else if (e.key === 'ArrowLeft' && e.shiftKey) { e.preventDefault(); jumpToReplayIndex(replayIdx - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); jumpToReplayIndex(replayIdx + 1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpToReplayIndex(replayIdx - 1); }
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'l' || e.key === 'L')) startPlacing('long');
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 's' || e.key === 'S')) startPlacing('short');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placingDirection, activeDrawType, measureActive, selectedDrawingId, showCloseout, candles, replayIdx]);
+  }, [placingDirection, activeDrawType, measureActive, selectedDrawingId, showCloseout, candles, replayIdx, openTrade, closedTrade]);
 
   // ── Derived display values ─────────────────────────────────────────────────
   const total = candles?.length ?? 0;
@@ -905,17 +840,6 @@ export default function Workspace() {
   const analysisBars = total ? replayIdx - analysisStartIdx + 1 : 0;
   const analysisTotal = total ? total - analysisStartIdx : 0;
   const desc = symbolDescription(symbol);
-  const dayStats = useMemo(() => {
-    if (!candles || !current) return null;
-    const since = Number(current.time) - 86400;
-    const window = candles.slice(0, replayIdx + 1).filter(c => Number(c.time) > since);
-    const ref = candles.slice(0, replayIdx + 1).filter(c => Number(c.time) <= since).pop() ?? window[0];
-    return {
-      high: Math.max(...window.map(c => c.high)), low: Math.min(...window.map(c => c.low)),
-      volume: window.reduce((s, c) => s + (c.volume ?? 0), 0),
-      change: current.close - ref.close, changePct: ref.close ? ((current.close - ref.close) / ref.close) * 100 : 0,
-    };
-  }, [candles, current, replayIdx]);
   const sessionChangePct = candles && current && candles[analysisStartIdx] ? ((current.close - candles[analysisStartIdx].open) / candles[analysisStartIdx].open) * 100 : 0;
   const legendIdx = legendCandle && candles ? candles.indexOf(legendCandle) : -1;
   const emaValues = indicatorData && legendIdx >= 0 ? indicatorData.emas.map(v => v[legendIdx]) : [];
@@ -988,6 +912,306 @@ export default function Workspace() {
     : placingDirection ? `${placingDirection === 'long' ? 'Long' : 'Short'}: click the entry price on the chart · Esc to cancel`
       : measureActive ? 'Measure: drag between two points' : null;
 
+  // ── Desktop terminal layout (Stitch "Backtest Workspace", >= 900px) ─────────
+  const nextCandle = candles?.[replayIdx + 1] ?? null;
+  const analysisPct = analysisTotal ? (Math.max(0, analysisBars) / analysisTotal) * 100 : 0;
+  const rrFor = (price: number) => openTrade ? Math.abs(price - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss || 1) : 0;
+  const exitKind = closedTrade
+    ? Math.abs(closedTrade.exitPrice - closedTrade.stopLoss) < 1e-9 ? 'SL HIT'
+      : closedTrade.takeProfit != null && Math.abs(closedTrade.exitPrice - closedTrade.takeProfit) < 1e-9 ? 'TP HIT' : 'MANUAL CLOSE'
+    : '';
+  const tradeBars = closedTrade && candles
+    ? Math.max(1, nearestCandleIndex(candles, closedTrade.exitTime) - nearestCandleIndex(candles, closedTrade.entryTime))
+    : 0;
+  const tfLabel = CHART_INTERVALS.find(t => t.value === interval)?.label ?? interval;
+  const dockBtn = 'tw:w-7 tw:h-7 tw:rounded tw:bg-surface-container-high tw:hover:bg-outline-variant tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:flex tw:items-center tw:justify-center tw:transition tw:disabled:opacity-40';
+
+  const desktopTop = (
+    <>
+      {/* 1. Top setup bar */}
+      <header className="tw:h-12 tw:bg-surface-container-low tw:border-b tw:border-outline-variant tw:flex tw:items-center tw:justify-between tw:px-3 tw:shrink-0 tw:gap-3 tw:text-xs">
+        {/* Read-only session summary: symbol and range are chosen on New Backtest. */}
+        <div className="tw:flex tw:items-center tw:gap-3 tw:min-w-0 tw:whitespace-nowrap">
+          <span className="tw:font-mono-metric-md tw:font-bold tw:text-on-surface">{symbol.trim().toUpperCase() || '—'}</span>
+          {desc && <span className="tw:text-on-surface-variant tw:truncate">{desc[0]}</span>}
+          <span className="tw:font-mono-metric-md tw:text-on-surface-variant">{fromDate} → {toDate}</span>
+          {loading && <span className="tw:flex tw:items-center tw:gap-1 tw:text-on-surface-variant"><Icon name="progress_activity" className="tw:text-[14px] tw:animate-spin" />Loading…</span>}
+          <Link href="/backtest/new" className="tw:flex tw:items-center tw:gap-1 tw:text-primary tw:hover:underline"><Icon name="add" className="tw:text-[14px]" />New backtest</Link>
+          {candles && <button type="button" onClick={endSession} className="tw:flex tw:items-center tw:gap-1 tw:text-on-surface-variant tw:hover:text-error"><Icon name="stop_circle" className="tw:text-[14px]" />End session</button>}
+        </div>
+        <div className="tw:flex tw:items-center tw:gap-1 tw:shrink-0">
+          <div className="tw:relative">
+            <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
+              className="tw:flex tw:items-center tw:gap-1 tw:px-2 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:text-on-surface-variant tw:hover:text-on-surface tw:transition">
+              <Icon name="tune" className="tw:text-[15px] tw:text-primary" />
+              <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0)})</span>
+            </button>
+            {showIndicatorMenu && (
+              <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-40 tw:w-52 tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
+                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume']] as const).map(([k, label]) => (
+                  <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
+                    <span>{label}</span>
+                    <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-[#f59e0b]" />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" onClick={() => setChartType(t => (t === 'candles' ? 'line' : 'candles'))} title={chartType === 'candles' ? 'Switch to line chart' : 'Switch to candlesticks'}
+            className="tw:w-7 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:flex tw:items-center tw:justify-center tw:text-primary tw:transition">
+            <Icon name={chartType === 'candles' ? 'candlestick_chart' : 'show_chart'} className="tw:text-[16px]" />
+          </button>
+          <button type="button" onClick={downloadSnapshot} disabled={!candles} title="Take chart snapshot" aria-label="Take chart snapshot"
+            className="tw:w-7 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:flex tw:items-center tw:justify-center tw:text-on-surface-variant tw:hover:text-on-surface tw:transition tw:disabled:opacity-40">
+            <Icon name="photo_camera" className="tw:text-[16px]" />
+          </button>
+        </div>
+      </header>
+
+      {/* 2. Simulation context & action toolbar */}
+      <section className="tw:h-10 tw:bg-surface-container-low/90 tw:border-b tw:border-outline-variant tw:px-3 tw:flex tw:items-center tw:justify-between tw:gap-3 tw:shrink-0 tw:text-[11px]">
+        <div className="tw:flex tw:items-center tw:gap-2 tw:min-w-0">
+          <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:p-0.5 tw:border tw:border-outline-variant tw:font-mono-metric-md" role="group" aria-label="Timeframe"
+            title={tradeLocked ? 'Close or discard the current trade before changing timeframe' : undefined}>
+            {VIEW_INTERVALS.map(tf => (
+              <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={tradeLocked && interval !== tf.value} onClick={() => switchInterval(tf.value)}
+                className={`tw:px-2 tw:py-0.5 tw:rounded tw:transition tw:disabled:opacity-40 ${interval === tf.value ? 'tw:bg-primary-container tw:text-on-primary tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{tf.label}</button>
+            ))}
+          </div>
+          <div className="tw:h-4 tw:w-px tw:bg-outline-variant tw:mx-1" />
+          <div className="tw:flex tw:items-center tw:gap-2 tw:font-mono-metric-md tw:bg-surface-container-high/60 tw:border tw:border-outline-variant tw:px-2.5 tw:py-0.5 tw:rounded tw:whitespace-nowrap">
+            <span className="tw:text-primary-container tw:font-semibold tw:uppercase tw:tracking-wider tw:text-[10px]">{playing ? 'REPLAYING:' : 'REPLAY MODE:'}</span>
+            <span className="tw:text-on-surface tw:font-bold">Bar {Math.max(0, analysisBars)} / {analysisTotal}</span>
+            <span className="tw:text-on-surface-variant">({analysisPct.toFixed(1)}%)</span>
+            {current && <><span className="tw:text-outline-variant">|</span><span className="tw:text-cyan-500">{fmtTick(Number(current.time))} UTC</span></>}
+          </div>
+        </div>
+        <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
+          {openTrade && (
+            <>
+              <div className="tw:flex tw:items-center tw:gap-2 tw:bg-surface-container-high tw:border tw:border-primary-container/40 tw:px-2.5 tw:py-1 tw:rounded tw:font-mono-metric-md tw:whitespace-nowrap">
+                <span className={`tw:border tw:px-1.5 tw:rounded tw:font-bold tw:text-[10px] tw:tracking-wide ${openTrade.direction === 'long' ? 'tw:bg-secondary/20 tw:text-secondary tw:border-secondary/40' : 'tw:bg-tertiary/20 tw:text-tertiary tw:border-tertiary/40'}`}>
+                  {closedTrade ? 'CLOSED' : 'SIMULATED'} {openTrade.direction === 'long' ? 'LONG' : 'SHORT'}
+                </span>
+                <span className="tw:text-on-surface-variant">Entry:</span><span className="tw:text-on-surface tw:font-semibold">{fmtPrice(openTrade.entryPrice)}</span>
+                <span className="tw:text-outline-variant">•</span>
+                <span className="tw:text-tertiary">SL: {fmtPrice(openTrade.stopLoss)} (-1.0R / -${openTrade.riskAmount.toFixed(0)})</span>
+                {openTrade.takeProfit != null && <>
+                  <span className="tw:text-outline-variant">•</span>
+                  <span className="tw:text-secondary">TP: {fmtPrice(openTrade.takeProfit)} (+{rrFor(openTrade.takeProfit).toFixed(1)}R / +${(rrFor(openTrade.takeProfit) * openTrade.riskAmount).toFixed(0)})</span>
+                </>}
+                <span className="tw:text-outline-variant">•</span>
+                <span className="tw:text-on-surface-variant tw:text-[10px]">{closedTrade ? 'Result:' : 'Unrealized:'}</span>
+                <span className={`tw:font-bold ${(closedTrade?.rMultiple ?? unrealizedR) >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>
+                  {fmtR(closedTrade?.rMultiple ?? unrealizedR)} ({fmtUSD((closedTrade?.rMultiple ?? unrealizedR) * openTrade.riskAmount)})
+                </span>
+              </div>
+              {closedTrade ? (
+                <button type="button" onClick={() => setShowCloseout(true)}
+                  className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container/20 tw:hover:bg-primary-container/30 tw:text-primary-container tw:border tw:border-primary-container/50 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap">
+                  <Icon name="bookmark_added" className="tw:text-[14px]" /><span>Log Outcome</span>
+                </button>
+              ) : (
+                <button type="button" onClick={closeTradeNow} title="Close at the current candle's close"
+                  className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container/20 tw:hover:bg-primary-container/30 tw:text-primary-container tw:border tw:border-primary-container/50 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap">
+                  <Icon name="flag" className="tw:text-[14px]" /><span>Close at Current Candle</span>
+                </button>
+              )}
+              <button type="button" onClick={resetTrade}
+                className="tw:flex tw:items-center tw:gap-1 tw:bg-tertiary/10 tw:hover:bg-tertiary/20 tw:text-tertiary tw:border tw:border-tertiary/30 tw:px-2 tw:py-1 tw:rounded tw:transition tw:active:scale-95">
+                <Icon name="close" className="tw:text-[14px]" /><span>Cancel</span>
+              </button>
+              <div className="tw:h-4 tw:w-px tw:bg-outline-variant tw:mx-1" />
+            </>
+          )}
+          <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'} title="Simulate Long Position [L]"
+            className={`tw:flex tw:items-center tw:gap-1 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:bg-secondary tw:text-on-secondary tw:ring-2 tw:ring-secondary/40' : 'tw:bg-secondary tw:hover:opacity-90 tw:text-on-secondary'}`}>
+            <Icon name="north_east" className="tw:text-[15px]" /><span>+ Simulate Long</span>
+          </button>
+          <button type="button" onClick={() => startPlacing('short')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'short'} title="Simulate Short Position [S]"
+            className={`tw:flex tw:items-center tw:gap-1 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:bg-tertiary tw:text-on-tertiary tw:ring-2 tw:ring-tertiary/40' : 'tw:bg-tertiary tw:hover:opacity-90 tw:text-on-tertiary'}`}>
+            <Icon name="south_east" className="tw:text-[15px]" /><span>- Simulate Short</span>
+          </button>
+          <label className="tw:flex tw:items-center tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-1.5 tw:py-0.5 tw:gap-1 tw:font-mono-metric-md">
+            <span className="tw:text-on-surface-variant tw:text-[10px]">Risk $:</span>
+            <input aria-label="Risk amount in dollars" type="number" min="0" step="any" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} disabled={Boolean(closedTrade)}
+              className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
+          </label>
+        </div>
+      </section>
+    </>
+  );
+
+  const desktopLegend = (
+    <div className="tw:h-8 tw:border-b tw:border-outline-variant/60 tw:bg-surface-container-lowest/85 tw:backdrop-blur-xs tw:flex tw:items-center tw:justify-between tw:px-4 tw:shrink-0 tw:font-mono-metric-md tw:text-[11px] tw:gap-3">
+      <div className="tw:flex tw:items-center tw:gap-4 tw:min-w-0 tw:overflow-hidden tw:whitespace-nowrap">
+        <div className="tw:flex tw:items-center tw:gap-1.5">
+          <span className="tw:font-bold tw:text-on-surface">{symbol.trim().toUpperCase() || '—'}</span>
+          <span className="tw:text-on-surface-variant">{tfLabel}</span>
+          {legendCandle ? <>
+            <span className="tw:text-primary-container tw:font-semibold">O: {fmtPrice(legendCandle.open)}</span>
+            <span className="tw:text-on-surface">H: {fmtPrice(legendCandle.high)}</span>
+            <span className="tw:text-on-surface">L: {fmtPrice(legendCandle.low)}</span>
+            <span className={`tw:font-bold ${legendCandle.close >= legendCandle.open ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>
+              C: {fmtPrice(legendCandle.close)}{legendPrev ? ` (${legendCandle.close >= legendPrev.close ? '+' : ''}${(((legendCandle.close - legendPrev.close) / legendPrev.close) * 100).toFixed(2)}%)` : ''}
+            </span>
+          </> : <span className="tw:text-on-surface-variant">No chart loaded</span>}
+        </div>
+        {candles && indicators.ema && (
+          <div className="tw:flex tw:items-center tw:gap-3 tw:text-[10px] tw:pl-2 tw:border-l tw:border-outline-variant">
+            {EMA_CONFIG.map((cfg, k) => (
+              <div key={cfg.period} className="tw:flex tw:items-center tw:gap-1">
+                <span className="tw:w-2 tw:h-0.5" style={{ background: cfg.color }} />
+                <span className="tw:text-on-surface-variant">{cfg.label}:</span>
+                <span style={{ color: cfg.color }}>{emaValues[k] != null ? fmtPrice(emaValues[k]!) : '—'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
+        <span className="tw:text-[10px] tw:font-body-sm tw:uppercase tw:tracking-wider tw:text-on-surface-variant">Simulation Playhead:</span>
+        <span className="tw:px-2 tw:py-0.5 tw:rounded tw:bg-surface-container-high tw:border tw:border-outline-variant tw:text-primary-container tw:text-[10px]">
+          {candles ? `Candle #${Math.max(0, analysisBars)}` : '—'}
+        </span>
+      </div>
+    </div>
+  );
+
+  const addTagFromDraft = () => {
+    const v = (tagDraft ?? '').trim().replace(/^#/, '');
+    if (v && !tags.some(t => t.toLowerCase() === v.toLowerCase())) setTags(t => [...t, v]);
+  };
+  const resultDrawer = closedTrade && showCloseout && (
+    <aside className="tw:absolute tw:top-0 tw:right-0 tw:bottom-0 tw:w-[380px] tw:max-w-full tw:bg-surface-container-low/98 tw:border-l tw:border-outline-variant tw:shadow-2xl tw:backdrop-blur-md tw:flex tw:flex-col tw:z-30 tw:select-text" role="dialog" aria-label="Simulation complete">
+      <div className="tw:h-10 tw:px-4 tw:border-b tw:border-outline-variant tw:flex tw:items-center tw:justify-between tw:bg-surface-container-high/60 tw:shrink-0">
+        <div className="tw:flex tw:items-center tw:gap-2">
+          <Icon name="verified" className={`tw:text-[18px] ${closedTrade.outcome === 'loss' ? 'tw:text-tertiary' : 'tw:text-secondary'}`} />
+          <span className="tw:font-bold tw:text-on-surface tw:text-xs tw:tracking-wide">Simulation Complete</span>
+        </div>
+        <button type="button" onClick={() => setShowCloseout(false)} aria-label="Close" title="Close (the trade stays on the chart)"
+          className="tw:w-6 tw:h-6 tw:rounded tw:hover:bg-surface-container-high tw:flex tw:items-center tw:justify-center tw:text-on-surface-variant tw:hover:text-on-surface">
+          <Icon name="close" className="tw:text-[16px]" />
+        </button>
+      </div>
+      <div className="tw:flex-1 tw:overflow-y-auto tw:p-4 tw:flex tw:flex-col tw:gap-3.5">
+        <div className="tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:p-3 tw:flex tw:items-center tw:justify-between">
+          <div className="tw:flex tw:items-center tw:gap-2.5">
+            <span className={`tw:px-2 tw:py-0.5 tw:rounded tw:font-bold tw:font-mono-metric-md tw:text-xs tw:tracking-wider ${closedTrade.outcome === 'win' ? 'tw:bg-secondary tw:text-on-secondary' : closedTrade.outcome === 'loss' ? 'tw:bg-tertiary tw:text-on-tertiary' : 'tw:bg-surface-variant tw:text-on-surface'}`}>
+              {closedTrade.outcome === 'breakeven' ? 'BE' : closedTrade.outcome.toUpperCase()}
+            </span>
+            <div className="tw:flex tw:flex-col">
+              <span className={`tw:font-mono-metric-md tw:text-sm tw:font-bold ${closedTrade.rMultiple >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>{fmtR(closedTrade.rMultiple).replace('R', ' R')}</span>
+              <span className="tw:text-[9px] tw:text-on-surface-variant tw:uppercase">Return on Risk</span>
+            </div>
+          </div>
+          <div className="tw:flex tw:flex-col tw:items-end">
+            <span className={`tw:font-mono-metric-md tw:text-sm tw:font-bold ${closedTrade.pnlUSD >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>{closedTrade.riskAmount > 0 ? fmtUSD(closedTrade.pnlUSD) : '—'}</span>
+            <span className="tw:text-[9px] tw:text-on-surface-variant tw:uppercase">Risked: {fmtUSD(closedTrade.riskAmount, false)}</span>
+          </div>
+        </div>
+        <div className="tw:grid tw:grid-cols-2 tw:gap-2 tw:p-2.5 tw:bg-surface-container-lowest/70 tw:border tw:border-outline-variant tw:rounded tw:font-mono-metric-md tw:text-[10px]">
+          <div><span className="tw:text-on-surface-variant tw:block tw:text-[9px]">SYMBOL &amp; TF:</span><span className="tw:text-on-surface tw:font-semibold">{symbol.trim().toUpperCase()} {tfLabel}</span></div>
+          <div><span className="tw:text-on-surface-variant tw:block tw:text-[9px]">DURATION:</span><span className="tw:text-on-surface tw:font-semibold">{tradeBars} Bar{tradeBars === 1 ? '' : 's'}</span></div>
+          <div><span className="tw:text-on-surface-variant tw:block tw:text-[9px]">SIM ENTRY:</span><span className="tw:text-primary-container tw:font-semibold">{fmtPrice(closedTrade.entryPrice)}</span></div>
+          <div><span className="tw:text-on-surface-variant tw:block tw:text-[9px]">SIM EXIT ({exitKind}):</span><span className={`tw:font-semibold ${closedTrade.rMultiple >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>{fmtPrice(closedTrade.exitPrice)}</span></div>
+        </div>
+        <label className="tw:flex tw:flex-col tw:gap-1">
+          <span className="tw:text-[10px] tw:uppercase tw:font-mono-metric-md tw:tracking-wider tw:text-on-surface-variant">Backtest Name / Setup Identifier</span>
+          <input type="text" maxLength={100} value={backtestName} onChange={e => setBacktestName(e.target.value)}
+            className="tw:w-full tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-2.5 tw:py-1.5 tw:font-mono-metric-md tw:text-xs tw:text-on-surface tw:focus:outline-none tw:focus:border-primary-container" />
+        </label>
+        <div className="tw:flex tw:flex-col tw:gap-1.5">
+          <span className="tw:text-[10px] tw:uppercase tw:font-mono-metric-md tw:tracking-wider tw:text-on-surface-variant">Applied Strategy Tags</span>
+          <div className="tw:flex tw:flex-wrap tw:gap-1">
+            {tags.map(tag => (
+              <span key={tag} className="tw:inline-flex tw:items-center tw:gap-1 tw:bg-primary-container/15 tw:border tw:border-primary-container/40 tw:text-primary-container tw:px-2 tw:py-0.5 tw:rounded tw:font-mono-metric-md tw:text-[10px]">
+                {hashTag(tag)}
+                <button type="button" onClick={() => setTags(t => t.filter(x => x !== tag))} aria-label={`Remove ${tag}`} className="tw:hover:text-on-surface"><Icon name="close" className="tw:text-[12px]" /></button>
+              </span>
+            ))}
+            {tagDraft != null ? (
+              <input autoFocus list="bt-tag-options-desktop" value={tagDraft} maxLength={40} placeholder="Strategy name…" aria-label="New strategy tag"
+                onChange={e => setTagDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagFromDraft(); setTagDraft(''); }
+                  else if (e.key === 'Escape') { e.stopPropagation(); setTagDraft(null); }
+                }}
+                onBlur={() => { addTagFromDraft(); setTagDraft(null); }}
+                className="tw:bg-surface-container-high tw:border tw:border-outline-variant tw:px-2 tw:py-0.5 tw:rounded tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface tw:w-36 tw:focus:outline-none tw:focus:border-primary-container" />
+            ) : (
+              <button type="button" onClick={() => setTagDraft('')} className="tw:inline-flex tw:items-center tw:gap-0.5 tw:px-2 tw:py-0.5 tw:rounded tw:bg-surface-container-high tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:text-[10px]">
+                <Icon name="add" className="tw:text-[12px]" />Tag
+              </button>
+            )}
+            <datalist id="bt-tag-options-desktop">{strategies.filter(s => !tags.includes(s)).map(s => <option key={s} value={s} />)}</datalist>
+          </div>
+        </div>
+        <label className="tw:flex tw:flex-col tw:gap-1">
+          <span className="tw:text-[10px] tw:uppercase tw:font-mono-metric-md tw:tracking-wider tw:text-on-surface-variant">What did you see, and what did you learn?</span>
+          <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was the setup? What would you do differently?"
+            className="tw:w-full tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:p-2 tw:text-[11px] tw:text-on-surface tw:leading-relaxed tw:focus:outline-none tw:focus:border-primary-container tw:resize-none" />
+        </label>
+        <JournalFields value={journal} onChange={setJournal} />
+        {saveError && <p className="tw:text-error tw:text-[11px]">{saveError}</p>}
+      </div>
+      <div className="tw:h-12 tw:px-4 tw:border-t tw:border-outline-variant tw:bg-surface-container-high/60 tw:flex tw:items-center tw:justify-between tw:shrink-0">
+        <button type="button" onClick={() => { if (window.confirm('Discard this backtest trade?')) resetTrade(); }}
+          className="tw:px-2.5 tw:py-1 tw:text-tertiary tw:hover:bg-tertiary/10 tw:rounded tw:transition tw:text-[11px]">Discard Backtest</button>
+        <button type="button" onClick={() => void saveBacktestTrade()} disabled={saving}
+          className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container tw:hover:bg-surface-tint tw:active:scale-95 tw:text-on-primary tw:font-semibold tw:px-3 tw:py-1.5 tw:rounded tw:transition tw:shadow tw:text-[11px] tw:disabled:opacity-60">
+          <Icon name={saving ? 'progress_activity' : 'bookmark_added'} className={`tw:text-[15px] ${saving ? 'tw:animate-spin' : ''}`} /><span>{saving ? 'Saving…' : 'Save to Log'}</span>
+        </button>
+      </div>
+    </aside>
+  );
+
+  const desktopDock = (
+    <footer className="tw:h-11 tw:bg-surface-container-low tw:border-t tw:border-outline-variant tw:px-3 tw:flex tw:items-center tw:justify-between tw:gap-3 tw:shrink-0 tw:text-[11px]">
+      <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
+        <div className="tw:flex tw:items-center tw:gap-1">
+          <button type="button" className={dockBtn} title="Reset to start" aria-label="Reset to start" disabled={!total || replayIdx <= analysisStartIdx} onClick={() => jumpToReplayIndex(analysisStartIdx)}><Icon name="first_page" className="tw:text-[16px]" /></button>
+          <button type="button" className={dockBtn} title="Step -1 bar (←)" aria-label="Step back" disabled={!total || replayIdx === 0} onClick={() => jumpToReplayIndex(replayIdx - 1)}><Icon name="chevron_left" className="tw:text-[16px]" /></button>
+          <button type="button" disabled={!total} onClick={() => setPlaying(p => !p)} title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}
+            className="tw:w-8 tw:h-7 tw:rounded tw:bg-primary-container tw:hover:bg-surface-tint tw:text-on-primary tw:font-bold tw:flex tw:items-center tw:justify-center tw:transition tw:disabled:opacity-40">
+            <Icon name={playing ? 'pause' : 'play_arrow'} className="tw:text-[18px]" />
+          </button>
+          <button type="button" className={dockBtn} title="Step +1 bar (→)" aria-label="Step forward" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(replayIdx + 1)}><Icon name="chevron_right" className="tw:text-[16px]" /></button>
+          <button type="button" className={dockBtn} title="Jump to end" aria-label="Jump to end" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(total - 1)}><Icon name="last_page" className="tw:text-[16px]" /></button>
+        </div>
+        <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px]" role="group" aria-label="Replay speed">
+          {SPEEDS.map(s => (
+            <button key={s} type="button" aria-pressed={speed === s} onClick={() => setSpeed(s)}
+              className={`tw:px-1.5 tw:py-0.5 tw:rounded ${speed === s ? 'tw:bg-surface-container-high tw:text-primary-container tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{s}x</button>
+          ))}
+        </div>
+      </div>
+      <div className="tw:flex-1 tw:max-w-2xl tw:flex tw:flex-col tw:justify-center tw:px-3 tw:gap-1 tw:min-w-0">
+        <div className="tw:relative tw:w-full tw:h-3.5 tw:flex tw:items-center tw:group">
+          <div className="tw:w-full tw:h-1.5 tw:bg-surface-container-lowest tw:rounded-full tw:overflow-hidden tw:border tw:border-outline-variant/60">
+            <div className="tw:h-full tw:bg-primary-container tw:rounded-full" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="tw:absolute tw:-translate-x-1/2 tw:w-3.5 tw:h-3.5 tw:rounded-full tw:bg-primary-container tw:border-2 tw:border-surface-container-lowest tw:shadow-[0_0_8px_rgba(245,158,11,0.7)] tw:group-hover:scale-125 tw:transition-transform tw:flex tw:items-center tw:justify-center tw:pointer-events-none" style={{ left: `${progressPct}%` }}>
+            <div className="tw:w-1 tw:h-1 tw:rounded-full tw:bg-surface-container-lowest" />
+          </div>
+          <input type="range" aria-label="Replay progress" min={0} max={Math.max(0, total - 1)} value={replayIdx} disabled={!total}
+            onChange={e => jumpToReplayIndex(Number(e.target.value))} className="tw:absolute tw:inset-0 tw:w-full tw:opacity-0 tw:cursor-pointer" />
+        </div>
+        <div className="tw:flex tw:items-center tw:justify-between tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface-variant tw:whitespace-nowrap tw:gap-2">
+          <span>Bar {Math.max(0, analysisBars)} of {analysisTotal} • {analysisPct.toFixed(1)}% elapsed</span>
+          <span className="tw:text-primary-container tw:truncate">{nextCandle ? `Next candle: ${fmtTick(Number(nextCandle.time))} UTC` : candles ? 'End of window' : ''}</span>
+        </div>
+      </div>
+      <div className="tw:hidden tw:min-[1400px]:flex tw:items-center tw:gap-1.5 tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface-variant tw:shrink-0 tw:bg-surface-container-high/60 tw:border tw:border-outline-variant/80 tw:px-2 tw:py-1 tw:rounded">
+        <span className="tw:text-on-surface tw:font-semibold">[Space]</span><span>Play</span><span className="tw:text-outline-variant">•</span>
+        <span className="tw:text-on-surface tw:font-semibold">[← / →]</span><span>Step</span><span className="tw:text-outline-variant">•</span>
+        <span className="tw:text-on-surface tw:font-semibold">[L]</span><span>Long</span><span className="tw:text-outline-variant">•</span>
+        <span className="tw:text-on-surface tw:font-semibold">[S]</span><span>Short</span><span className="tw:text-outline-variant">•</span>
+        <span className="tw:text-on-surface tw:font-semibold">[Esc]</span><span>Cancel</span>
+      </div>
+    </footer>
+  );
+
   return (
     <div ref={rootRef} className="tw:flex tw:flex-col tw:w-full tw:text-on-surface tw:select-none">
       {toast && (
@@ -996,49 +1220,28 @@ export default function Workspace() {
           <span className="tw:font-body-sm tw:text-body-sm tw:font-medium">{toast}</span>
         </div>
       )}
-
+      {isDesktop ? desktopTop : (
       <>
           {/* 1. Setup ribbon */}
           <section className="tw:flex tw:flex-col tw:gap-space-sm tw:px-gutter tw:py-space-sm tw:bg-surface-container-low tw:shadow-sm">
-            <div className="tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-space-sm">
-              <div className="tw:flex tw:items-center tw:gap-space-sm">
-                <label className="tw:flex tw:items-center tw:gap-space-xs tw:bg-surface-container-high tw:px-space-md tw:py-1 tw:rounded tw:text-on-surface tw:hover:bg-surface-variant tw:transition-colors tw:min-h-[36px] tw:relative">
-                  <span className="tw:sr-only">Symbol</span>
-                  <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} onKeyDown={e => { if (e.key === 'Enter') loadChart(); }} list="bt-symbols" spellCheck={false}
-                    className="tw:w-[4.8rem] tw:bg-transparent tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold tw:text-primary tw:uppercase tw:focus:outline-none" aria-label="Symbol" />
-                  {desc && <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:whitespace-nowrap">{desc[1]}</span>}
-                  <Icon name="arrow_drop_down" className="tw:text-[16px] tw:text-on-surface-variant" />
-                  <datalist id="bt-symbols">{availableSymbols.map(s => <option key={s} value={s} />)}</datalist>
-                </label>
-                {current && (
-                  <div className="tw:flex tw:items-baseline tw:gap-space-xs tw:bg-surface-container-lowest tw:px-space-md tw:py-1 tw:rounded">
-                    <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${up(sessionChangePct)}`}>{fmtPrice(current.close)}</span>
-                    <span className={`tw:font-label-caps tw:text-label-caps ${up(sessionChangePct)}`}>{sessionChangePct >= 0 ? '+' : ''}{sessionChangePct.toFixed(2)}%</span>
-                  </div>
-                )}
+            {/* Read-only session summary: symbol and range are chosen on New Backtest. */}
+            <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm">
+              <div className="tw:flex tw:items-baseline tw:gap-space-xs tw:min-w-0">
+                <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold tw:text-on-surface">{symbol.trim().toUpperCase() || '—'}</span>
+                {desc && <span className="tw:text-body-sm tw:text-on-surface-variant tw:truncate">{desc[0]}</span>}
               </div>
-              <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-space-xs">
-                <label className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:px-space-sm tw:py-1 tw:gap-space-xs">
-                  <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">From</span>
-                  <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="tw:bg-transparent tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface tw:focus:outline-none tw:[color-scheme:dark]" />
-                </label>
-                <label className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:px-space-sm tw:py-1 tw:gap-space-xs">
-                  <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">To</span>
-                  <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="tw:bg-transparent tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface tw:focus:outline-none tw:[color-scheme:dark]" />
-                </label>
-                <label className="tw:relative tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:px-space-sm tw:py-1">
-                  <span className="tw:sr-only">Timeframe</span>
-                  <select value={interval} onChange={e => { intervalTouchedRef.current = true; setInterval_(e.target.value); }} disabled={tradeLocked}
-                    className="tw:appearance-none tw:bg-transparent tw:pr-4 tw:font-mono-metric-md tw:text-mono-metric-md tw:text-primary tw:font-semibold tw:focus:outline-none">
-                    {CHART_INTERVALS.map(tf => <option key={tf.value} value={tf.value} className="tw:bg-surface-container">{tf.label}</option>)}
-                  </select>
-                  <Icon name="expand_more" className="tw:absolute tw:right-1 tw:text-[16px] tw:text-on-surface-variant tw:pointer-events-none" />
-                </label>
-                <button type="button" onClick={loadChart} disabled={!symbol.trim() || loading}
-                  className="tw:flex tw:items-center tw:gap-space-xs tw:bg-primary-container tw:text-on-primary-container tw:px-space-md tw:py-1 tw:rounded tw:font-label-action tw:text-label-action tw:font-semibold tw:shadow-sm tw:hover:brightness-110 tw:active:scale-95 tw:transition-all tw:min-h-[36px] tw:disabled:opacity-50">
-                  <Icon name="sync" className={`tw:text-[16px] ${loading ? 'tw:animate-spin' : ''}`} />
-                  <span>{loading ? 'Loading…' : 'Load Chart'}</span>
-                </button>
+              {current ? (
+                <div className="tw:flex tw:items-baseline tw:gap-space-xs tw:shrink-0">
+                  <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${up(sessionChangePct)}`}>{fmtPrice(current.close)}</span>
+                  <span className={`tw:font-label-caps tw:text-label-caps ${up(sessionChangePct)}`}>{sessionChangePct >= 0 ? '+' : ''}{sessionChangePct.toFixed(2)}%</span>
+                </div>
+              ) : loading && <span className="tw:text-body-sm tw:text-on-surface-variant">Loading…</span>}
+            </div>
+            <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:text-body-sm tw:text-on-surface-variant">
+              <span className="tw:font-mono-metric-md">{fromDate} → {toDate}</span>
+              <div className="tw:flex tw:items-center tw:gap-space-md">
+                {candles && <button type="button" onClick={endSession} className="tw:text-on-surface-variant">End session</button>}
+                <Link href="/backtest/new" className="tw:flex tw:items-center tw:gap-1 tw:text-primary"><Icon name="add" className="tw:text-[14px]" />New backtest</Link>
               </div>
             </div>
           </section>
@@ -1048,14 +1251,6 @@ export default function Workspace() {
             <div className="tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-space-xs">
               {timeframeChips('tw:bg-surface-container-high tw:text-primary tw:font-bold tw:shadow-sm')}
               <div className="tw:flex tw:items-center tw:gap-space-xs">
-                <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'}
-                  className={`tw:flex tw:items-center tw:gap-space-xs tw:px-space-md tw:py-1 tw:rounded tw:font-label-action tw:text-label-action tw:font-semibold tw:active:scale-95 tw:transition-all tw:min-h-[32px] tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:bg-secondary tw:text-on-secondary-container' : 'tw:bg-secondary/15 tw:text-secondary tw:hover:bg-secondary/25'}`}>
-                  <Icon name="north_east" className="tw:text-[16px]" /><span>Long</span>
-                </button>
-                <button type="button" onClick={() => startPlacing('short')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'short'}
-                  className={`tw:flex tw:items-center tw:gap-space-xs tw:px-space-md tw:py-1 tw:rounded tw:font-label-action tw:text-label-action tw:font-semibold tw:active:scale-95 tw:transition-all tw:min-h-[32px] tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:bg-error tw:text-error-container' : 'tw:bg-error-container/40 tw:text-tertiary tw:hover:bg-error-container/60'}`}>
-                  <Icon name="south_east" className="tw:text-[16px]" /><span>Short</span>
-                </button>
                 <label className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:px-space-sm tw:py-1 tw:rounded tw:gap-space-xs">
                   <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant">RISK</span>
                   <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface tw:font-semibold">$</span>
@@ -1093,32 +1288,8 @@ export default function Workspace() {
             )}
           </section>
 
-          {/* 3. Ticker micro-bar + 24h stats */}
-          <section className="tw:bg-surface-container-low tw:px-gutter tw:py-space-sm tw:shadow-sm tw:flex tw:flex-col tw:gap-space-xs">
-            <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm">
-              <div className="tw:flex tw:items-center tw:gap-space-xs tw:min-w-0">
-                <span className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-high tw:px-space-sm tw:py-0.5 tw:rounded">
-                  <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold tw:text-on-surface">{symbol.trim().toUpperCase() || '—'}</span>
-                  <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant">{CHART_INTERVALS.find(t => t.value === interval)?.label}</span>
-                </span>
-                {desc && <span className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:truncate">{desc[0]}</span>}
-              </div>
-              {current && dayStats && (
-                <div className="tw:flex tw:items-baseline tw:gap-space-xs tw:shrink-0">
-                  <span className={`tw:font-mono-metric-lg tw:text-mono-metric-lg tw:font-bold ${up(dayStats.change)}`}>{fmtPrice(current.close)}</span>
-                  <span className={`tw:font-mono-metric-md tw:text-mono-metric-md ${up(dayStats.change)}`}>{dayStats.change >= 0 ? '+' : ''}{fmtPrice(dayStats.change)} ({dayStats.changePct >= 0 ? '+' : ''}{dayStats.changePct.toFixed(2)}%)</span>
-                </div>
-              )}
-            </div>
-            <div className="tw:flex tw:items-center tw:justify-between tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:bg-surface-container-lowest tw:px-space-sm tw:py-space-xs tw:rounded">
-              <div className="tw:flex tw:items-center tw:gap-space-xs"><span>24H HIGH</span><span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface">{dayStats ? fmtPrice(dayStats.high) : '—'}</span></div>
-              <div className="tw:flex tw:items-center tw:gap-space-xs"><span>LOW</span><span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface">{dayStats ? fmtPrice(dayStats.low) : '—'}</span></div>
-              <div className="tw:flex tw:items-center tw:gap-space-xs"><span>VOL</span><span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-primary">{dayStats ? fmtVolume(dayStats.volume) : '—'}</span></div>
-            </div>
-          </section>
-          {/* 4. Control strip */}
-          <section className="tw:bg-surface-container tw:px-gutter tw:py-space-xs tw:flex tw:items-center tw:justify-between tw:gap-space-xs tw:shadow-inner tw:relative">
-            <div className="tw:overflow-x-auto tw:no-scrollbar">{timeframeChips('tw:bg-primary-container tw:text-on-primary-container tw:font-bold')}</div>
+          {/* 3. Control strip */}
+          <section className="tw:bg-surface-container tw:px-gutter tw:py-space-xs tw:flex tw:items-center tw:justify-end tw:gap-space-xs tw:shadow-inner tw:relative">
             <div className="tw:flex tw:items-center tw:gap-space-xs tw:shrink-0">
               <div className="tw:relative">
                 <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
@@ -1141,11 +1312,6 @@ export default function Workspace() {
                 className="tw:flex tw:items-center tw:justify-center tw:bg-surface-container-high tw:w-7 tw:h-7 tw:rounded tw:text-primary">
                 <Icon name={chartType === 'candles' ? 'candlestick_chart' : 'show_chart'} className="tw:text-[16px]" />
               </button>
-              <button type="button" onClick={addAlert} disabled={!candles} title="Set price alert (pauses replay)" aria-label="Set price alert"
-                className="tw:flex tw:items-center tw:justify-center tw:bg-surface-container-high tw:w-7 tw:h-7 tw:rounded tw:text-on-surface-variant tw:hover:text-on-surface tw:disabled:opacity-40 tw:relative">
-                <Icon name="add_alert" className="tw:text-[16px]" />
-                {alerts.length > 0 && <span className="tw:absolute tw:-top-1 tw:-right-1 tw:min-w-3.5 tw:h-3.5 tw:px-0.5 tw:rounded-full tw:bg-primary-container tw:text-on-primary-container tw:text-[9px] tw:font-bold tw:leading-[14px]">{alerts.length}</span>}
-              </button>
             </div>
           </section>
           {/* 5. OHLC legend */}
@@ -1159,7 +1325,7 @@ export default function Workspace() {
                   <span>C: <span className={`tw:font-semibold ${up(legendCandle.close - legendCandle.open)}`}>{fmtPrice(legendCandle.close)}</span></span>
                   {legendPrev && <span className={up(legendCandle.close - legendPrev.close)}>({legendCandle.close >= legendPrev.close ? '+' : ''}{(((legendCandle.close - legendPrev.close) / legendPrev.close) * 100).toFixed(2)}%)</span>}
                 </>
-              ) : <span>Pick a symbol above to start.</span>}
+              ) : <span>{loading ? 'Loading chart…' : 'No chart loaded yet.'}</span>}
             </div>
             <div className="tw:flex tw:items-center tw:gap-1 tw:shrink-0 tw:font-label-caps tw:text-label-caps tw:text-primary tw:uppercase">
               <span className={`tw:w-1.5 tw:h-1.5 tw:rounded-full ${playing ? 'tw:bg-secondary tw:animate-pulse' : 'tw:bg-on-surface-variant'}`} />
@@ -1167,8 +1333,9 @@ export default function Workspace() {
             </div>
           </section>
         </>
+      )}
 
-      {/* Chart canvas dock -- same element in both views so the chart survives tab switches. */}
+      {/* Chart canvas dock -- one element for both layouts so the chart survives resizes. */}
       <div className="tw:relative tw:w-full tw:flex tw:bg-surface-container-lowest">
         <aside className="tw:w-9 tw:bg-surface-container-low tw:flex tw:flex-col tw:items-center tw:py-space-sm tw:gap-space-xs tw:shrink-0 tw:z-20 tw:shadow-md tw:overflow-y-auto tw:no-scrollbar" aria-label="Drawing tools">
           {WORKSPACE_TOOLS.map(t => railTool(t, 'tw:w-7 tw:h-7 tw:rounded tw:flex tw:items-center tw:justify-center tw:shrink-0', 'tw:bg-surface-container-high tw:text-primary', 'tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface'))}
@@ -1199,8 +1366,10 @@ export default function Workspace() {
             ))}
           </div>
         </aside>
-        <div className="tw:relative tw:flex-1 tw:min-w-0 tw:h-[clamp(360px,calc(100dvh-330px),900px)]"
-          onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
+        <div className="tw:relative tw:flex-1 tw:min-w-0 tw:flex tw:flex-col">
+          {isDesktop && desktopLegend}
+          <div className={`tw:relative tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
+            onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />
           {candles && (
             <div className="tw:absolute tw:top-2 tw:left-2 tw:z-10 tw:flex tw:items-center tw:gap-space-xs tw:bg-surface-container-lowest/80 tw:backdrop-blur tw:px-space-sm tw:py-0.5 tw:rounded tw:pointer-events-none">
@@ -1208,7 +1377,7 @@ export default function Workspace() {
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface tw:uppercase">Historical Simulation Window</span>
             </div>
           )}
-          {candles && indicators.ema && (
+          {candles && indicators.ema && !isDesktop && (
             <div className="tw:absolute tw:top-2 tw:right-2 tw:z-10 tw:flex tw:flex-wrap tw:items-center tw:gap-space-sm tw:bg-surface-container-lowest/80 tw:backdrop-blur-md tw:px-space-sm tw:py-1 tw:rounded tw:pointer-events-none">
               {EMA_CONFIG.map((cfg, k) => (
                 <div key={cfg.period} className="tw:flex tw:items-center tw:gap-1">
@@ -1246,7 +1415,9 @@ export default function Workspace() {
                   <Icon name="warning" className="tw:text-[28px] tw:text-primary" />
                   <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">{isSetupError ? 'Chart not configured' : 'Chart data unavailable'}</h3>
                   <p className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:max-w-md">{error}</p>
-                  {isSetupError && <a href="/accounts" className="tw:text-primary tw:font-label-action tw:text-label-action tw:underline">Connect cTrader on the Accounts page</a>}
+                  {isSetupError
+                    ? <a href="/accounts" className="tw:text-primary tw:font-label-action tw:text-label-action tw:underline">Connect cTrader on the Accounts page</a>
+                    : <div className="tw:flex tw:gap-space-sm"><button type="button" onClick={loadChart} className="tw:text-primary tw:font-label-action tw:text-label-action tw:underline">Try again</button><Link href="/backtest/new" className="tw:text-primary tw:font-label-action tw:text-label-action tw:underline">Change market or dates</Link></div>}
                 </>
               ) : draftAvailable ? (
                 <>
@@ -1263,17 +1434,22 @@ export default function Workspace() {
               ) : (
                 <>
                   <Icon name="query_stats" className="tw:text-[32px] tw:text-primary" />
-                  <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">Load a symbol to start replaying</h3>
+                  <h3 className="tw:font-headline-md tw:text-headline-md tw:text-on-surface">No session running</h3>
                   <p className="tw:font-body-sm tw:text-body-sm tw:text-on-surface-variant tw:max-w-sm">
-                    Pick a symbol, a past date range and a timeframe, then press Load Chart.
+                    Pick a market and date range to start replaying.
                   </p>
+                  <Link href="/backtest/new" className="tw:mt-space-xs tw:px-space-md tw:py-space-xs tw:rounded-full tw:bg-primary tw:text-on-primary tw:font-label-action tw:text-label-action">New backtest</Link>
                 </>
               )}
             </div>
           )}
+          </div>
+          {isDesktop && resultDrawer}
         </div>
       </div>
 
+      {isDesktop ? desktopDock : (
+        <>
       {/* 6. Replay controller */}
       <section className="tw:bg-surface-container-high tw:px-gutter tw:py-space-sm tw:flex tw:flex-col tw:gap-space-xs tw:shadow-md">
         <div className="tw:flex tw:items-center tw:justify-between tw:text-on-surface-variant tw:font-label-caps tw:text-label-caps">
@@ -1287,10 +1463,6 @@ export default function Workspace() {
         </div>
       </section>
       <section className="tw:p-gutter tw:bg-surface-container-lowest tw:flex tw:items-center tw:gap-space-sm tw:shadow-xl">
-        <button type="button" onClick={logSetup} disabled={!openTrade && !closedTrade} title={openTrade || closedTrade ? 'Log this trade to the Backtest Log' : 'Place a Long or Short first'}
-          className="tw:min-h-[44px] tw:px-space-md tw:bg-surface-container-high tw:hover:bg-surface-bright tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action tw:flex tw:items-center tw:gap-1 tw:shrink-0 tw:disabled:opacity-40">
-          <Icon name="post_add" className="tw:text-primary tw:text-[18px]" /><span>Log Setup</span>
-        </button>
         <div className="tw:grid tw:grid-cols-2 tw:gap-space-sm tw:flex-1 tw:min-w-0">
           <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'}
             className={`tw:min-h-[44px] tw:bg-secondary-container tw:text-on-secondary-container tw:hover:opacity-95 tw:font-label-action tw:text-label-action tw:font-semibold tw:rounded tw:flex tw:items-center tw:justify-center tw:gap-1 tw:shadow-sm tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:ring-2 tw:ring-secondary' : ''}`}>
@@ -1306,11 +1478,13 @@ export default function Workspace() {
           <Icon name="photo_camera" className="tw:text-[20px]" />
         </button>
       </section>
+        </>
+      )}
 
       {/* 6. Log Trade Outcome modal */}
-      {closedTrade && showCloseout && (
+      {!isDesktop && closedTrade && showCloseout && (
         <div className="tw:fixed tw:inset-0 tw:z-50 tw:bg-surface-container-lowest/80 tw:backdrop-blur-sm tw:flex tw:items-end tw:sm:items-center tw:justify-center tw:p-gutter" role="dialog" aria-modal="true" aria-label="Log trade outcome">
-          <div className="tw:w-full tw:max-w-lg tw:bg-surface-container tw:rounded-xl tw:shadow-[0_10px_30px_rgba(0,0,0,0.8)] tw:overflow-hidden tw:flex tw:flex-col">
+          <div className="tw:w-full tw:max-w-lg tw:max-h-[90dvh] tw:overflow-y-auto tw:bg-surface-container tw:rounded-xl tw:shadow-[0_10px_30px_rgba(0,0,0,0.8)] tw:flex tw:flex-col">
             <div className="tw:flex tw:items-center tw:justify-between tw:px-space-xl tw:py-space-md tw:bg-surface-container-high">
               <div className="tw:flex tw:items-center tw:gap-space-sm">
                 <Icon name="verified" className={`tw:text-[24px] ${closedTrade.outcome === 'loss' ? 'tw:text-error' : 'tw:text-secondary'}`} />
@@ -1380,6 +1554,7 @@ export default function Workspace() {
                 <textarea rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was the setup? What would you do differently?"
                   className="tw:w-full tw:bg-surface-container-lowest tw:p-space-md tw:rounded tw:font-body-md tw:text-body-md tw:text-on-surface tw:focus:outline-none tw:focus:bg-surface-variant tw:transition-colors tw:resize-none" />
               </label>
+              <JournalFields value={journal} onChange={setJournal} />
               {saveError && <p className="tw:text-error tw:font-body-sm tw:text-body-sm">{saveError}</p>}
               <div className="tw:flex tw:items-center tw:justify-end tw:gap-space-sm tw:pt-space-xs">
                 <button type="button" onClick={() => { if (window.confirm('Discard this backtest trade?')) resetTrade(); }}
@@ -1387,7 +1562,7 @@ export default function Workspace() {
                 <button type="button" onClick={() => void saveBacktestTrade()} disabled={saving}
                   className="tw:flex tw:items-center tw:gap-space-xs tw:bg-primary-container tw:text-on-primary-container tw:px-space-xl tw:py-space-sm tw:rounded tw:font-label-action tw:text-label-action tw:font-semibold tw:shadow-md tw:hover:brightness-110 tw:active:scale-95 tw:transition-all tw:min-h-[40px] tw:disabled:opacity-60">
                   <Icon name={saving ? 'progress_activity' : 'bookmark_added'} className={`tw:text-[18px] ${saving ? 'tw:animate-spin' : ''}`} />
-                  <span>{saving ? 'Saving…' : 'Save to Backtest Log'}</span>
+                  <span>{saving ? 'Saving…' : 'Save to log'}</span>
                 </button>
               </div>
             </div>

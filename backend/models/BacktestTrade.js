@@ -35,6 +35,11 @@ const backtestTradeSchema = new mongoose.Schema({
   rMultiple: { type: Number, default: 0 },
 
   notes: { type: String, default: '' },
+  planFollowed: { type: Boolean, default: null },
+  setupQuality: { type: Number, min: 0, max: 5, default: 0 },
+  executionQuality: { type: Number, min: 0, max: 5, default: 0 },
+  mistakes: { type: [String], default: [] },
+  lesson: { type: String, default: '' },
   // Small JPEG data URL of the chart at save time (Log's "Setup Snapshot").
   // Excluded from list queries; fetched on demand via /backtest-trades/:id/snapshot.
   snapshot: { type: String, default: '', select: false },

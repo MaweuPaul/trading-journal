@@ -1,5 +1,4 @@
-import LogView from '@/components/backtest/LogView';
+import BacktestOverview from '@/components/backtest/BacktestOverview';
 
-export default function BacktestLogPage() {
-  return <LogView />;
-}
+export default function BacktestOverviewPage() { return <BacktestOverview />; }
+

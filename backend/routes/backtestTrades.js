@@ -145,6 +145,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
     const {
       name, strategy, tags, source, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
       stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
+      planFollowed, setupQuality, executionQuality, mistakes, lesson,
     } = req.body;
     // Quick logs (from the Backtest Log's "New Backtest" form) carry only a
     // label, symbol, direction, P&L and R -- no chart, prices or times.
@@ -190,6 +191,11 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
       pnlUSD: Number.isFinite(Number(pnlUSD)) ? Number(pnlUSD) : 0,
       rMultiple: Number.isFinite(Number(rMultiple)) ? Number(rMultiple) : 0,
       notes: String(notes || '').slice(0, 5000),
+      planFollowed: typeof planFollowed === 'boolean' ? planFollowed : null,
+      setupQuality: Math.max(0, Math.min(5, Number(setupQuality) || 0)),
+      executionQuality: Math.max(0, Math.min(5, Number(executionQuality) || 0)),
+      mistakes: normalizeTags(mistakes),
+      lesson: String(lesson || '').slice(0, 2000),
       chartAnnotations: annotations,
       snapshot: normalizeSnapshot(snapshot),
     });
@@ -217,12 +223,17 @@ router.get('/backtest-trades/:id/snapshot', auth, ownerOnly, async (req, res) =>
 router.patch('/backtest-trades/:id', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
-    const { name, strategy, tags, notes, chartAnnotations } = req.body;
+    const { name, strategy, tags, notes, chartAnnotations, planFollowed, setupQuality, executionQuality, mistakes, lesson } = req.body;
     const update = {};
     if (name !== undefined) update.name = String(name || '').trim().slice(0, 100);
     if (tags !== undefined) Object.assign(update, strategyAndTags('', tags));
     else if (strategy !== undefined) Object.assign(update, strategyAndTags(strategy, []));
     if (notes !== undefined) update.notes = String(notes || '').slice(0, 5000);
+    if (planFollowed !== undefined) update.planFollowed = typeof planFollowed === 'boolean' ? planFollowed : null;
+    if (setupQuality !== undefined) update.setupQuality = Math.max(0, Math.min(5, Number(setupQuality) || 0));
+    if (executionQuality !== undefined) update.executionQuality = Math.max(0, Math.min(5, Number(executionQuality) || 0));
+    if (mistakes !== undefined) update.mistakes = normalizeTags(mistakes);
+    if (lesson !== undefined) update.lesson = String(lesson || '').slice(0, 2000);
     if (chartAnnotations !== undefined) {
       try {
         update.chartAnnotations = normalizeBacktestDrawings(chartAnnotations);

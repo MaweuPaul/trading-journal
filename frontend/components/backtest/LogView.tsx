@@ -3,12 +3,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './BacktestShell';
+import { downloadLogCsv, downloadLogJson } from './exporting';
+import { useIsDesktop } from './layout';
 import {
   BacktestTrade, authHeaders, fmtDate, fmtPrice, fmtR, fmtUSD, hashTag, intervalLabel, tagsOf, useBacktest,
 } from './data';
 
-const PAGE_SIZE = 10;
 type Outcome = 'ALL' | 'win' | 'loss' | 'breakeven';
+type Direction = 'ALL' | 'long' | 'short';
+const RANGES = [{ value: 'ALL', label: 'All Time' }, { value: '7', label: 'Past 7 Days' }, { value: '30', label: 'Past 30 Days' }, { value: '90', label: 'Past 90 Days' }, { value: '365', label: 'Past Year' }] as const;
+const OPTIONAL_COLS = [['strategy', 'Strategy Tag'], ['tf', 'TF'], ['entry', 'Entry Price'], ['exit', 'Exit Price'], ['pnl', 'Simulated P&L'], ['plan', 'Plan?'], ['date', 'Date Simulated']] as const;
+type OptionalCol = typeof OPTIONAL_COLS[number][0];
 type SortKey = 'date' | 'r';
 
 const chip = 'tw:px-space-xs tw:py-0.5 tw:rounded tw:font-label-caps tw:text-label-caps tw:uppercase tw:font-bold';
@@ -24,17 +29,6 @@ function rChip(n: number) {
   return n > 0 ? 'tw:bg-secondary/20 tw:text-secondary' : n < 0 ? 'tw:bg-error/20 tw:text-error' : 'tw:bg-surface-container-highest tw:text-on-surface-variant';
 }
 
-function download(filename: string, content: string, type: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-function toCsv(trades: BacktestTrade[]) {
-  const cols = ['name', 'tags', 'symbol', 'interval', 'direction', 'entryPrice', 'exitPrice', 'stopLoss', 'takeProfit', 'rMultiple', 'pnlUSD', 'outcome', 'createdAt', 'notes'] as const;
-  const esc = (v: unknown) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  return [cols.join(','), ...trades.map(t => cols.map(c => esc(c === 'tags' ? tagsOf(t).join('|') : t[c])).join(','))].join('\n');
-}
 
 export default function LogView() {
   const router = useRouter();
@@ -44,7 +38,15 @@ export default function LogView() {
   const [outcome, setOutcome] = useState<Outcome>('ALL');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('date');
+  const [direction, setDirection] = useState<Direction>('ALL');
+  const [tf, setTf] = useState('ALL');
+  const [range, setRange] = useState<string>('ALL');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [compact, setCompact] = useState(false);
+  const [showCols, setShowCols] = useState(false);
+  const [hiddenCols, setHiddenCols] = useState<Set<OptionalCol>>(() => new Set());
+  const isDesktop = useIsDesktop();
   const [inspect, setInspect] = useState<BacktestTrade | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [toast, setToast] = useState('');
@@ -68,15 +70,25 @@ export default function LogView() {
       (strategy === 'ALL' || tagsOf(t).includes(strategy))
       && (symbol === 'ALL' || t.symbol === symbol)
       && (outcome === 'ALL' || t.outcome === outcome)
-      && (!q || [t.name, t.symbol, ...tagsOf(t), hashTag(tagsOf(t)[0] ?? '')].some(v => v?.toLowerCase().includes(q))));
+      && (direction === 'ALL' || t.direction === direction)
+      && (tf === 'ALL' || t.interval === tf)
+      && (range === 'ALL' || Date.now() - new Date(t.createdAt).getTime() <= Number(range) * 86_400_000)
+      && (!q || [t.name, t.symbol, t.notes, ...tagsOf(t), hashTag(tagsOf(t)[0] ?? '')].some(v => v?.toLowerCase().includes(q))));
     return [...rows].sort((a, b) => sort === 'r'
       ? b.rMultiple - a.rMultiple
       : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [trades, strategy, symbol, outcome, search, sort]);
+  }, [trades, strategy, symbol, outcome, direction, tf, range, search, sort]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const intervals = useMemo(() => Array.from(new Set(trades.map(t => t.interval).filter(Boolean))), [trades]);
+  // Stable "#BT-0007" ids: numbered in the order backtests were logged.
+  const seqById = useMemo(() => {
+    const ordered = [...trades].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    return new Map(ordered.map((t, i) => [t._id, `#BT-${String(i + 1).padStart(4, '0')}`]));
+  }, [trades]);
+  const thisWeek = useMemo(() => trades.filter(t => Date.now() - new Date(t.createdAt).getTime() < 7 * 86_400_000).length, [trades]);
 
   // KPIs follow the strategy/symbol/outcome filters, like the trade list.
   const stats = useMemo(() => {
@@ -98,7 +110,7 @@ export default function LogView() {
     };
   }, [filtered]);
 
-  const resetFilters = () => { setStrategy('ALL'); setSymbol('ALL'); setOutcome('ALL'); setSearch(''); setSort('date'); setPage(1); };
+  const resetFilters = () => { setStrategy('ALL'); setSymbol('ALL'); setOutcome('ALL'); setDirection('ALL'); setTf('ALL'); setRange('ALL'); setSearch(''); setSort('date'); setPage(1); };
   const onDelete = async (e: React.MouseEvent, t: BacktestTrade) => {
     e.stopPropagation();
     if (!window.confirm(`Delete "${t.name || t.symbol}" from the backtest log?`)) return;
@@ -106,9 +118,8 @@ export default function LogView() {
     else setToast('Could not delete that backtest');
   };
   const exportData = (kind: 'CSV' | 'JSON') => {
-    const stamp = new Date().toISOString().slice(0, 10);
-    if (kind === 'CSV') download(`backtest-log-${stamp}.csv`, toCsv(filtered), 'text/csv');
-    else download(`backtest-log-${stamp}.json`, JSON.stringify(filtered, null, 2), 'application/json');
+    if (kind === 'CSV') downloadLogCsv(filtered);
+    else downloadLogJson(filtered);
     setToast(`Exported ${filtered.length} trades as ${kind}`);
   };
   const loadInWorkspace = (t: BacktestTrade) => {
@@ -122,6 +133,222 @@ export default function LogView() {
 
   const ringOffset = 88 * (1 - stats.winRate / 100);
 
+  // ── Desktop terminal table (Stitch "Desktop Backtest Log", >= 900px) ───────
+  const show = (col: OptionalCol) => !hiddenCols.has(col);
+  const toggleCol = (col: OptionalCol) => setHiddenCols(cur => { const next = new Set(cur); if (next.has(col)) next.delete(col); else next.add(col); return next; });
+  const cell = compact ? 'tw:py-1' : 'tw:py-2';
+  const th = 'tw:py-2 tw:border-r tw:border-outline-variant tw:font-semibold';
+  const toolBtn = 'tw:bg-surface-container-high tw:hover:bg-surface-container-highest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-1 tw:text-body-sm tw:font-label-action tw:text-on-surface tw:flex tw:items-center tw:gap-1 tw:transition-colors';
+  const filterSel = (label: string, value: string, onChange: (v: string) => void, options: [string, string][]) => (
+    <label className="tw:relative tw:bg-surface-container-high tw:hover:bg-surface-container-highest tw:border tw:border-outline-variant tw:rounded tw:pl-2 tw:pr-6 tw:py-1 tw:text-body-sm tw:font-label-action tw:text-on-surface tw:flex tw:items-center tw:gap-1.5 tw:transition-colors">
+      <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant">{label}</span>
+      <select value={value} onChange={e => { onChange(e.target.value); setPage(1); }} className="tw:appearance-none tw:bg-transparent tw:focus:outline-none tw:cursor-pointer">
+        {options.map(([v, l]) => <option key={v} value={v} className="tw:bg-surface-container">{l}</option>)}
+      </select>
+      <Icon name="arrow_drop_down" className="tw:absolute tw:right-1 tw:text-sm tw:text-on-surface-variant tw:pointer-events-none" />
+    </label>
+  );
+  const kpi = (label: string, value: React.ReactNode, aside: React.ReactNode, icon: string, iconCls: string) => (
+    <div className="tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded tw:p-2.5 tw:flex tw:items-center tw:justify-between tw:shadow-sm">
+      <div>
+        <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase tw:tracking-wider tw:block">{label}</span>
+        <div className="tw:flex tw:items-baseline tw:gap-2 tw:mt-0.5">{value}{aside}</div>
+      </div>
+      <div className={`tw:w-8 tw:h-8 tw:rounded tw:bg-surface-container-high tw:border tw:border-outline-variant tw:flex tw:items-center tw:justify-center ${iconCls}`}><Icon name={icon} className="tw:text-lg" /></div>
+    </div>
+  );
+  const fresh = (t: BacktestTrade) => Date.now() - new Date(t.createdAt).getTime() < 86_400_000;
+
+  const desktopView = (
+    <div className="tw:flex tw:flex-col tw:bg-background tw:min-h-[calc(100dvh-44px)]">
+      {/* KPI summary bar */}
+      <section className="tw:p-3 tw:bg-surface-container-low tw:border-b tw:border-outline-variant">
+        <div className="tw:grid tw:grid-cols-2 tw:xl:grid-cols-4 tw:gap-2.5">
+          {kpi('Total Logged Sessions',
+            <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-on-surface tw:font-bold">{stats.n}</span>,
+            thisWeek > 0 && <span className="tw:text-secondary tw:font-label-caps tw:text-label-caps tw:flex tw:items-center tw:font-medium tw:bg-secondary-container/20 tw:px-1 tw:rounded"><Icon name="arrow_upward" className="tw:text-xs" />+{thisWeek} this week</span>,
+            'folder_open', 'tw:text-on-surface-variant')}
+          {kpi('Win Rate',
+            <span className={`tw:font-mono-metric-lg tw:text-mono-metric-lg tw:font-bold ${stats.winRate >= 50 ? 'tw:text-secondary' : stats.n ? 'tw:text-error' : 'tw:text-on-surface'}`}>{stats.n ? `${stats.winRate.toFixed(1)}%` : '—'}</span>,
+            <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant">{stats.wins} Wins / {stats.losses} Losses</span>,
+            'pie_chart', 'tw:text-secondary')}
+          {kpi('Cumulative Simulated Return',
+            <span className={`tw:font-mono-metric-lg tw:text-mono-metric-lg tw:font-bold ${valueTone(stats.totalR)}`}>{fmtR(stats.totalR).replace('R', ' R')}</span>,
+            <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-primary tw:font-medium">({fmtUSD(stats.totalPnl)} SIM)</span>,
+            stats.totalR >= 0 ? 'trending_up' : 'trending_down', 'tw:text-primary')}
+          {kpi('Average R Multiple',
+            <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-on-surface tw:font-bold">{fmtR(stats.avgR).replace('R', ' R')}</span>,
+            <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:bg-surface-container-high tw:px-1.5 tw:py-0.5 tw:rounded tw:border tw:border-outline-variant">WIN {fmtR(stats.avgWin, 1)} / LOSS {fmtR(stats.avgLoss, 1)}</span>,
+            'calculate', 'tw:text-on-surface-variant')}
+        </div>
+      </section>
+
+      {/* Filter & search controls */}
+      <section className="tw:p-2.5 tw:bg-surface-container tw:border-b tw:border-outline-variant tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-2.5">
+        <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2 tw:flex-1">
+          <div className="tw:relative tw:flex-1 tw:min-w-[200px] tw:max-w-xs">
+            <Icon name="search" className="tw:absolute tw:left-2.5 tw:top-1/2 tw:-translate-y-1/2 tw:text-on-surface-variant tw:text-base" />
+            <input aria-label="Search backtests" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search by backtest name, tag, or notes..." type="text"
+              className="tw:w-full tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:pl-8 tw:pr-2.5 tw:py-1 tw:text-body-sm tw:text-on-surface tw:placeholder:text-on-surface-variant/60 tw:focus:outline-none tw:focus:border-primary tw:transition-colors" />
+          </div>
+          {filterSel('STRATEGY:', strategy, setStrategy, [['ALL', `All Strategies (${strategies.length})`], ...strategies.map(s => [s, s] as [string, string])])}
+          {filterSel('SYMBOL:', symbol, setSymbol, [['ALL', 'All Symbols'], ...symbols.map(s => [s, s] as [string, string])])}
+          {filterSel('DIR:', direction, v => setDirection(v as Direction), [['ALL', 'All Directions'], ['long', 'Long'], ['short', 'Short']])}
+          {filterSel('OUTCOME:', outcome, v => setOutcome(v as Outcome), [['ALL', 'All Outcomes'], ['win', `Wins (${counts.win})`], ['loss', `Losses (${counts.loss})`], ['breakeven', `Break Evens (${counts.breakeven})`]])}
+          {filterSel('TF:', tf, setTf, [['ALL', 'All Timeframes'], ...intervals.map(i => [i, intervalLabel(i)] as [string, string])])}
+          <label className="tw:relative tw:bg-surface-container-high tw:hover:bg-surface-container-highest tw:border tw:border-outline-variant tw:rounded tw:pl-2 tw:pr-6 tw:py-1 tw:text-body-sm tw:font-label-action tw:text-on-surface tw:flex tw:items-center tw:gap-1.5 tw:transition-colors">
+            <Icon name="calendar_today" className="tw:text-sm tw:text-primary" />
+            <select aria-label="Date range" value={range} onChange={e => { setRange(e.target.value); setPage(1); }} className="tw:appearance-none tw:bg-transparent tw:focus:outline-none tw:cursor-pointer">
+              {RANGES.map(r => <option key={r.value} value={r.value} className="tw:bg-surface-container">{r.label}</option>)}
+            </select>
+            <Icon name="arrow_drop_down" className="tw:absolute tw:right-1 tw:text-sm tw:text-on-surface-variant tw:pointer-events-none" />
+          </label>
+          <button type="button" onClick={() => setSort(s => (s === 'date' ? 'r' : 'date'))} className={toolBtn} title={sort === 'date' ? 'Sort by R-Multiple' : 'Sort by date'}>
+            <Icon name="swap_vert" className="tw:text-sm tw:text-on-surface-variant" /><span>Sort: {sort === 'date' ? 'Date' : 'R'}</span>
+          </button>
+          <button type="button" onClick={resetFilters} className={toolBtn} title="Reset filters" aria-label="Reset filters"><Icon name="restart_alt" className="tw:text-sm tw:text-on-surface-variant" /></button>
+        </div>
+        <div className="tw:flex tw:items-center tw:gap-2">
+          <Link href="/backtest/strategies" className={toolBtn}><Icon name="rule" className="tw:text-sm tw:text-primary" /><span>Strategies</span></Link>
+          <button type="button" onClick={() => setShowNew(true)} className={toolBtn} title="Log a trade without replaying it"><Icon name="add" className="tw:text-sm tw:text-primary" /><span>Quick Log</span></button>
+          <button type="button" onClick={() => exportData('CSV')} disabled={!filtered.length} className={`${toolBtn} tw:disabled:opacity-40`} title="Export to CSV"><Icon name="file_download" className="tw:text-sm tw:text-on-surface-variant" /><span>Export CSV</span></button>
+          <div className="tw:relative">
+            <button type="button" onClick={() => setShowCols(v => !v)} aria-expanded={showCols} className={toolBtn} title="Toggle column display"><Icon name="view_column" className="tw:text-sm tw:text-on-surface-variant" /><span>Columns</span></button>
+            {showCols && (
+              <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-30 tw:w-48 tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:shadow-xl tw:p-1.5 tw:flex tw:flex-col">
+                {OPTIONAL_COLS.map(([key, label]) => (
+                  <label key={key} className="tw:flex tw:items-center tw:justify-between tw:gap-2 tw:px-2 tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:text-body-sm">
+                    <span>{label}</span>
+                    <input type="checkbox" checked={show(key)} onChange={() => toggleCol(key)} className="tw:accent-[#f59e0b]" />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" onClick={() => setCompact(c => !c)} aria-pressed={compact} className={`${toolBtn} ${compact ? 'tw:border-primary tw:text-primary' : ''}`} title="Compact table view"><Icon name="density_small" className="tw:text-sm tw:text-on-surface-variant" /><span>Compact</span></button>
+        </div>
+      </section>
+
+      {/* Dense backtest table */}
+      <div className="tw:flex-1 tw:overflow-x-auto">
+        {loading ? (
+          <div className="tw:py-12 tw:flex tw:justify-center tw:text-on-surface-variant"><Icon name="progress_activity" className="tw:text-[28px] tw:animate-spin" /></div>
+        ) : error ? (
+          <div className="tw:m-3 tw:p-3 tw:rounded tw:bg-error/10 tw:text-error tw:text-body-sm">{error}</div>
+        ) : filtered.length === 0 ? (
+          <div className="tw:flex tw:flex-col tw:items-center tw:justify-center tw:py-16 tw:text-center">
+            <Icon name="manage_search" className="tw:text-[36px] tw:text-primary" />
+            <h3 className="tw:mt-2 tw:text-headline-md tw:font-semibold tw:text-on-surface">{trades.length ? 'No backtests match these filters' : 'No backtests logged yet'}</h3>
+            <p className="tw:mt-1 tw:text-body-sm tw:text-on-surface-variant tw:max-w-sm">{trades.length ? 'Loosen a filter or clear the search to see more simulated trades.' : 'Replay a chart in the workspace, or quick-log a trade.'}</p>
+            {trades.length > 0
+              ? <button type="button" onClick={resetFilters} className={`${toolBtn} tw:mt-3 tw:text-primary`}>Clear All Filters</button>
+              : <Link href="/backtest/new" className={`${toolBtn} tw:mt-3 tw:text-primary`}>Start New Backtest</Link>}
+          </div>
+        ) : (
+          <table className="tw:w-full tw:text-left tw:border-collapse">
+            <thead className="tw:bg-surface-container-low tw:text-on-surface-variant tw:font-label-caps tw:text-label-caps tw:uppercase tw:border-b tw:border-outline-variant tw:shadow-sm">
+              <tr>
+                <th className={`${th} tw:px-3`}>ID / Backtest Name</th>
+                {show('strategy') && <th className={`${th} tw:px-3`}>Strategy Tag</th>}
+                <th className={`${th} tw:px-2.5`}>Symbol</th>
+                {show('tf') && <th className={`${th} tw:px-2 tw:text-center`}>TF</th>}
+                <th className={`${th} tw:px-2.5 tw:text-center`}>Direction</th>
+                {show('entry') && <th className={`${th} tw:px-3 tw:text-right`}>Entry Price</th>}
+                {show('exit') && <th className={`${th} tw:px-3 tw:text-right`}>Exit Price</th>}
+                <th className={`${th} tw:px-2.5 tw:text-center`}>Outcome</th>
+                <th className={`${th} tw:px-3 tw:text-right`}>Realized R</th>
+                {show('pnl') && <th className={`${th} tw:px-3 tw:text-right`}>Simulated P&amp;L</th>}
+                {show('plan') && <th className={`${th} tw:px-2.5 tw:text-center`}>Plan?</th>}
+                {show('date') && <th className={`${th} tw:px-3`}>Date Simulated</th>}
+                <th className="tw:py-2 tw:px-3 tw:font-semibold tw:text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="tw:divide-y tw:divide-outline-variant tw:text-body-sm">
+              {pageRows.map(t => {
+                const tag = tagsOf(t)[0];
+                const isNew = fresh(t);
+                const long = t.direction === 'long';
+                const outcomeCls = t.outcome === 'win' ? 'tw:bg-secondary-container/20 tw:text-secondary tw:border-secondary/30' : t.outcome === 'loss' ? 'tw:bg-error/20 tw:text-error tw:border-error/30' : 'tw:bg-surface-container-highest tw:text-on-surface-variant tw:border-outline-variant';
+                return (
+                  <tr key={t._id} onClick={() => router.push(`/backtest/${t._id}`)} tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') router.push(`/backtest/${t._id}`); }}
+                    className={`tw:transition-colors tw:cursor-pointer tw:group tw:focus:outline-none tw:focus:bg-surface-container-high ${isNew ? 'tw:bg-surface-container-high/90 tw:hover:bg-surface-container-high tw:border-l-2 tw:border-l-primary tw:shadow-[inset_0_0_12px_rgba(245,158,11,0.06)]' : 'tw:hover:bg-surface-container'}`}>
+                    <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant`}>
+                      <div className="tw:flex tw:items-center tw:gap-1.5">
+                        {isNew && <span className="tw:w-1.5 tw:h-1.5 tw:rounded-full tw:bg-primary tw:animate-pulse" title="Logged in the last 24h" />}
+                        <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold ${isNew ? 'tw:text-primary' : 'tw:text-on-surface-variant'}`}>{seqById.get(t._id)}</span>
+                        <span className="tw:text-on-surface tw:font-medium tw:truncate tw:max-w-[220px]" title={t.name}>{t.name || 'Untitled setup'}</span>
+                      </div>
+                    </td>
+                    {show('strategy') && (
+                      <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant`}>
+                        {tag ? <span className="tw:font-label-caps tw:text-label-caps tw:bg-primary-container/15 tw:text-primary tw:border tw:border-primary/30 tw:px-1.5 tw:py-0.5 tw:rounded tw:whitespace-nowrap">{hashTag(tag)}</span> : <span className="tw:text-on-surface-variant">—</span>}
+                      </td>
+                    )}
+                    <td className={`${cell} tw:px-2.5 tw:border-r tw:border-outline-variant tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold tw:text-on-surface`}>{t.symbol}</td>
+                    {show('tf') && <td className={`${cell} tw:px-2 tw:border-r tw:border-outline-variant tw:text-center tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant`}>{t.interval ? intervalLabel(t.interval) : '—'}</td>}
+                    <td className={`${cell} tw:px-2.5 tw:border-r tw:border-outline-variant tw:text-center`}>
+                      <span className={`tw:font-label-caps tw:text-label-caps tw:px-2 tw:py-0.5 tw:rounded tw:font-bold tw:border tw:flex tw:items-center tw:justify-center tw:gap-0.5 tw:mx-auto tw:w-fit ${long ? 'tw:border-secondary/40 tw:text-secondary tw:bg-secondary/10' : 'tw:border-error/40 tw:text-error tw:bg-error/10'}`}>
+                        <Icon name={long ? 'arrow_upward' : 'arrow_downward'} className="tw:text-xs" />{long ? 'LONG' : 'SHORT'}
+                      </span>
+                    </td>
+                    {show('entry') && <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant tw:text-right tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface`}>{t.source === 'quick' ? '—' : fmtPrice(t.entryPrice)}</td>}
+                    {show('exit') && <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant tw:text-right tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface`}>{t.source === 'quick' ? '—' : fmtPrice(t.exitPrice)}</td>}
+                    <td className={`${cell} tw:px-2.5 tw:border-r tw:border-outline-variant tw:text-center`}>
+                      <span className={`tw:font-label-caps tw:text-label-caps tw:px-1.5 tw:py-0.5 tw:rounded tw:font-bold tw:border ${outcomeCls}`}>{t.outcome === 'breakeven' ? 'BE' : t.outcome.toUpperCase()}</span>
+                    </td>
+                    <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant tw:text-right tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${valueTone(t.rMultiple)}`}>{fmtR(t.rMultiple).replace('R', ' R')}</td>
+                    {show('pnl') && <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant tw:text-right tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold ${valueTone(t.pnlUSD)}`}>{t.riskAmount > 0 || t.pnlUSD ? fmtUSD(t.pnlUSD) : '—'}</td>}
+                    {show('plan') && (
+                      <td className={`${cell} tw:px-2.5 tw:border-r tw:border-outline-variant tw:text-center`}>
+                        {t.planFollowed == null ? <span className="tw:text-on-surface-variant" title="Not reviewed">—</span>
+                          : t.planFollowed ? <Icon name="check_circle" className="tw:text-secondary tw:text-base" />
+                            : <Icon name="warning" className="tw:text-primary tw:text-base" />}
+                        <span className="tw:sr-only">{t.planFollowed == null ? 'Not reviewed' : t.planFollowed ? 'Plan followed' : 'Plan not followed'}</span>
+                      </td>
+                    )}
+                    {show('date') && <td className={`${cell} tw:px-3 tw:border-r tw:border-outline-variant tw:text-on-surface-variant tw:font-mono-metric-md tw:text-mono-metric-md tw:whitespace-nowrap`}>{fmtDate(t.createdAt)}</td>}
+                    <td className={`${cell} tw:px-3 tw:text-center`}>
+                      <div className="tw:flex tw:items-center tw:justify-center tw:gap-1.5">
+                        <Link href={`/backtest/${t._id}`} onClick={e => e.stopPropagation()} className="tw:bg-primary-container/20 tw:hover:bg-primary-container tw:text-primary tw:hover:text-on-primary-container tw:border tw:border-primary/40 tw:px-2 tw:py-0.5 tw:rounded tw:font-label-action tw:text-[11px] tw:transition-all tw:whitespace-nowrap">Case Study →</Link>
+                        <button type="button" onClick={e => void onDelete(e, t)} className="tw:text-on-surface-variant tw:hover:text-error tw:transition-colors tw:p-1" title="Delete record" aria-label={`Delete ${t.name || t.symbol}`}><Icon name="delete" className="tw:text-sm" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Pagination footer */}
+      {filtered.length > 0 && (
+        <footer className="tw:h-9 tw:px-4 tw:bg-surface-container-low tw:border-t tw:border-outline-variant tw:flex tw:items-center tw:justify-between tw:text-body-sm">
+          <div className="tw:flex tw:items-center tw:gap-4 tw:text-on-surface-variant tw:font-mono-metric-md tw:text-xs">
+            <span>Showing <strong className="tw:text-on-surface">{(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filtered.length)}</strong> of <strong className="tw:text-primary">{filtered.length}</strong> simulated trades</span>
+            <span className="tw:text-outline-variant">|</span>
+            <label className="tw:flex tw:items-center tw:gap-1">
+              <span>Rows per page:</span>
+              <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} className="tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded tw:px-1.5 tw:py-0.5 tw:text-xs tw:text-on-surface tw:focus:outline-none tw:focus:border-primary">
+                {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="tw:flex tw:items-center tw:gap-2">
+            {([['first_page', 1, currentPage === 1, 'First page'], ['chevron_left', currentPage - 1, currentPage === 1, 'Previous page']] as const).map(([icon, target, disabled, label]) => (
+              <button key={icon} type="button" aria-label={label} disabled={disabled} onClick={() => setPage(target)} className="tw:w-6 tw:h-6 tw:flex tw:items-center tw:justify-center tw:rounded tw:bg-surface-container tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:disabled:opacity-40 tw:disabled:cursor-not-allowed tw:transition-colors"><Icon name={icon} className="tw:text-sm" /></button>
+            ))}
+            <span className="tw:font-mono-metric-md tw:text-xs tw:px-2 tw:text-on-surface">Page <strong className="tw:text-primary">{currentPage}</strong> of {pageCount}</span>
+            {([['chevron_right', currentPage + 1, currentPage === pageCount, 'Next page'], ['last_page', pageCount, currentPage === pageCount, 'Last page']] as const).map(([icon, target, disabled, label]) => (
+              <button key={icon} type="button" aria-label={label} disabled={disabled} onClick={() => setPage(target)} className="tw:w-6 tw:h-6 tw:flex tw:items-center tw:justify-center tw:rounded tw:bg-surface-container tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:disabled:opacity-40 tw:disabled:cursor-not-allowed tw:transition-colors"><Icon name={icon} className="tw:text-sm" /></button>
+            ))}
+          </div>
+        </footer>
+      )}
+    </div>
+  );
+
+
   return (
     <div className="tw:flex tw:flex-col tw:w-full">
       {toast && (
@@ -131,6 +358,7 @@ export default function LogView() {
         </div>
       )}
 
+      {isDesktop ? desktopView : (<>
       {/* Header & actions deck */}
       <section className="tw:p-gutter tw:flex tw:flex-col tw:gap-space-md tw:bg-surface-container-lowest">
         <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm">
@@ -147,10 +375,10 @@ export default function LogView() {
               <Icon name="rule" className="tw:text-[18px] tw:text-primary" />
               <span className="tw:hidden tw:sm:inline">Strategies</span>
             </Link>
-            <button type="button" onClick={() => setShowNew(true)} className="tw:min-h-[44px] tw:px-space-md tw:flex tw:items-center tw:gap-space-xs tw:rounded tw:bg-primary-container tw:hover:bg-primary-fixed-dim tw:text-on-primary-container tw:font-label-action tw:text-label-action tw:font-semibold tw:shadow-md tw:active:scale-95 tw:transition-all">
+            <Link href="/backtest/new" className="tw:min-h-[44px] tw:px-space-md tw:flex tw:items-center tw:gap-space-xs tw:rounded tw:bg-primary-container tw:hover:bg-primary-fixed-dim tw:text-on-primary-container tw:font-label-action tw:text-label-action tw:font-semibold tw:shadow-md tw:active:scale-95 tw:transition-all">
               <Icon name="add_circle" className="tw:text-[18px]" />
-              <span>+ New Backtest</span>
-            </button>
+              <span>New Backtest</span>
+            </Link>
           </div>
         </div>
 
@@ -282,7 +510,7 @@ export default function LogView() {
           {pageRows.map(t => {
             const tag = tagsOf(t)[0];
             return (
-              <div key={t._id} role="button" tabIndex={0} onClick={() => setInspect(t)} onKeyDown={e => { if (e.key === 'Enter') setInspect(t); }}
+              <div key={t._id} role="button" tabIndex={0} onClick={() => router.push(`/backtest/${t._id}`)} onKeyDown={e => { if (e.key === 'Enter') router.push(`/backtest/${t._id}`); }}
                 className="tw:group tw:p-space-md tw:rounded tw:bg-surface-container tw:hover:bg-surface-container-high tw:transition-all tw:cursor-pointer tw:flex tw:flex-col tw:gap-space-xs tw:shadow-sm">
                 <div className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:min-w-0">
                   <div className="tw:flex tw:items-center tw:gap-space-xs tw:min-w-0">
@@ -337,7 +565,7 @@ export default function LogView() {
       {filtered.length > 0 && (
         <section className="tw:p-gutter tw:flex tw:items-center tw:justify-between tw:bg-surface-container-lowest tw:mt-space-sm">
           <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface-variant">
-            Showing {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}
+            Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length}
           </span>
           <div className="tw:flex tw:items-center tw:gap-space-xs">
             <button type="button" aria-label="Previous page" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}
@@ -357,6 +585,7 @@ export default function LogView() {
           </div>
         </section>
       )}
+      </>)}
 
       {inspect && <InspectDrawer trade={inspect} onClose={() => setInspect(null)} onLoad={() => loadInWorkspace(inspect)} />}
       {showNew && (

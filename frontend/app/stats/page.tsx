@@ -1,5 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { PAGE_PURPOSE } from '@/components/pagePurpose';
+import { LikelyRange, SampleTag, thinRowStyle } from '@/components/Confidence';
+import type { Confidence } from '@/components/confidenceMath';
 import { useRouter } from 'next/navigation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -14,14 +17,14 @@ interface Stats {
   totalTrades: number;
   winRate: number;
   avgDurationMin: number;
-  bySymbol: { symbol: string; pnl: number; trades: number; wins: number; winRate: number }[];
-  byDayOfWeek: { day: string; pnl: number; trades: number }[];
-  byMonth: { month: string; pnl: number; trades: number; wins: number }[];
-  bySession: { session: string; pnl: number; trades: number; wins: number; winRate: number }[];
-  byDirection: { direction: string; pnl: number; trades: number; wins: number; winRate: number; avgPnL: number }[];
-  byTag: { tag: string; pnl: number; trades: number; wins: number; winRate: number }[];
-  byEmotion: { emotion: string; pnl: number; trades: number; wins: number; winRate: number }[];
-  byGrade: { grade: string; pnl: number; trades: number; wins: number; winRate: number }[];
+  bySymbol: { symbol: string; pnl: number; trades: number; wins: number; winRate: number; confidence?: Confidence }[];
+  byDayOfWeek: { day: string; pnl: number; trades: number; confidence?: Confidence }[];
+  byMonth: { month: string; pnl: number; trades: number; wins: number; confidence?: Confidence }[];
+  bySession: { session: string; pnl: number; trades: number; wins: number; winRate: number; confidence?: Confidence }[];
+  byDirection: { direction: string; pnl: number; trades: number; wins: number; winRate: number; avgPnL: number; confidence?: Confidence }[];
+  byTag: { tag: string; pnl: number; trades: number; wins: number; winRate: number; confidence?: Confidence }[];
+  byEmotion: { emotion: string; pnl: number; trades: number; wins: number; winRate: number; confidence?: Confidence }[];
+  byGrade: { grade: string; pnl: number; trades: number; wins: number; winRate: number; confidence?: Confidence }[];
   globalComplianceRate: number | null;
   tradesWithPlaybookData?: number;
   mixedAccounts?: boolean;
@@ -106,6 +109,12 @@ function formatDuration(m: number) {
   return `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`;
 }
 
+/** "12 trades · early" when the backend sent confidence, else the plain count. */
+function TradeCount({ n, confidence }: { n: number; confidence?: Confidence }) {
+  return confidence ? <SampleTag n={n} level={confidence.level} /> : <span style={{ color: 'var(--text-muted)' }}>{n} trades</span>;
+}
+const pct = (v: number) => `${v.toFixed(0)}%`;
+
 export default function StatsPage() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
@@ -188,7 +197,7 @@ export default function StatsPage() {
         <div className="page-header-inner">
           <div>
             <h2>Analytics</h2>
-            <p>Deconstruct performance distributions and session correlations</p>
+            <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/stats'].question}</strong> {PAGE_PURPOSE['/stats'].detail}</p>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px', boxShadow: 'var(--shadow-sm)' }}>
@@ -352,14 +361,15 @@ export default function StatsPage() {
             {bySession.map(s => {
               const active = s.trades > 0;
               return (
-                <div className="session-summary-row" key={s.session} style={{ opacity: active ? 1 : 0.55 }}>
+                <div className="session-summary-row" key={s.session} style={{ opacity: active ? 1 : 0.55, ...(active ? thinRowStyle(s.confidence) : {}) }}>
                   <div className="session-name">{s.session}</div>
                   <div className="session-stats-group">
-                    <span style={{ color: 'var(--text-muted)' }}>{s.trades} trades</span>
+                    <TradeCount n={s.trades} confidence={s.confidence} />
                     {active ? (
                       <>
-                        <span style={{ color: s.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                          {s.winRate.toFixed(0)}% WR
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+                          <span style={{ color: s.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap' }}>{s.winRate.toFixed(0)}% WR</span>
+                          <LikelyRange range={s.confidence?.winRateRange} format={pct} style={{ fontSize: 10 }} />
                         </span>
                         <span className={`pnl ${s.pnl >= 0 ? 'positive' : 'negative'}`}>
                           {s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}
@@ -416,14 +426,15 @@ export default function StatsPage() {
                   {byDirection.map(d => {
                     const active = d.trades > 0;
                     return (
-                      <div className="session-summary-row" key={d.direction} style={{ opacity: active ? 1 : 0.55 }}>
+                      <div className="session-summary-row" key={d.direction} style={{ opacity: active ? 1 : 0.55, ...(active ? thinRowStyle(d.confidence) : {}) }}>
                         <div className="session-name">{d.direction}</div>
                         <div className="session-stats-group">
-                          <span style={{ color: 'var(--text-muted)' }}>{d.trades} trades</span>
+                          <TradeCount n={d.trades} confidence={d.confidence} />
                           {active ? (
                             <>
-                              <span style={{ color: d.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                                {d.winRate.toFixed(0)}% WR
+                              <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+                                <span style={{ color: d.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap' }}>{d.winRate.toFixed(0)}% WR</span>
+                                <LikelyRange range={d.confidence?.winRateRange} format={pct} style={{ fontSize: 10 }} />
                               </span>
                               <span style={{ color: 'var(--text-muted)' }}>
                                 avg {d.avgPnL >= 0 ? '+' : ''}${d.avgPnL.toFixed(2)}
@@ -459,14 +470,17 @@ export default function StatsPage() {
           {byGrade.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {byGrade.map(g => (
-                <div className="session-summary-row" key={g.grade}>
+                <div className="session-summary-row" key={g.grade} style={thinRowStyle(g.confidence)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span className={`grade-pill-tag ${g.grade}`}>{g.grade}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Quality Setup</span>
                   </div>
                   <div className="session-stats-group">
-                    <span style={{ color: 'var(--text-muted)' }}>{g.trades} trades</span>
-                    <span style={{ color: g.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>{g.winRate.toFixed(0)}% WR</span>
+                    <TradeCount n={g.trades} confidence={g.confidence} />
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+                      <span style={{ color: g.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap' }}>{g.winRate.toFixed(0)}% WR</span>
+                      <LikelyRange range={g.confidence?.winRateRange} format={pct} style={{ fontSize: 10 }} />
+                    </span>
                     <span className={`pnl ${g.pnl >= 0 ? 'positive' : 'negative'}`}>
                       {g.pnl >= 0 ? '+' : ''}${g.pnl.toFixed(2)}
                     </span>
@@ -494,7 +508,7 @@ export default function StatsPage() {
           {byEmotion.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {byEmotion.map(e => (
-                <div className="session-summary-row" key={e.emotion}>
+                <div className="session-summary-row" key={e.emotion} style={thinRowStyle(e.confidence)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
                       {e.emotion === 'Calm' ? '😊 Calm' :
@@ -506,8 +520,11 @@ export default function StatsPage() {
                     </span>
                   </div>
                   <div className="session-stats-group">
-                    <span style={{ color: 'var(--text-muted)' }}>{e.trades} trades</span>
-                    <span style={{ color: e.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>{e.winRate.toFixed(0)}% WR</span>
+                    <TradeCount n={e.trades} confidence={e.confidence} />
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+                      <span style={{ color: e.winRate >= 50 ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap' }}>{e.winRate.toFixed(0)}% WR</span>
+                      <LikelyRange range={e.confidence?.winRateRange} format={pct} style={{ fontSize: 10 }} />
+                    </span>
                     <span className={`pnl ${e.pnl >= 0 ? 'positive' : 'negative'}`}>
                       {e.pnl >= 0 ? '+' : ''}${e.pnl.toFixed(2)}
                     </span>
@@ -536,12 +553,12 @@ export default function StatsPage() {
         {byTag.length > 0 ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
             {byTag.map(t => (
-              <div className="session-summary-row" key={t.tag}>
+              <div className="session-summary-row" key={t.tag} style={thinRowStyle(t.confidence)}>
                 <span className="tag-badge" style={{ border: 'none', background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 }}>
                   #{t.tag}
                 </span>
                 <div className="session-stats-group">
-                  <span style={{ color: 'var(--text-muted)' }}>{t.trades} trades</span>
+                  <TradeCount n={t.trades} confidence={t.confidence} />
                   <span className={`pnl ${t.pnl >= 0 ? 'positive' : 'negative'}`}>
                     {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
                   </span>
@@ -614,13 +631,16 @@ export default function StatsPage() {
           {[...bySymbol].sort((a, b) => b.winRate - a.winRate).map(s => {
             const pct = Math.min(100, s.winRate);
             return (
-              <div className="bar-item" key={s.symbol}>
+              <div className="bar-item" key={s.symbol} style={thinRowStyle(s.confidence)}>
                 <div className="bar-label">{s.symbol}</div>
                 <div className="bar-track">
                   <div className={`bar-fill ${pct >= 50 ? 'positive' : 'negative'}`} style={{ width: `${pct}%` }} />
                 </div>
                 <div className={`bar-val pnl ${pct >= 50 ? 'positive' : 'negative'}`}>
                   {pct.toFixed(0)}% <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({s.trades})</span>
+                  {s.confidence?.winRateRange && (
+                    <div style={{ fontWeight: 400 }}><LikelyRange range={s.confidence.winRateRange} format={v => `${v.toFixed(0)}%`} style={{ fontSize: 10 }} /></div>
+                  )}
                 </div>
               </div>
             );
@@ -679,11 +699,14 @@ export default function StatsPage() {
               {[...byMonth].reverse().map(m => {
                 const wr = m.trades > 0 ? (m.wins / m.trades) * 100 : 0;
                 return (
-                  <tr key={m.month}>
+                  <tr key={m.month} style={thinRowStyle(m.confidence)}>
                     <td className="text" style={{ fontWeight: 600 }}>{m.month}</td>
                     <td>{m.trades}</td>
                     <td>{m.wins}</td>
-                    <td className={`pnl ${wr >= 50 ? 'positive' : 'negative'}`}>{wr.toFixed(1)}%</td>
+                    <td className={`pnl ${wr >= 50 ? 'positive' : 'negative'}`}>
+                      {wr.toFixed(1)}%
+                      {m.confidence?.winRateRange && <div><LikelyRange range={m.confidence.winRateRange} format={v => `${v.toFixed(0)}%`} style={{ fontSize: 10 }} /></div>}
+                    </td>
                     <td className={`pnl ${m.pnl >= 0 ? 'positive' : 'negative'}`}>
                       {m.pnl >= 0 ? '+' : ''}${Math.abs(m.pnl).toFixed(2)}
                     </td>

@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { Icon } from './BacktestShell';
 import { fmtR, intervalLabel, tagsOf, useBacktest } from './data';
 import { computeStats } from './stats';
+import { ConfidenceLine } from '../Confidence';
 import { draftProgress, sessionIdFor, useSessions, clearDraft, WorkspaceDraft } from './session';
 
 const card = 'tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-lg tw:p-4 tw:flex tw:flex-col tw:gap-3';
@@ -119,6 +120,8 @@ export default function StrategiesView() {
                 </div>
               ))}
             </div>
+
+            {r.stats && <ConfidenceLine confidence={r.stats.confidence} range="winRate" />}
 
             {r.session ? <SessionLine d={r.session} /> : <p className="tw:text-body-sm tw:text-outline">No replay in progress.</p>}
 

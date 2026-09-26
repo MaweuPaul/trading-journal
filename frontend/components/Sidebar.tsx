@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { PAGE_PURPOSE } from './pagePurpose';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { LayoutDashboard, List, BarChart2, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
@@ -127,6 +128,7 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
                 key={href}
                 href={href}
                 className={`nav-item ${path === href ? 'active' : ''}`}
+                title={PAGE_PURPOSE[href] ? `${PAGE_PURPOSE[href].question} ${PAGE_PURPOSE[href].detail}` : undefined}
                 onClick={onClose}
               >
                 <Icon size={16} />

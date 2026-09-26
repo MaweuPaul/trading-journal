@@ -1,9 +1,11 @@
 'use client';
 import Link from 'next/link';
+import { PAGE_PURPOSE } from '../pagePurpose';
 import { useMemo } from 'react';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, fmtDate, fmtR, fmtUSD, hashTag, intervalLabel, tagsOf, useBacktest } from './data';
 import { computeStats } from './stats';
+import { ConfidenceLine, SampleTag, signedR } from '../Confidence';
 import { draftProgress, sessionIdFor, useActiveSession } from './session';
 import { downloadLogCsv } from './exporting';
 
@@ -12,8 +14,8 @@ import { downloadLogCsv } from './exporting';
 const SAMPLE_TARGET = 30;
 const WEEK_MS = 7 * 86_400_000;
 
-function Kpi({ label, icon, value, valueCls, aside, asideCls = 'tw:text-on-surface-variant', bar }: {
-  label: string; icon: string; value: string; valueCls: string; aside: React.ReactNode; asideCls?: string; bar: React.ReactNode;
+function Kpi({ label, icon, value, valueCls, aside, asideCls = 'tw:text-on-surface-variant', bar, note }: {
+  label: string; icon: string; value: string; valueCls: string; aside: React.ReactNode; asideCls?: string; bar: React.ReactNode; note?: React.ReactNode;
 }) {
   return (
     <div className="tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded-lg tw:p-3 tw:flex tw:flex-col tw:justify-between">
@@ -25,6 +27,7 @@ function Kpi({ label, icon, value, valueCls, aside, asideCls = 'tw:text-on-surfa
         <span className={`tw:text-headline-lg tw:font-mono-metric-lg tw:font-bold ${valueCls}`}>{value}</span>
         <span className={`tw:font-mono-metric-md tw:text-mono-metric-md tw:flex tw:items-center tw:gap-0.5 tw:text-right ${asideCls}`}>{aside}</span>
       </div>
+      {note && <div className="tw:mt-1.5">{note}</div>}
       <div className="tw:mt-2 tw:flex tw:h-1 tw:w-full tw:bg-surface-container-highest tw:rounded-full tw:overflow-hidden">{bar}</div>
     </div>
   );
@@ -63,7 +66,7 @@ export default function BacktestOverview() {
           <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2">
             <h1 className="tw:text-headline-md tw:font-headline-md tw:font-semibold tw:text-on-surface tw:tracking-tight">Manual Backtesting</h1>
           </div>
-          <p className="tw:text-body-sm tw:font-body-sm tw:text-on-surface-variant">Replay past markets candle by candle and practise your setups without seeing the future.</p>
+          <p className="tw:text-body-sm tw:font-body-sm tw:text-on-surface-variant"><strong className="tw:text-on-surface">{PAGE_PURPOSE['/backtest'].question}</strong> Replay past markets candle by candle and practise your setups without seeing the future.</p>
         </div>
         <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2 tw:shrink-0">
           <Link href="/backtest/new" className="tw:px-3.5 tw:py-1.5 tw:rounded tw:bg-primary-container tw:hover:bg-surface-tint tw:text-on-primary tw:font-label-action tw:text-label-action tw:font-semibold tw:flex tw:items-center tw:gap-1.5 tw:transition-all tw:active:scale-[0.98]">
@@ -90,12 +93,15 @@ export default function BacktestOverview() {
         <Kpi label="Completed Backtests" icon="history_edu" value={loading ? '…' : String(s.n)} valueCls="tw:text-on-surface"
           aside={thisWeek > 0 ? <><Icon name="trending_up" className="tw:text-xs" />+{thisWeek} this week</> : 'none this week'}
           asideCls={thisWeek > 0 ? 'tw:text-secondary' : 'tw:text-on-surface-variant'}
+          note={s.n ? <SampleTag n={s.n} level={s.confidence.level} /> : null}
           bar={<div className="tw:h-full tw:bg-primary" style={{ width: `${Math.min(100, (s.n / SAMPLE_TARGET) * 100)}%` }} title={`${s.n} of the ${SAMPLE_TARGET}-trade minimum sample`} />} />
         <Kpi label="Win Rate" icon="pie_chart" value={s.n ? `${s.winRate.toFixed(1)}%` : dash} valueCls={s.winRate >= 50 ? 'tw:text-secondary' : s.n ? 'tw:text-tertiary' : 'tw:text-on-surface'}
           aside={`${s.wins}W / ${s.losses}L`}
+          note={s.n ? <ConfidenceLine confidence={s.confidence} range="winRate" /> : null}
           bar={s.n ? <><div className="tw:h-full tw:bg-secondary" style={{ width: `${(s.wins / s.n) * 100}%` }} /><div className="tw:h-full tw:bg-tertiary" style={{ width: `${(s.losses / s.n) * 100}%` }} /></> : null} />
         <Kpi label="Average R Multiple" icon="insights" value={s.n ? fmtR(s.avgR).replace('R', ' R') : dash} valueCls={s.n ? (s.avgR >= 0 ? 'tw:text-primary' : 'tw:text-tertiary') : 'tw:text-on-surface'}
           aside={s.n ? `Win avg: ${fmtR(s.avgWinR)}` : 'Win avg: —'}
+          note={s.n > 1 ? <ConfidenceLine confidence={s.confidence} range="avg" format={signedR} /> : null}
           bar={<div className="tw:h-full tw:bg-primary-container" style={{ width: `${Math.min(100, Math.max(0, s.avgR / 3) * 100)}%` }} title="Average R against a 3R ceiling" />} />
         <Kpi label="Simulated Return" icon="monetization_on" value={s.n ? fmtR(s.totalR).replace('R', ' R') : dash} valueCls={s.n ? tone(s.totalR) : 'tw:text-on-surface'}
           aside={s.n ? `${fmtUSD(s.totalPnl)} hyp.` : '$0.00 hyp.'} asideCls={tone(s.totalPnl)}

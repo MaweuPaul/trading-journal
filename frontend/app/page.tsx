@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import { AFTER_SESSION, PAGE_PURPOSE } from '@/components/pagePurpose';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -11,6 +13,8 @@ import {
   RefreshCw, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle, Plus, X
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
+import { ConfidenceLine, LikelyRange, SampleTag, signedR, signedUSD } from '@/components/Confidence';
+import type { Confidence } from '@/components/confidenceMath';
 
 const API = '/api';
 
@@ -36,6 +40,7 @@ interface Stats {
   tradesWithRiskData?: number;
   mixedAccounts?: boolean;
   accountKeys?: string[];
+  confidence?: Confidence;
 }
 
 interface BalanceData { balance: number; asOf: string | null; mixedAccounts?: boolean }
@@ -483,6 +488,16 @@ export default function DashboardPage() {
     },
   ];
 
+  // How far to trust each headline number, given how many trades it rests on.
+  const conf = s.confidence;
+  const confidenceByCard: Record<string, React.ReactNode> = conf ? {
+    'Net P&L': <SampleTag n={conf.n} level={conf.level} />,
+    'Win Rate': <ConfidenceLine confidence={conf} range="winRate" />,
+    'Trade Expectancy': <ConfidenceLine confidence={conf} range="avg" format={signedUSD} />,
+    'Avg R': conf.avgRRange ? <LikelyRange range={conf.avgRRange} format={signedR} /> : null,
+    'Profit Factor': <SampleTag n={conf.n} level={conf.level} />,
+  } : {};
+
   const cashSummary = cashFlow?.summary || {
     deposits: 0,
     withdrawals: 0,
@@ -498,7 +513,18 @@ export default function DashboardPage() {
         <div className="page-header-inner">
           <div>
             <h2>Dashboard</h2>
-            <p>Live performance synced from your connected MT5 account</p>
+            <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/'].question}</strong> {PAGE_PURPOSE['/'].detail}</p>
+            <nav aria-label="After a trading session" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11.5 }}>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', fontSize: 10 }}>After a session</span>
+              {AFTER_SESSION.map((step, i) => (
+                <span key={step.href} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {i > 0 && <span aria-hidden="true" style={{ color: 'var(--text-muted)' }}>→</span>}
+                  {step.href === '/'
+                    ? <span style={{ fontWeight: 700, color: 'var(--text-primary)' }} title={PAGE_PURPOSE['/'].question}>{i + 1}. {step.label}</span>
+                    : <Link href={step.href} title={PAGE_PURPOSE[step.href]?.question} style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{i + 1}. {step.label}</Link>}
+                </span>
+              ))}
+            </nav>
           </div>
 
           <div className="dashboard-actions">
@@ -604,6 +630,7 @@ export default function DashboardPage() {
             <div className="stat-label">{c.label}</div>
             <div className={`stat-value ${c.cls}`}>{c.value}</div>
             <div className="stat-sub">{c.sub}</div>
+            {confidenceByCard[c.label] && <div style={{ marginTop: 6 }}>{confidenceByCard[c.label]}</div>}
           </div>
         ))}
       </div>

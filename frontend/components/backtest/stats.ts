@@ -1,6 +1,7 @@
 import { BacktestTrade, tagsOf } from './data';
+import { confidenceFor, type Confidence } from '../confidenceMath';
 
-export interface GroupStats { key: string; trades: number; winRate: number; avgR: number; totalR: number }
+export interface GroupStats { key: string; trades: number; winRate: number; avgR: number; totalR: number; confidence: Confidence }
 export interface CurvePoint { index: number; cumulativeR: number; drawdownR: number; benchmarkR: number; trade: BacktestTrade }
 
 /** Seconds since epoch for when a trade happened (quick logs only have createdAt). */
@@ -17,16 +18,16 @@ function longOnlyR(t: BacktestTrade) {
 }
 
 function groupBy(trades: BacktestTrade[], keysOf: (t: BacktestTrade) => string[]): GroupStats[] {
-  const map = new Map<string, { trades: number; wins: number; totalR: number }>();
+  const map = new Map<string, { trades: number; wins: number; totalR: number; rs: number[] }>();
   for (const t of trades) {
     for (const key of keysOf(t)) {
-      const e = map.get(key) || { trades: 0, wins: 0, totalR: 0 };
-      e.trades += 1; if (t.outcome === 'win') e.wins += 1; e.totalR += t.rMultiple;
+      const e = map.get(key) || { trades: 0, wins: 0, totalR: 0, rs: [] };
+      e.trades += 1; if (t.outcome === 'win') e.wins += 1; e.totalR += t.rMultiple; e.rs.push(t.rMultiple);
       map.set(key, e);
     }
   }
   return Array.from(map.entries())
-    .map(([key, v]) => ({ key, trades: v.trades, winRate: (v.wins / v.trades) * 100, avgR: v.totalR / v.trades, totalR: v.totalR }))
+    .map(([key, v]) => ({ key, trades: v.trades, winRate: (v.wins / v.trades) * 100, avgR: v.totalR / v.trades, totalR: v.totalR, confidence: confidenceFor(v.trades, v.wins, v.rs) }))
     .sort((a, b) => b.totalR - a.totalR);
 }
 
@@ -94,6 +95,8 @@ export function computeStats(input: BacktestTrade[]) {
   }
 
   return {
+    // Sample-size level plus 95% ranges for win rate and average R (avgRange is in R here).
+    confidence: confidenceFor(n, wins.length, trades.map(t => t.rMultiple)),
     n, curve, winRate, wins: wins.length, losses: losses.length,
     avgR, avgWinR, avgLossR, avgWinUSD, avgLossUSD, profitFactor, best, worst,
     totalR: cumulativeR, peakR, totalPnl, maxDrawdownR, maxDrawdownIndex, benchmarkR,

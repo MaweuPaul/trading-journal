@@ -1,5 +1,8 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
+import { PAGE_PURPOSE } from '@/components/pagePurpose';
+import { ConfidenceLine, LikelyRange, signedUSD } from '@/components/Confidence';
+import type { Confidence } from '@/components/confidenceMath';
 import { useRouter } from 'next/navigation';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -23,6 +26,7 @@ interface EquityPoint {
 }
 
 interface PerfStats {
+  confidence?: Confidence;
   totalTrades: number;
   winRate: number;
   profitFactor: number;
@@ -104,6 +108,37 @@ function DrawdownTooltip({ active, payload }: any) {
   );
 }
 
+/**
+ * The edge verdict, judged on the 95% range for expectancy rather than on
+ * profit factor alone: a high profit factor over a handful of trades says
+ * little, so "positive edge" needs the whole likely range above zero.
+ */
+function edgeVerdict(s: PerfStats | null): { label: string; summary: string } {
+  if (!s) return { label: '', summary: '' };
+  const c = s.confidence;
+  if (c && c.level === 'insufficient') {
+    return { label: 'Too few trades to call', summary: `⏳ ${c.n} trade${c.n === 1 ? '' : 's'} is too few to tell skill from luck. Keep trading your plan; a verdict starts to mean something from about 30 trades.` };
+  }
+  const r = c?.avgRange;
+  const range = r ? `${signedUSD(r[0])} to ${signedUSD(r[1])}` : '';
+  if (s.profitFactor >= 1) {
+    if (r && r[0] > 0) return { label: 'Positive edge ✓', summary: `✅ Positive edge: even the low end of the likely range per trade (${range}) is above zero. Keep executing the system.` };
+    return {
+      label: s.profitFactor >= 1.5 ? 'Looks positive, not proven yet' : 'Break-even edge',
+      summary: r
+        ? `⚠️ Profitable so far, but the likely range per trade (${range}) still includes losing money, so this could still be luck. More trades will tell; meanwhile keep cutting losses and letting winners run.`
+        : '⚠️ Your edge is marginal. Focus on cutting losses and letting winners run.',
+    };
+  }
+  if (r && r[1] < 0) return { label: 'Losing system ✗', summary: `❌ Unprofitable: even the high end of the likely range per trade (${range}) is below zero. Review your entries and risk management.` };
+  return {
+    label: 'Losing so far',
+    summary: r
+      ? `❌ Losing so far, though the likely range per trade (${range}) still reaches a profit. Review your entries and risk management before reading too much into it.`
+      : '❌ Your system is currently unprofitable. Review your entries and risk management.',
+  };
+}
+
 const RANGES = [
   { label: 'All Time', value: 'all' },
   { label: '7 Days',   value: '7d'  },
@@ -168,6 +203,7 @@ export default function PerformancePage() {
 
   const hasCurve = chartCurve.length > 0;
   const isGrowth = stats && stats.netPnL >= 0;
+  const edge = edgeVerdict(stats);
 
   return (
     <div>
@@ -176,7 +212,7 @@ export default function PerformancePage() {
         <div className="page-header-inner">
           <div>
             <h2>Performance</h2>
-            <p>Equity curve, drawdown analysis & risk metrics</p>
+            <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/performance'].question}</strong> {PAGE_PURPOSE['/performance'].detail}</p>
           </div>
 
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -291,8 +327,9 @@ export default function PerformancePage() {
                 {stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}
               </div>
               <div className="stat-sub">
-                {stats.profitFactor >= 1.5 ? 'Strong edge ✓' : stats.profitFactor >= 1 ? 'Break-even edge' : 'Losing system ✗'}
+                {edge.label}
               </div>
+              <div style={{ marginTop: 6 }}><ConfidenceLine confidence={stats.confidence} /></div>
             </div>
 
             {/* Expectancy */}
@@ -303,6 +340,7 @@ export default function PerformancePage() {
                 {stats.expectancy >= 0 ? '+' : ''}{fmt(stats.expectancy)}
               </div>
               <div className="stat-sub">Avg $ made per trade</div>
+              <div style={{ marginTop: 6 }}><ConfidenceLine confidence={stats.confidence} range="avg" format={signedUSD} /></div>
             </div>
 
             {/* Max Drawdown */}
@@ -467,7 +505,7 @@ export default function PerformancePage() {
                 {
                   label: 'Win Rate',
                   value: `${stats.winRate.toFixed(1)}%`,
-                  sub: `${stats.totalTrades} trades`,
+                  sub: stats.confidence?.winRateRange ? <>{stats.totalTrades} trades · <LikelyRange range={stats.confidence.winRateRange} format={v => `${v.toFixed(0)}%`} /></> : `${stats.totalTrades} trades`,
                   good: stats.winRate >= 50,
                   icon: <TrendingUp size={14} />,
                 },
@@ -574,11 +612,7 @@ export default function PerformancePage() {
                       {stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}
                     </strong> — for every $1 lost you make <strong>${stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}</strong>.{' '}
                     Your system expectancy is <strong style={{ color: stats.expectancy >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(stats.expectancy)}</strong> per trade.{' '}
-                    {stats.profitFactor >= 1.5
-                      ? '✅ You have a statistically positive edge. Keep executing the system.'
-                      : stats.profitFactor >= 1
-                      ? '⚠️ Your edge is marginal. Focus on cutting losses and letting winners run.'
-                      : '❌ Your system is currently unprofitable. Review your entries and risk management.'}
+                    {edge.summary}
                   </div>
                 </div>
               </div>

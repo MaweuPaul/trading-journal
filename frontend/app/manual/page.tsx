@@ -296,7 +296,7 @@ export default function ManualPage() {
               <li><b>Analysis vs. Execution Grade Gap</b> <span className="muted">— flags when your analysis quality outpaces your execution.</span></li>
               <li><b>Manual Intervention</b> <span className="muted">— compares outcomes on trades where you touched SL/TP mid-trade vs. left them alone.</span></li>
               <li><b>Demo vs. Live Comparison</b>, <b>Strategy Versions</b>, and <b>Lifecycle Stage Compliance</b>.</li>
-              <li><b>What Works — Rule Evidence</b> <span className="muted">— win rate per specific playbook answer, tagged strong / developing / insufficient by sample size.</span></li>
+              <li><b>What Works — Rule Evidence</b> <span className="muted">— win rate per specific playbook answer, with its sample size and a likely range, so two answers whose ranges overlap aren&apos;t mistaken for a real difference.</span></li>
               <li><b>Confidence vs. Actual Win Rate</b> <span className="muted">— tests whether your gut-feel confidence rating actually predicts outcomes.</span></li>
             </ul>
             <Callout icon="Note">Almost every panel here only appears once you&apos;ve logged the field it depends on. This page rewards thorough journaling more than any other.</Callout>
@@ -572,7 +572,8 @@ export default function ManualPage() {
                   <tr><td className="term">Continuation</td><td>Price breaks a level and keeps going in that direction.</td></tr>
                   <tr><td className="term">Plan Adherence</td><td>% of your own execution checklist you actually followed on a trade.</td></tr>
                   <tr><td className="term">Analysis vs. Execution Grade</td><td>Two separate A–F scores — how good your read was, versus how well you carried it out.</td></tr>
-                  <tr><td className="term">Sample status</td><td>Edge Coach tags evidence as strong / developing / insufficient based on sample size.</td></tr>
+                  <tr><td className="term">Sample tag</td><td>How many trades a number rests on, everywhere in the app: <b>too few to judge</b> (under 10), <b>early</b> (10–29), <b>developing</b> (30–99), <b>reliable</b> (100+). Rows with too few trades are dimmed.</td></tr>
+                  <tr><td className="term">Likely range</td><td>The 95% range for a win rate or average result: given this many trades, where the true value most likely lies. 3 wins in 4 trades is &quot;likely 30% to 95%&quot;; 174 in 300 is &quot;likely 52% to 63%&quot;. A &quot;positive edge&quot; on Performance needs the whole expectancy range above zero.</td></tr>
                   <tr><td className="term">Investor password</td><td>A password that only ever grants read access — shown once, never retrievable again.</td></tr>
                   <tr><td className="term">Playbook version</td><td>An immutable snapshot of a strategy&apos;s rules, created every time you publish.</td></tr>
                 </tbody>

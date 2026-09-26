@@ -1,5 +1,6 @@
 'use client';
 import { Suspense, useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react';
+import { PAGE_PURPOSE } from '@/components/pagePurpose';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
@@ -709,7 +710,7 @@ function TradesPageContent() {
         <div className="page-header-inner">
           <div>
             <h2>Trades</h2>
-            <p>{total.toLocaleString()} closed positions synced from MT5</p>
+            <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/trades'].question}</strong> {PAGE_PURPOSE['/trades'].detail} {total.toLocaleString()} closed positions synced.</p>
           </div>
           <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
             <Plus size={14} />

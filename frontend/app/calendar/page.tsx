@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useEffect, useState, useCallback } from 'react';
+import { PAGE_PURPOSE } from '@/components/pagePurpose';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Info,
@@ -309,7 +310,7 @@ export default function CalendarPage() {
         <div className="page-header-inner">
           <div>
             <h2>Daily Calendar</h2>
-            <p>Monthly trading P&L calendar grid with dynamic green/red indicators</p>
+            <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/calendar'].question}</strong> {PAGE_PURPOSE['/calendar'].detail}</p>
           </div>
         </div>
       </div>

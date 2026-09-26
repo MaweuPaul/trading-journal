@@ -20,6 +20,7 @@ const {
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
 const { calculateMissedProfit, summarizeRMultiples, realizedRMultiple } = require('../lib/tradeMath');
+const { confidenceFor } = require('../lib/confidence');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
@@ -1779,6 +1780,7 @@ router.get('/performance', auth, ownerOnly, async (req, res) => {
     res.json({
       equityCurve,
       stats: {
+        confidence:     confidenceFor(trades.length, wins.length, trades.map(netAmount), trades.map(realizedRMultiple).filter(r => r !== null)),
         totalTrades:    trades.length,
         winRate:        parseFloat(winRate.toFixed(1)),
         profitFactor:   parseFloat(profitFactor.toFixed(2)),
@@ -3104,7 +3106,31 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
 
     const rStats = summarizeRMultiples(trades);
 
+    // How far to trust each number: sample-size level plus 95% ranges for
+    // win rate and average result, for the headline and every breakdown row.
+    const confidenceOf = list => confidenceFor(
+      list.length,
+      list.filter(t => netAmount(t) > 0).length,
+      list.map(netAmount),
+      list.map(realizedRMultiple).filter(r => r !== null),
+    );
+    const sessionOf = t => {
+      const h = new Date(t.closeTime).getUTCHours();
+      return bySessionMap[h < 8 ? 'Tokyo' : h < 13 ? 'London' : h < 16 ? 'Overlap' : h < 21 ? 'NewYork' : 'Pacific'].session;
+    };
+    const monthOf = t => { const d = new Date(t.closeTime); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+    const withConfidence = (rows, rowKey, keysOf) => {
+      const buckets = new Map();
+      for (const t of trades) for (const key of [].concat(keysOf(t))) {
+        if (key == null || key === '') continue;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(t);
+      }
+      return rows.map(row => ({ ...row, confidence: confidenceOf(buckets.get(row[rowKey]) || []) }));
+    };
+
     res.json({
+      confidence: confidenceOf(trades),
       totalTrades: trades.length,
       winRate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
       profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0,
@@ -3115,9 +3141,9 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       currentDrawdown,
       maxDrawdownPct,
       equityCurve,
-      bySymbol,
-      byDayOfWeek,
-      byMonth,
+      bySymbol: withConfidence(bySymbol, 'symbol', t => t.symbol),
+      byDayOfWeek: withConfidence(byDayOfWeek, 'day', t => days[new Date(t.closeTime).getDay()]),
+      byMonth: withConfidence(byMonth, 'month', monthOf),
       avgDurationMin,
       avgWinUSD,
       avgLossUSD,
@@ -3126,11 +3152,11 @@ router.get('/stats', auth, ownerOnly, async (req, res) => {
       maxWinStreak,
       maxLossStreak,
       sharpeRatio,
-      bySession,
-      byDirection,
-      byTag,
-      byEmotion,
-      byGrade,
+      bySession: withConfidence(bySession, 'session', sessionOf),
+      byDirection: withConfidence(byDirection, 'direction', t => t.direction),
+      byTag: withConfidence(byTag, 'tag', t => (t.tags || []).map(tag => tag.trim())),
+      byEmotion: withConfidence(byEmotion, 'emotion', t => t.emotion),
+      byGrade: withConfidence(byGrade, 'grade', t => t.grade),
       globalComplianceRate,
       tradesWithPlaybookData,
       mixedAccounts,
@@ -3770,10 +3796,12 @@ router.get('/coach', auth, ownerOnly, async (req, res) => {
                 tradeCount: 0,
                 wins: 0,
                 totalPnL: 0,
+                pnls: [],
               };
             }
             ruleMap[key].tradeCount++;
             ruleMap[key].totalPnL += Number(trade.pnlUSD || 0);
+            ruleMap[key].pnls.push(Number(trade.pnlUSD || 0));
             if (trade.pnlUSD > 0) ruleMap[key].wins++;
           }
         }
@@ -3784,11 +3812,15 @@ router.get('/coach', auth, ownerOnly, async (req, res) => {
       winRate: item.tradeCount ? parseFloat(((item.wins / item.tradeCount) * 100).toFixed(1)) : 0,
       avgPnL: item.tradeCount ? parseFloat((item.totalPnL / item.tradeCount).toFixed(2)) : 0,
     })).sort((a, b) => b.avgPnL - a.avgPnL);
-    const ruleEffectiveness = Object.values(ruleMap).map(item => ({
+    // Evidence strength uses the app-wide sample scale (lib/confidence.js):
+    // strong = 30+ trades, developing = 10-29, insufficient = under 10.
+    const sampleStatusOf = n => (n >= 30 ? 'strong' : n >= 10 ? 'developing' : 'insufficient');
+    const ruleEffectiveness = Object.values(ruleMap).map(({ pnls, ...item }) => ({
       ...item,
       winRate: item.tradeCount ? parseFloat(((item.wins / item.tradeCount) * 100).toFixed(1)) : 0,
       avgPnL: item.tradeCount ? parseFloat((item.totalPnL / item.tradeCount).toFixed(2)) : 0,
-      sampleStatus: item.tradeCount >= 20 ? 'strong' : item.tradeCount >= 5 ? 'developing' : 'insufficient',
+      sampleStatus: sampleStatusOf(item.tradeCount),
+      confidence: confidenceFor(item.tradeCount, item.wins, pnls),
     })).sort((a, b) => b.tradeCount - a.tradeCount);
     const stageCompliance = Object.values(stageMap).map(item => ({
       ...item,
@@ -3804,7 +3836,7 @@ router.get('/coach', auth, ownerOnly, async (req, res) => {
       averageWinningValue: item.winningCount ? parseFloat((item.winningValueTotal / item.winningCount).toFixed(2)) : null,
       averageLosingValue: item.losingCount ? parseFloat((item.losingValueTotal / item.losingCount).toFixed(2)) : null,
       avgPnL: parseFloat((item.totalPnL / item.tradeCount).toFixed(2)),
-      sampleStatus: item.tradeCount >= 20 ? 'strong' : item.tradeCount >= 5 ? 'developing' : 'insufficient',
+      sampleStatus: sampleStatusOf(item.tradeCount),
     })).sort((a, b) => b.tradeCount - a.tradeCount);
 
     res.json({

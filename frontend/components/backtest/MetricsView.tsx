@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, fmtR, fmtUSD, tagsOf, useBacktest } from './data';
 import { computeStats, profitFactorGrade, sqnGrade, GroupStats } from './stats';
+import { ConfidenceLine, LikelyRange, SampleTag, signedR, thinRowStyle } from '../Confidence';
 
 type Range = 'all' | '30' | '90' | 'ytd';
 const RANGE_LABEL: Record<Range, string> = { all: 'All Time', '30': 'Last 30 Days', '90': 'Last 90 Days', ytd: 'Year to Date' };
@@ -274,7 +275,7 @@ export default function MetricsView() {
           <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">Profit Factor</span>
-              <span className={`tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded ${s.profitFactor >= 1 ? 'tw:bg-secondary/15 tw:text-secondary' : 'tw:bg-error/15 tw:text-error'}`}>{profitFactorGrade(s.profitFactor)}</span>
+              <span className={`tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded ${s.profitFactor >= 1 ? 'tw:bg-secondary/15 tw:text-secondary' : 'tw:bg-error/15 tw:text-error'}`}>{s.n >= 30 ? profitFactorGrade(s.profitFactor) : 'Needs 30+ trades'}</span>
             </div>
             <div className="tw:mt-2 tw:flex tw:items-baseline tw:gap-1">
               <span className={`tw:font-mono-metric-lg tw:text-mono-metric-lg tw:font-bold ${s.profitFactor >= 1 ? 'tw:text-secondary' : 'tw:text-error'}`}>{fmtRatio(s.profitFactor)}</span>
@@ -290,15 +291,16 @@ export default function MetricsView() {
               <span className={`tw:font-mono-metric-lg tw:text-mono-metric-lg tw:font-bold ${tone(s.avgR)}`}>{fmtR(s.avgR)}</span>
               <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">/trade</span>
             </div>
+            {s.n > 1 && <div className="tw:mt-1"><ConfidenceLine confidence={s.confidence} range="avg" format={signedR} /></div>}
           </div>
           <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:col-span-2 tw:sm:col-span-1 tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
             <div className="tw:flex tw:items-center tw:justify-between">
               <span className="tw:font-label-caps tw:text-label-caps tw:text-on-surface-variant tw:uppercase">SQN Rating</span>
-              <span className="tw:bg-primary/20 tw:text-primary tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded">{sqn.badge}</span>
+              <span className="tw:bg-primary/20 tw:text-primary tw:text-[10px] tw:font-bold tw:px-1.5 tw:py-0.5 tw:rounded" title="SQN grades are only meaningful from about 30 trades">{s.n >= 30 ? sqn.badge : 'Needs 30+ trades'}</span>
             </div>
             <div className="tw:mt-2 tw:flex tw:items-baseline tw:gap-1">
               <span className="tw:font-mono-metric-lg tw:text-mono-metric-lg tw:text-primary tw:font-bold">{s.sqn.toFixed(2)}</span>
-              <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">{sqn.caption}</span>
+              <span className="tw:text-on-surface-variant tw:text-[11px] tw:font-mono-metric-md">{s.n >= 30 ? sqn.caption : `${s.n} trades so far`}</span>
             </div>
           </div>
           <div className="tw:bg-surface-container tw:border tw:border-surface-container-highest tw:rounded-xl tw:p-space-md tw:flex tw:flex-col tw:justify-between tw:shadow-sm tw:transition-shadow tw:duration-150 tw:hover:shadow-md">
@@ -419,15 +421,18 @@ function BreakdownTable({ rows, kind }: { rows: GroupStats[]; kind: 'strategy' |
         <span role="columnheader" className="tw:col-span-3 tw:text-right">Total R</span>
       </div>
       {rows.map((r, i) => (
-        <div key={r.key} role="row" className="tw:bg-surface-container-high tw:rounded tw:p-space-sm tw:grid tw:grid-cols-12 tw:items-center tw:hover:bg-surface-bright tw:transition-colors">
+        <div key={r.key} role="row" style={thinRowStyle(r.confidence)} className="tw:bg-surface-container-high tw:rounded tw:p-space-sm tw:grid tw:grid-cols-12 tw:items-center tw:hover:bg-surface-bright tw:transition-colors">
           <div role="cell" className="tw:col-span-5 tw:flex tw:flex-col tw:min-w-0 tw:pr-1">
             {kind === 'symbol'
               ? <div className="tw:flex tw:items-center tw:gap-1"><span className={`tw:w-1.5 tw:h-1.5 tw:rounded-full ${SYMBOL_DOTS[i % SYMBOL_DOTS.length]}`} /><span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold tw:text-on-surface">{r.key}</span></div>
               : <span className="tw:font-headline-md tw:text-body-md tw:font-semibold tw:text-on-surface tw:truncate">{r.key}</span>}
             <span className={`tw:font-mono-metric-md tw:text-[10px] ${tone(r.avgR)}`}>Avg: {fmtR(r.avgR)}</span>
           </div>
-          <div role="cell" className="tw:col-span-2 tw:text-center tw:font-mono-metric-md tw:text-mono-metric-md tw:text-on-surface">{r.trades}</div>
-          <div role="cell" className={`tw:col-span-2 tw:text-center tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold ${r.winRate > 50 ? 'tw:text-secondary' : r.winRate < 50 ? 'tw:text-error' : 'tw:text-on-surface-variant'}`}>{r.winRate.toFixed(1)}%</div>
+          <div role="cell" className="tw:col-span-2 tw:flex tw:justify-center"><SampleTag n={r.trades} level={r.confidence.level} style={{ fontSize: 9.5, padding: '0 5px' }} /></div>
+          <div role="cell" className={`tw:col-span-2 tw:text-center tw:font-mono-metric-md tw:text-mono-metric-md tw:font-semibold ${r.winRate > 50 ? 'tw:text-secondary' : r.winRate < 50 ? 'tw:text-error' : 'tw:text-on-surface-variant'}`}>
+            {r.winRate.toFixed(1)}%
+            <div className="tw:font-normal"><LikelyRange range={r.confidence.winRateRange} format={v => `${v.toFixed(0)}%`} style={{ fontSize: 9.5 }} /></div>
+          </div>
           <div role="cell" className={`tw:col-span-3 tw:text-right tw:font-mono-metric-md tw:text-mono-metric-md tw:font-bold ${tone(r.totalR)}`}>{fmtR(r.totalR, 1)}</div>
         </div>
       ))}

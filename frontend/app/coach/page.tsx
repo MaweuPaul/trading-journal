@@ -1,5 +1,8 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
+import { PAGE_PURPOSE } from '@/components/pagePurpose';
+import { LikelyRange, SampleTag, signedUSD, thinRowStyle } from '@/components/Confidence';
+import { sampleLevel, type Confidence } from '@/components/confidenceMath';
 import {
   Brain, TrendingDown, TrendingUp, AlertTriangle, CheckCircle,
   BarChart2, RefreshCw, ArrowRight, Zap, Target, Shield,
@@ -56,7 +59,7 @@ interface CoachData {
   };
   setupAnalytics: { setup: string; tradeCount: number; winRate: number; totalPnL: number; avgPnL: number; avgPlannedRR: number | null }[];
   playbookAnalytics: { playbookId: string; playbookName: string; versionId: string; versionNumber: number; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number }[];
-  ruleEffectiveness: { ruleId: string; ruleLabel: string; blockName: string; inputType: string; answer: string; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient' }[];
+  ruleEffectiveness: { ruleId: string; ruleLabel: string; blockName: string; inputType: string; answer: string; tradeCount: number; wins: number; totalPnL: number; winRate: number; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient'; confidence?: Confidence }[];
   stageCompliance: { playbookName: string; versionNumber: number; category: string; stageName: string; requiredFieldCount: number; tradeCount: number; completeCount: number; incompleteCount: number; complianceRate: number; completeWinRate: number | null; incompleteWinRate: number | null; completeAvgPnL: number | null; incompleteAvgPnL: number | null }[];
   numericFieldAnalytics: { playbookName: string; versionNumber: number; ruleId: string; ruleLabel: string; blockName: string; inputType: string; unit: string; tradeCount: number; averageValue: number; averageWinningValue: number | null; averageLosingValue: number | null; avgPnL: number; sampleStatus: 'strong' | 'developing' | 'insufficient' }[];
 }
@@ -166,7 +169,7 @@ export default function CoachPage() {
             <div>
               <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Edge Coach</h1>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-                What is preventing you from trading your edge consistently?
+                <strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/coach'].question}</strong> {PAGE_PURPOSE['/coach'].detail}
               </p>
             </div>
           </div>
@@ -564,7 +567,7 @@ export default function CoachPage() {
                   <tbody>{data!.numericFieldAnalytics.slice(0, 30).map(item => (
                     <tr key={`${item.playbookName}-${item.versionNumber}-${item.ruleId}`} style={{ borderTop: '1px solid var(--border)' }}>
                       <td style={{ padding: '10px' }}><div style={{ fontWeight: 700 }}>{item.ruleLabel}</div><div style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{item.blockName} · {item.playbookName} v{item.versionNumber}</div></td>
-                      <td><span style={{ color: item.sampleStatus === 'strong' ? '#10b981' : item.sampleStatus === 'developing' ? '#f59e0b' : 'var(--text-muted)' }}>{item.sampleStatus}</span><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{item.tradeCount} trades</div></td>
+                      <td><SampleTag n={item.tradeCount} level={sampleLevel(item.tradeCount)} /></td>
                       <td><strong>{item.averageValue}{item.unit}</strong></td>
                       <td><strong style={{ color: '#10b981' }}>{item.averageWinningValue == null ? '—' : `${item.averageWinningValue}${item.unit}`}</strong></td>
                       <td><strong style={{ color: '#ef4444' }}>{item.averageLosingValue == null ? '—' : `${item.averageLosingValue}${item.unit}`}</strong></td>
@@ -576,18 +579,17 @@ export default function CoachPage() {
 
             {data!.ruleEffectiveness.length > 0 && (
               <SectionCard title="What Works — Rule Evidence" icon={<Target size={15} />} accent="#10b981" help="Compares trade outcomes for each structured playbook answer. Larger samples are more dependable than a few isolated trades.">
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Outcomes are grouped by the exact answer saved on each immutable trade snapshot. Treat small samples as observations, not conclusions.</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Outcomes are grouped by the exact answer saved on each immutable trade snapshot. Treat small samples as observations, not conclusions: the &ldquo;likely&rdquo; ranges show how far each number could be off, and when two answers&apos; ranges overlap, the data can&apos;t yet tell them apart.</p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '8px 10px' }}>Rule / answer</th><th>Sample</th><th>Trades</th><th>Win rate</th><th>Avg P&L</th></tr></thead>
+                    <thead><tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}><th style={{ padding: '8px 10px' }}>Rule / answer</th><th>Sample</th><th>Win rate</th><th>Avg P&L</th></tr></thead>
                     <tbody>
                       {data!.ruleEffectiveness.slice(0, 30).map(item => (
-                        <tr key={`${item.ruleId}-${item.answer}`} style={{ borderTop: '1px solid var(--border)' }}>
+                        <tr key={`${item.ruleId}-${item.answer}`} style={{ borderTop: '1px solid var(--border)', ...thinRowStyle(item.confidence) }}>
                           <td style={{ padding: '10px' }}><div style={{ fontWeight: 700 }}>{item.ruleLabel}</div><div style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{item.blockName} · Answer: <strong style={{ color: 'var(--text-primary)' }}>{item.answer}</strong></div></td>
-                          <td><span style={{ padding: '3px 7px', borderRadius: 10, background: item.sampleStatus === 'strong' ? '#10b98120' : item.sampleStatus === 'developing' ? '#f59e0b20' : 'var(--bg-surface)', color: item.sampleStatus === 'strong' ? '#10b981' : item.sampleStatus === 'developing' ? '#f59e0b' : 'var(--text-muted)', fontSize: 10 }}>{item.sampleStatus}</span></td>
-                          <td style={{ fontFamily: 'var(--font-mono)' }}>{item.tradeCount}</td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{item.winRate}%</td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: item.avgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.avgPnL.toFixed(2)}</td>
+                          <td><SampleTag n={item.tradeCount} level={sampleLevel(item.tradeCount)} /></td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{item.winRate}%<div style={{ fontWeight: 400 }}><LikelyRange range={item.confidence?.winRateRange} format={v => `${v.toFixed(0)}%`} style={{ fontSize: 10 }} /></div></td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: item.avgPnL >= 0 ? '#10b981' : '#ef4444' }}>${item.avgPnL.toFixed(2)}<div style={{ fontWeight: 400 }}><LikelyRange range={item.confidence?.avgRange} format={signedUSD} style={{ fontSize: 10 }} /></div></td>
                         </tr>
                       ))}
                     </tbody>

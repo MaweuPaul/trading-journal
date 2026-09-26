@@ -56,7 +56,7 @@ export function fmtDate(iso: string | number) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export interface StrategyInfo { name: string; description: string; trades: number; winRate: number; avgR: number; }
+export interface StrategyInfo { _id?: string; name: string; description: string; trades: number; winRate: number; avgR: number; }
 
 interface BacktestData {
   trades: BacktestTrade[];
@@ -69,6 +69,8 @@ interface BacktestData {
   strategies: string[];
   strategyInfo: StrategyInfo[];
   createStrategy: (name: string, description?: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Deletes the strategy definition; logged backtests keep their tag. */
+  removeStrategy: (id: string) => Promise<{ ok: boolean; error?: string }>;
   simBalance: number;
   activeSymbol: string;
   setActiveSymbol: (symbol: string) => void;
@@ -180,13 +182,25 @@ export function BacktestProvider({ children }: { children: React.ReactNode }) {
     }
   }, [reloadStrategies]);
 
+  const removeStrategy = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/backtest-strategies/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data.error || 'Could not delete strategy' };
+      await reloadStrategies();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Could not delete strategy' };
+    }
+  }, [reloadStrategies]);
+
   const value = useMemo<BacktestData>(() => {
     // Merge backend-defined strategies with any ad-hoc tags used on trades
     // before this feature existed, so older data keeps showing up.
     const strategies = Array.from(new Set([...strategyInfo.map(s => s.name), ...trades.flatMap(tagsOf)])).sort((a, b) => a.localeCompare(b));
     const simBalance = SIM_STARTING_BALANCE + trades.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    return { trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategies, strategyInfo, createStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
-  }, [trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategyInfo, createStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
+    return { trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategies, strategyInfo, createStrategy, removeStrategy, simBalance, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy };
+  }, [trades, loading, error, reload, removeTrade, addTrade, updateTrade, strategyInfo, createStrategy, removeStrategy, activeSymbol, setActiveSymbol, currentStrategy, setCurrentStrategy]);
 
   return <BacktestContext.Provider value={value}>{children}</BacktestContext.Provider>;
 }

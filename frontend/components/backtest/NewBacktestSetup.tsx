@@ -1,11 +1,11 @@
 'use client';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon } from './BacktestShell';
 import { authHeaders, useBacktest } from './data';
 import { symbolDescription } from './indicators';
-import { CHART_INTERVALS, INTERVAL_DAYS, LOOKBACK_BARS, maxRangeMs, suggestInterval } from '../backtest-tools/types';
+import { CHART_INTERVALS, INTERVAL_DAYS, LOOKBACK_BARS, suggestInterval } from '../backtest-tools/types';
 
 const QUICK = ['XAUUSD', 'NAS100', 'EURUSD', 'BTCUSD', 'SPX500'];
 const PRESETS = [{ label: 'Last week', days: 7 }, { label: 'Last month', days: 30 }, { label: 'Last 3 months', days: 90 }] as const;
@@ -157,7 +157,8 @@ export default function NewBacktestSetup() {
   const [to, setTo] = useState(iso(0));
   const [custom, setCustom] = useState(false);
   const [pickedInterval, setPickedInterval] = useState<string | null>(null);
-  const [strategy, setStrategy] = useState(currentStrategy);
+  const presetStrategy = useSearchParams().get('strategy');
+  const [strategy, setStrategy] = useState(presetStrategy ?? currentStrategy);
   // Non-null while the trader is naming a brand-new strategy inline.
   const [newStrategy, setNewStrategy] = useState<string | null>(null);
   const [newStrategyIdea, setNewStrategyIdea] = useState('');
@@ -179,8 +180,8 @@ export default function NewBacktestSetup() {
   const fromMs = new Date(from).getTime();
   const toMs = new Date(to).getTime() + DAY;
   const valid = Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs;
-  const trimmed = valid && toMs - fromMs > maxRangeMs(interval);
-  const replayMs = trimmed ? maxRangeMs(interval) : toMs - fromMs;
+  // Candles stream in as the replay advances, so any range length works.
+  const replayMs = toMs - fromMs;
   // Markets trade roughly 5 of 7 days.
   const estBars = valid ? Math.round((replayMs / DAY / INTERVAL_DAYS[interval]) * (5 / 7)) : 0;
   const preset = custom ? undefined : PRESETS.find(p => to === iso(0) && from === iso(-p.days));
@@ -275,9 +276,8 @@ export default function NewBacktestSetup() {
         </div>
 
         {/* Plain summary */}
-        <p className={`tw:text-body-sm tw:rounded tw:px-3 tw:py-2 tw:border ${trimmed ? 'tw:border-error/40 tw:bg-error/10 tw:text-error' : 'tw:border-surface-container-highest tw:bg-surface-container-low tw:text-on-surface-variant'}`}>
+        <p className="tw:text-body-sm tw:rounded tw:px-3 tw:py-2 tw:border tw:border-surface-container-highest tw:bg-surface-container-low tw:text-on-surface-variant">
           {!valid ? 'Pick a start date before the end date.'
-            : trimmed ? `${tfLabel(interval)} can only cover about ${Math.floor(maxRangeMs(interval) / DAY)} days, so the replay will start on ${new Date(toMs - replayMs).toISOString().slice(0, 10)}. Pick a higher timeframe to cover the whole range.`
             : `About ${estBars.toLocaleString()} ${tfLabel(interval)} candles to step through, plus the ${LOOKBACK_BARS} candles before the start shown for context.`}
         </p>
 

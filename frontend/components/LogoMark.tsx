@@ -1,11 +1,11 @@
-// TradeJournal mark: three rising candlesticks on a blue tile.
+// TradeJournal mark: three rising candlesticks on a teal tile.
 export default function LogoMark({ size = 36 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 36 36" role="img" aria-label="TradeJournal" className="logo-mark">
       <defs>
         <linearGradient id="tj-logo-bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#3b82f6" />
-          <stop offset="1" stopColor="#1d4ed8" />
+          <stop offset="0" stopColor="#57a6a8" />
+          <stop offset="1" stopColor="#346365" />
         </linearGradient>
       </defs>
       <rect width="36" height="36" rx="10" fill="url(#tj-logo-bg)" />

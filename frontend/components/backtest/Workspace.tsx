@@ -5,25 +5,26 @@ import { useSearchParams } from 'next/navigation';
 import {
   createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, MouseEventParams, Time } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from './data';
 import JournalFields, { EMPTY_JOURNAL, JournalValues } from './JournalFields';
-import { WorkspaceDraft, readDraft, writeDraft, clearDraft } from './session';
+import { WorkspaceDraft, readDraft, writeDraft, clearDraft, sessionIdFor } from './session';
 import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
-  CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex, maxRangeMs,
+  CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure,
   findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
+import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
 // `type` is the lightweight-charts-drawing registry key.
@@ -49,6 +50,42 @@ const STYLE_SWATCHES = [
 ];
 const VIEW_INTERVALS = CHART_INTERVALS;
 const DAY = 86_400_000;
+// Candles are streamed a page at a time: the next page is fetched once the
+// replay gets within PREFETCH_BARS of the end of what's loaded.
+const CHUNK_BARS = 1500;
+const PREFETCH_BARS = 300;
+const barMsOf = (tf: string) => (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * DAY;
+
+/** Did this candle trade through the trade's stop / target? */
+function levelsHit(c: Candle, t: OpenTrade) {
+  const long = t.direction === 'long';
+  return {
+    sl: long ? c.low <= t.stopLoss : c.high >= t.stopLoss,
+    tp: t.takeProfit != null && (long ? c.high >= t.takeProfit : c.low <= t.takeProfit),
+  };
+}
+const FINER: Record<string, string> = { '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
+/**
+ * Which level was reached first inside [startMs, endMs), walking smaller and
+ * smaller candles (down to 1m) while a candle still spans both. If even 1m
+ * can't separate them, the stop is assumed (the conservative reading).
+ */
+async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs: number, t: OpenTrade): Promise<'sl' | 'tp'> {
+  const finer = FINER[tf];
+  if (!finer) return 'sl';
+  const parts = await getCandles(symbol, finer, startMs, endMs, authHeaders());
+  const step = barMsOf(finer);
+  for (const p of parts) {
+    const h = levelsHit(p, t);
+    if (h.sl && h.tp) {
+      const s = Number(p.time) * 1000;
+      return firstLevelHit(symbol, finer, s, Math.min(endMs, s + step), t);
+    }
+    if (h.sl) return 'sl';
+    if (h.tp) return 'tp';
+  }
+  return 'sl';
+}
 
 // A drawing being placed: `placed` anchors are fixed, the rest follow the
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
@@ -104,7 +141,18 @@ export default function Workspace() {
   const [candles, setCandles] = useState<Candle[] | null>(null);
   // After switching to a higher timeframe mid-replay, the candle still forming
   // is shown as rebuilt from revealed candles (no peeking at its real close).
-  const [partial, setPartial] = useState<{ idx: number; candle: Candle } | null>(null);
+  const [partial, setPartial] = useState<{ idx: number; candle: Candle; endMs: number } | null>(null);
+  const resolvingRef = useRef<string | null>(null);
+  // Bumped on every fresh load / timeframe switch. The chart is rebuilt only
+  // then -- appending streamed candles keeps drawings and zoom intact.
+  const [chartEpoch, setChartEpoch] = useState(0);
+  const chartEpochRef = useRef(0);
+  useEffect(() => { chartEpochRef.current = chartEpoch; }, [chartEpoch]);
+  const candlesRef = useRef<Candle[] | null>(null);
+  useEffect(() => { candlesRef.current = candles; }, [candles]);
+  // What the loaded candles belong to, and how far ahead they reach.
+  const sessionRef = useRef<{ symbol: string; interval: string; fromMs: number; toMs: number; loadedToMs: number } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [analysisStartIdx, setAnalysisStartIdx] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -167,28 +215,27 @@ export default function Workspace() {
     if (incomingStrategy) setCurrentStrategy(incomingStrategy);
   }, []);
 
-  // A deep link (from the Log's "Load in Workspace") always wins over a
-  // leftover draft -- only offer to resume when the trader arrived here
-  // with nothing more specific in mind.
-  useEffect(() => {
-    if (params.get('symbol')) return;
-    const draft = readDraft();
-    if (draft) setDraftAvailable(draft);
-  }, [params]);
+  // The strategy this session tests, and the slot it autosaves into (one
+  // saved session per strategy). A resumed session keeps its own slot.
+  const sessionStrategyRef = useRef(params.get('strategy') ?? '');
+  const sessionSlotRef = useRef(sessionIdFor(params.get('strategy')));
 
-  const resumeDraft = () => {
-    const draft = draftAvailable; if (!draft) return;
+  const resumeDraft = (d?: WorkspaceDraft) => {
+    const draft = d ?? draftAvailable; if (!draft) return;
     pendingRestoreRef.current = draft;
+    sessionStrategyRef.current = draft.strategy ?? '';
+    sessionSlotRef.current = draft.id ?? sessionIdFor(draft.strategy);
     setDraftAvailable(null);
     setSymbol(draft.symbol); setFromDate(draft.fromDate); setToDate(draft.toDate);
     intervalTouchedRef.current = true; setInterval_(draft.interval);
     setDrawColor(draft.drawColor);
     loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
   };
-  const discardDraft = () => { clearDraft(); setDraftAvailable(null); };
+  const discardDraft = () => { if (draftAvailable) clearDraft(draftAvailable.id ?? sessionIdFor(draftAvailable.strategy)); setDraftAvailable(null); };
   const endSession = () => {
     if (!window.confirm(`End the ${symbol.trim().toUpperCase()} session? Drawings and any open hypothetical trade are discarded. Saved backtests are not affected.`)) return;
-    setPlaying(false); resetTrade(); setCandles(null); clearDraft(); setDraftAvailable(null);
+    setPlaying(false); resetTrade(); setCandles(null); setChartEpoch(e => e + 1); sessionRef.current = null;
+    clearDraft(sessionSlotRef.current); setDraftAvailable(null);
   };
 
   // Autosave: whatever's currently on screen, so it survives a refresh or
@@ -199,6 +246,7 @@ export default function Workspace() {
       writeDraft({
         symbol: symbol.trim().toUpperCase(), fromDate, toDate, interval,
         replayIdx, analysisStartIdx, totalBars: candles.length, openTrade,
+        replayTime: Number(candles[replayIdx]?.time ?? 0) || undefined, strategy: sessionStrategyRef.current, id: sessionSlotRef.current,
         backtestName, notes, tags, drawColor,
         drawings: managerRef.current?.exportDrawings() ?? [],
         savedAt: Date.now(),
@@ -302,43 +350,37 @@ export default function Workspace() {
   const loadChartWithInterval = useCallback((overrideInterval: string, overrides?: { symbol?: string; fromDate?: string; toDate?: string }) => {
     const trimmed = (overrides?.symbol ?? symbol).trim().toUpperCase();
     if (!trimmed) { setCandles(null); setError(''); return; }
-    let fromMs = new Date(overrides?.fromDate ?? fromDate).getTime();
+    const fromMs = new Date(overrides?.fromDate ?? fromDate).getTime();
     const toMs = new Date(overrides?.toDate ?? toDate).getTime() + DAY;
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) { setError('Pick a valid date range.'); return; }
-    // cTrader caps a request at 1500 bars. Rather than fail with "range too
-    // wide" when the timeframe is too fine for the range, keep "To" and move
-    // "From" forward to the longest window that fits, and say so.
-    const maxMs = maxRangeMs(overrideInterval);
-    if (toMs - fromMs > maxMs) {
-      fromMs = toMs - maxMs;
-      const adjusted = new Date(fromMs).toISOString().slice(0, 10);
-      const span = maxMs >= 2 * DAY ? `${Math.floor(maxMs / DAY)} days` : `${Math.floor(maxMs / 3_600_000)} hours`;
-      setFromDate(adjusted);
-      setToast(`${CHART_INTERVALS.find(t => t.value === overrideInterval)?.label ?? overrideInterval} candles cover up to ${span} — From moved to ${adjusted}`);
-    }
     setLoading(true); setError(''); setIsSetupError(false); setPlaying(false); setPartial(null);
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false); setPlacingDirection(null);
     setSelectedDrawingId(null); setActiveDrawType(null); setMeasureActive(false); setMeasureRange(null);
     drawingHistoryRef.current = []; setHistoryDepth(0);
     setActiveSymbol(trimmed);
-    // Fetch ~100 bars before "From" so the setup has visible context; the
-    // replay still starts at the chosen date.
+    // ~100 bars before "From" give the setup visible context; the replay still
+    // starts at the chosen date. Only the first page is loaded up front --
+    // the rest streams in as the replay approaches it (see auto-load below).
+    const restoring = pendingRestoreRef.current?.symbol === trimmed ? pendingRestoreRef.current : null;
+    const bar = barMsOf(overrideInterval);
     const fetchFromMs = lookbackMs(fromMs, overrideInterval);
-    fetch(`/api/backtest-trades/chart?symbol=${encodeURIComponent(trimmed)}&interval=${overrideInterval}&fromMs=${fetchFromMs}&toMs=${toMs}`, { headers: authHeaders() })
-      .then(async res => {
-        const data = await res.json();
-        if (!res.ok) { setError(data.error || 'Failed to load chart data'); setIsSetupError(Boolean(data.setup)); setLoading(false); return; }
-        const loaded: Candle[] = (data.candles || []).map((c: Candle) => ({ ...c, time: Number(c.time) as UTCTimestamp }));
+    const resumeAtMs = restoring?.replayTime ? restoring.replayTime * 1000 : null;
+    const firstPageToMs = Math.min(toMs, Math.max(fromMs + CHUNK_BARS * bar, (resumeAtMs ?? 0) + PREFETCH_BARS * bar,
+      restoring && !resumeAtMs ? fetchFromMs + (restoring.replayIdx + PREFETCH_BARS) * bar * 1.5 : 0));
+    const target = { symbol: trimmed, interval: overrideInterval, fromMs, toMs };
+    getCandles(trimmed, overrideInterval, fetchFromMs, firstPageToMs, authHeaders())
+      .then(loaded => {
+        if (!loaded.length) { setError(`cTrader returned no ${trimmed} candles for that range.`); setLoading(false); return; }
         const startIdx = Math.max(0, loaded.findIndex(c => Number(c.time) >= fromMs / 1000));
+        sessionRef.current = { ...target, loadedToMs: firstPageToMs };
         setAnalysisStartIdx(startIdx);
         setCandles(loaded);
-        // Note: pendingRestoreRef is deliberately NOT cleared here -- the
-        // chart-creation effect (keyed on `candles`) runs after this state
-        // update commits and still needs it to import the saved drawings.
-        // It clears the ref itself once it's done reading it.
-        const restoring = pendingRestoreRef.current;
-        if (restoring && restoring.symbol === trimmed) {
-          setReplayIdx(Math.max(0, Math.min(loaded.length - 1, restoring.replayIdx)));
+        setChartEpoch(e => e + 1);
+        // pendingRestoreRef is deliberately NOT cleared here -- the chart-creation
+        // effect runs after this commits and still needs it to import drawings.
+        if (restoring) {
+          const idx = resumeAtMs != null ? nearestCandleIndex(loaded, resumeAtMs / 1000) : restoring.replayIdx;
+          setReplayIdx(Math.max(0, Math.min(loaded.length - 1, idx)));
           setOpenTrade(restoring.openTrade);
           setBacktestName(restoring.backtestName); setNotes(restoring.notes); setTags(restoring.tags);
         } else {
@@ -346,7 +388,11 @@ export default function Workspace() {
         }
         setLoading(false);
       })
-      .catch(e => { setError(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
+      .catch(e => {
+        setError(e instanceof Error ? e.message : 'Network error');
+        setIsSetupError(e instanceof ChartFetchError && e.setup);
+        setLoading(false);
+      });
   }, [symbol, fromDate, toDate, setActiveSymbol]);
   const loadChart = useCallback(() => loadChartWithInterval(interval), [loadChartWithInterval, interval]);
   // Switching timeframe mid-replay keeps the replay clock where it is: the new
@@ -364,27 +410,26 @@ export default function Workspace() {
     const clock = Number(seen[seen.length - 1].time) + oldSec; // close time of the current candle
     const sessionFromMs = new Date(fromDate).getTime();
     const sessionToMs = new Date(toDate).getTime() + DAY;
-    // Window: 300 candles of context before the clock, then as far ahead as one chart holds.
+    // Window: 300 candles of context before the clock and a page ahead; more
+    // streams in as the replay advances.
     const fetchFromMs = clock * 1000 - 300 * newSec * 1000;
-    const fetchToMs = Math.min(sessionToMs, fetchFromMs + maxRangeMs(tf));
+    const fetchToMs = Math.min(sessionToMs, clock * 1000 + CHUNK_BARS * newSec * 1000);
     const drawings = managerRef.current?.exportDrawings() ?? [];
+    const sym = symbol.trim().toUpperCase();
     setLoading(true); setPlaying(false); setPlacingDirection(null); setMeasureRange(null);
-    fetch(`/api/backtest-trades/chart?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&interval=${tf}&fromMs=${Math.floor(fetchFromMs)}&toMs=${Math.floor(fetchToMs)}`, { headers: authHeaders() })
-      .then(async res => {
-        const data = await res.json();
-        if (!res.ok) { setToast(data.error || 'Could not load that timeframe'); setLoading(false); return; }
-        const loaded: Candle[] = (data.candles || []).map((c: Candle) => ({ ...c, time: Number(c.time) as UTCTimestamp }));
+    getCandles(sym, tf, fetchFromMs, fetchToMs, authHeaders())
+      .then(loaded => {
         // Last candle that is fully closed by the clock...
         let idx = -1;
         for (let i = 0; i < loaded.length && Number(loaded[i].time) + newSec <= clock; i++) idx = i;
         // ...plus, when zooming out, the forming candle built from what's already revealed.
-        let built: { idx: number; candle: Candle } | null = null;
+        let built: { idx: number; candle: Candle; endMs: number } | null = null;
         const forming = loaded[idx + 1];
         if (forming && Number(forming.time) < clock) {
           const parts = seen.filter(c => Number(c.time) >= Number(forming.time));
           if (parts.length) {
             built = {
-              idx: idx + 1,
+              idx: idx + 1, endMs: clock * 1000,
               candle: {
                 ...forming, open: parts[0].open, close: parts[parts.length - 1].close,
                 high: Math.max(...parts.map(c => c.high)), low: Math.min(...parts.map(c => c.low)),
@@ -396,16 +441,31 @@ export default function Workspace() {
         }
         if (idx < 0) { setToast('No candles for that timeframe at this point in the replay'); setLoading(false); return; }
         pendingRestoreRef.current = { drawings } as unknown as WorkspaceDraft;
+        sessionRef.current = { symbol: sym, interval: tf, fromMs: sessionFromMs, toMs: sessionToMs, loadedToMs: fetchToMs };
         setInterval_(tf);
         setAnalysisStartIdx(Math.max(0, loaded.findIndex(c => Number(c.time) * 1000 >= sessionFromMs)));
         setCandles(loaded);
+        setChartEpoch(e => e + 1);
         setPartial(built);
         setReplayIdx(idx);
-        if (fetchToMs < sessionToMs) setToast(`${CHART_INTERVALS.find(t => t.value === tf)?.label ?? tf} loaded up to ${new Date(fetchToMs).toISOString().slice(0, 10)}`);
         setLoading(false);
       })
       .catch(e => { setToast(e instanceof Error ? e.message : 'Network error'); setLoading(false); });
   };
+
+  // ?session=<id> (from a strategy's "Continue") resumes that session straight
+  // away. A deep link with ?symbol starts fresh. Otherwise offer to resume
+  // the most recent session.
+  const resumedFromLinkRef = useRef(false);
+  useEffect(() => {
+    if (params.get('symbol')) return;
+    const sid = params.get('session');
+    const draft = readDraft(sid);
+    if (sid && draft && !resumedFromLinkRef.current) { resumedFromLinkRef.current = true; resumeDraft(draft); return; }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- offer the saved session once on arrival
+    if (draft) setDraftAvailable(draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   // Deep link from the Log's "Load in Workspace".
   const autoLoadedRef = useRef(false);
@@ -417,7 +477,7 @@ export default function Workspace() {
 
   // ── Chart + drawing manager creation ───────────────────────────────────────
   useEffect(() => {
-    if (!candles || !chartContainerRef.current) return;
+    if (!candlesRef.current || !chartContainerRef.current) return;
     const el = chartContainerRef.current;
     const root = rootRef.current;
     const text = cssVar(root, '--bt-on-surface-variant', '#d8c3ad');
@@ -475,7 +535,8 @@ export default function Workspace() {
 
     const onCrosshair = (p: MouseEventParams<Time>) => {
       if (p.time == null) { setHoverIdx(null); return; }
-      setHoverIdx(nearestCandleIndex(candles, Number(p.time)));
+      const all = candlesRef.current;
+      setHoverIdx(all ? nearestCandleIndex(all, Number(p.time)) : null);
     };
     chart.subscribeCrosshairMove(onCrosshair);
 
@@ -495,7 +556,7 @@ export default function Workspace() {
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
     };
-  }, [candles, resolvedTheme]);
+  }, [chartEpoch, resolvedTheme]);
 
   // ── Indicator values (computed once per load, sliced per replay step) ──────
   const indicatorData = useMemo(() => {
@@ -555,9 +616,9 @@ export default function Workspace() {
   // Fit to the revealed data on a fresh load only (not on every replay step),
   // so the chart ends on the current candle with nothing hanging off the right.
   useEffect(() => {
-    if (!candles || !chartRef.current) return;
+    if (!candlesRef.current || !chartRef.current) return;
     chartRef.current.timeScale().fitContent();
-  }, [candles]);
+  }, [chartEpoch]);
 
   // Hide drawings anchored past the revealed candle -- no peeking at your own future analysis.
   useEffect(() => {
@@ -575,12 +636,42 @@ export default function Workspace() {
     if (!candles || !playing) return;
     const timer = setInterval(() => {
       setReplayIdx(prev => {
-        if (prev >= candles.length - 1) { setPlaying(false); return prev; }
-        return prev + 1;
+        if (prev < candles.length - 1) return prev + 1;
+        // At the edge of what's loaded: wait for the next page if there is one.
+        const s = sessionRef.current;
+        if (!s || s.loadedToMs >= s.toMs) setPlaying(false);
+        return prev;
       });
     }, Math.max(40, 300 / speed));
     return () => clearInterval(timer);
   }, [playing, speed, candles]);
+
+  // ── Auto-load: stream the next page before the replay reaches the edge ────
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (!candles || !s || loadingMore || loading || s.loadedToMs >= s.toMs) return;
+    if (replayIdx < candles.length - 1 - PREFETCH_BARS) return;
+    const from = s.loadedToMs, to = Math.min(s.toMs, from + CHUNK_BARS * barMsOf(s.interval));
+    const epoch = chartEpoch;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- kick off a background fetch
+    setLoadingMore(true);
+    getCandles(s.symbol, s.interval, from, to, authHeaders())
+      .then(more => {
+        const cur = sessionRef.current;
+        if (!cur || cur !== s) return; // session changed while loading
+        cur.loadedToMs = to;
+        if (more.length) {
+          setCandles(prev => {
+            if (!prev || epoch !== chartEpochRef.current) return prev;
+            const last = Number(prev[prev.length - 1].time);
+            const fresh = more.filter(c => Number(c.time) > last);
+            return fresh.length ? [...prev, ...fresh] : prev;
+          });
+        }
+      })
+      .catch(e => setToast(e instanceof Error ? `Couldn't load more candles: ${e.message}` : "Couldn't load more candles"))
+      .finally(() => setLoadingMore(false));
+  }, [candles, replayIdx, loadingMore, loading, chartEpoch]);
   const jumpToReplayIndex = useCallback((index: number) => {
     if (!candles) return;
     setPlaying(false);
@@ -598,26 +689,40 @@ export default function Workspace() {
   // ── Resolve the open trade against each newly revealed candle ──────────────
   useEffect(() => {
     if (!candles || !openTrade || closedTrade) return;
-    const candle = partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx];
+    const isPartial = Boolean(partial && replayIdx === partial.idx);
+    const candle = isPartial ? partial!.candle : candles[replayIdx];
     if (!candle || candle.time <= openTrade.entryTime) return;
-    const { direction, entryPrice, stopLoss, takeProfit } = openTrade;
-    let exitPrice: number | null = null;
-    let outcome: ClosedTrade['outcome'] | null = null;
-    if (direction === 'long') {
-      if (candle.low <= stopLoss) { exitPrice = stopLoss; outcome = stopLoss >= entryPrice ? 'breakeven' : 'loss'; }
-      else if (takeProfit != null && candle.high >= takeProfit) { exitPrice = takeProfit; outcome = 'win'; }
-    } else {
-      if (candle.high >= stopLoss) { exitPrice = stopLoss; outcome = stopLoss <= entryPrice ? 'breakeven' : 'loss'; }
-      else if (takeProfit != null && candle.low <= takeProfit) { exitPrice = takeProfit; outcome = 'win'; }
+    const trade = openTrade;
+    const close = (which: 'sl' | 'tp') => {
+      const exitPrice = which === 'sl' ? trade.stopLoss : trade.takeProfit!;
+      const outcome: ClosedTrade['outcome'] = which === 'tp' ? 'win'
+        : (trade.direction === 'long' ? trade.stopLoss >= trade.entryPrice : trade.stopLoss <= trade.entryPrice) ? 'breakeven' : 'loss';
+      const riskPerUnit = trade.direction === 'long' ? trade.entryPrice - trade.stopLoss : trade.stopLoss - trade.entryPrice;
+      const gainPerUnit = trade.direction === 'long' ? exitPrice - trade.entryPrice : trade.entryPrice - exitPrice;
+      const rMultiple = riskPerUnit !== 0 ? gainPerUnit / riskPerUnit : 0;
+      setPlaying(false);
+      setClosedTrade(prev => prev ?? { ...trade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * trade.riskAmount });
+      setShowCloseout(true);
+    };
+    const hit = levelsHit(candle, trade);
+    if (hit.sl && hit.tp) {
+      // One candle spans both levels: which came first is decided on smaller
+      // candles for that period (never past what's been revealed).
+      const key = `${trade.entryTime}:${candle.time}`;
+      if (resolvingRef.current === key) return;
+      resolvingRef.current = key;
+      setPlaying(false);
+      const startMs = Number(candle.time) * 1000;
+      const endMs = isPartial ? partial!.endMs : startMs + barMsOf(interval);
+      setToast('Stop and target inside one candle — checking smaller candles…');
+      firstLevelHit(symbol.trim().toUpperCase(), interval, startMs, endMs, trade)
+        .catch(() => 'sl' as const)
+        .then(which => { if (resolvingRef.current === key) close(which); });
+      return;
     }
-    if (exitPrice == null || !outcome) return;
-    const riskPerUnit = direction === 'long' ? entryPrice - stopLoss : stopLoss - entryPrice;
-    const gainPerUnit = direction === 'long' ? exitPrice - entryPrice : entryPrice - exitPrice;
-    const rMultiple = riskPerUnit !== 0 ? gainPerUnit / riskPerUnit : 0;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- replay reacting to the revealed candle
-    setPlaying(false);
-    setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
-    setShowCloseout(true);
+    if (hit.sl) close('sl');
+    else if (hit.tp) close('tp');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, replayIdx, partial, openTrade, closedTrade]);
 
   const unrealizedR = useMemo(() => {
@@ -1483,7 +1588,7 @@ export default function Workspace() {
                     {draftAvailable.symbol} · {draftAvailable.interval} · {draftAvailable.drawings.length} drawing{draftAvailable.drawings.length === 1 ? '' : 's'}{draftAvailable.openTrade ? ' · an open trade' : ''}, saved {new Date(draftAvailable.savedAt).toLocaleString()}.
                   </p>
                   <div className="tw:flex tw:gap-space-sm tw:mt-space-xs">
-                    <button type="button" onClick={resumeDraft} className="tw:px-space-md tw:py-space-xs tw:rounded-full tw:bg-primary tw:text-on-primary tw:font-label-action tw:text-label-action">Resume session</button>
+                    <button type="button" onClick={() => resumeDraft()}className="tw:px-space-md tw:py-space-xs tw:rounded-full tw:bg-primary tw:text-on-primary tw:font-label-action tw:text-label-action">Resume session</button>
                     <button type="button" onClick={discardDraft} className="tw:px-space-md tw:py-space-xs tw:rounded-full tw:border tw:border-outline tw:text-on-surface-variant tw:font-label-action tw:text-label-action">Start fresh</button>
                   </div>
                 </>

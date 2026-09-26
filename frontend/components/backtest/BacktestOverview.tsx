@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, fmtDate, fmtR, fmtUSD, hashTag, intervalLabel, tagsOf, useBacktest } from './data';
 import { computeStats } from './stats';
-import { draftProgress, useActiveSession } from './session';
+import { draftProgress, sessionIdFor, useActiveSession } from './session';
 import { downloadLogCsv } from './exporting';
 
 // Below this many trades, win rate and R stats are mostly noise -- the
@@ -70,7 +70,7 @@ export default function BacktestOverview() {
             <Icon name="add" className="tw:text-base" /><span>Start New Backtest</span>
           </Link>
           {draft && progress ? (
-            <Link href="/backtest/workspace" className="tw:px-3.5 tw:py-1.5 tw:rounded tw:bg-surface-container-highest tw:hover:bg-surface-bright tw:border tw:border-outline-variant tw:text-on-surface tw:font-label-action tw:text-label-action tw:font-medium tw:flex tw:items-center tw:gap-2 tw:transition-colors">
+            <Link href={`/backtest/workspace?session=${encodeURIComponent(draft.id ?? sessionIdFor(draft.strategy))}`} className="tw:px-3.5 tw:py-1.5 tw:rounded tw:bg-surface-container-highest tw:hover:bg-surface-bright tw:border tw:border-outline-variant tw:text-on-surface tw:font-label-action tw:text-label-action tw:font-medium tw:flex tw:items-center tw:gap-2 tw:transition-colors">
               <Icon name="play_circle" className="tw:text-primary tw:text-base" />
               <span>Resume Active Session</span>
               <span className="tw:px-1.5 tw:rounded tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px] tw:text-primary">

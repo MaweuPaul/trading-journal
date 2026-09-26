@@ -8,18 +8,20 @@ const TABS = [
   { key: 'overview', label: 'Overview', icon: 'space_dashboard', href: '/backtest' },
   { key: 'new', label: 'New', desktopLabel: 'New Backtest', icon: 'add_circle', href: '/backtest/new' },
   { key: 'workspace', label: 'Active', desktopLabel: 'Active Session', icon: 'query_stats', href: '/backtest/workspace' },
+  { key: 'strategies', label: 'Strategies', icon: 'rule', href: '/backtest/strategies' },
   { key: 'log', label: 'Log', desktopLabel: 'Backtest Log', icon: 'table_chart', href: '/backtest/log' },
   { key: 'metrics', label: 'Metrics', icon: 'analytics', href: '/backtest/metrics' },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
-const SECTION_LABEL: Record<TabKey, string> = { overview: 'Overview', new: 'New Backtest', workspace: 'Active Session', log: 'Log', metrics: 'Metrics' };
+const SECTION_LABEL: Record<TabKey, string> = { overview: 'Overview', new: 'New Backtest', workspace: 'Active Session', strategies: 'Strategies', log: 'Log', metrics: 'Metrics' };
 
 function activeTab(pathname: string): TabKey {
   if (pathname.startsWith('/backtest/metrics')) return 'metrics';
   if (pathname.startsWith('/backtest/new')) return 'new';
   if (pathname.startsWith('/backtest/workspace')) return 'workspace';
-  if (pathname.startsWith('/backtest/log') || pathname.startsWith('/backtest/strategies') || (/^\/backtest\/[^/]+$/.test(pathname) && pathname !== '/backtest')) return 'log';
+  if (pathname.startsWith('/backtest/strategies')) return 'strategies';
+  if (pathname.startsWith('/backtest/log') || (/^\/backtest\/[^/]+$/.test(pathname) && pathname !== '/backtest')) return 'log';
   return 'overview';
 }
 

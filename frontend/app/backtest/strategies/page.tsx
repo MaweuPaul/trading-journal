@@ -1,5 +1,5 @@
-import Strategies from '@/components/backtest/Strategies';
+import StrategiesView from '@/components/backtest/StrategiesView';
 
 export default function BacktestStrategiesPage() {
-  return <Strategies />;
+  return <StrategiesView />;
 }

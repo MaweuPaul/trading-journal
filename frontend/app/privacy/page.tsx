@@ -20,9 +20,10 @@ export default function PrivacyPage() {
 
       <div style={{ maxWidth: 720 }}>
         <p style={{ color: 'var(--text-muted)', fontSize: 13.5, lineHeight: 1.6, marginBottom: 8 }}>
-          TradeJournal is a trading journal, not an ad-funded product — nothing here is collected to be sold,
-          profiled, or shared with advertisers. Every piece of data below exists because a specific feature of
-          the app needs it to work. This page explains that trade-by-trade.
+          TradeJournal isn&apos;t a commercial product — it&apos;s run privately for a small group of trusted
+          people, not sold or offered publicly. Nothing here is collected to be sold, profiled, or shared with
+          advertisers. Every piece of data below exists because a specific feature of the app needs it to work.
+          This page explains that trade-by-trade.
         </p>
 
         <Sub>What we store, and why</Sub>
@@ -55,12 +56,12 @@ export default function PrivacyPage() {
         <ul className="manual-feature-list">
           <li><b>Disconnect</b> any broker account from <Link href="/accounts" style={{ color: 'var(--accent)' }}>Accounts</Link> at any time — syncing stops immediately; trades already synced stay in your history until you remove them yourself.</li>
           <li><b>Export everything</b> — a full JSON or CSV backup is one click away on the <Link href="/archive" style={{ color: 'var(--accent)' }}>Backup &amp; Export</Link> page.</li>
-          <li>There&apos;s currently no self-service &quot;delete my account&quot; button — if you&apos;re on a shared instance and want your account and its data fully removed, that&apos;s a request to whoever administers it.</li>
+          <li>There&apos;s currently no self-service &quot;delete my account&quot; button — if you want your account and its data fully removed, just ask whoever gave you access; it&apos;s a small, known group here, not a support queue.</li>
         </ul>
 
         <div className="manual-callout" style={{ marginTop: 22 }}>
           <span className="icon">Good to know</span>
-          <p>TradeJournal is typically self-hosted — you or whoever set up this instance controls the actual server and database. This page describes how the application itself is built to handle data; it isn&apos;t a substitute for knowing who operates the specific instance you&apos;re using.</p>
+          <p>This isn&apos;t a public product — it&apos;s run for a small group of people who know each other, on servers controlled by the person who set it up. This page describes how the app itself is built to handle data; the person running it is who&apos;s actually accountable for it day to day.</p>
         </div>
       </div>
     </main>

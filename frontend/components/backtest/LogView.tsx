@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { AgentBadge, AgentRunsToggle } from './AgentRuns';
 import { Icon } from './BacktestShell';
@@ -16,6 +16,12 @@ const RANGES = [{ value: 'ALL', label: 'All Time' }, { value: '7', label: 'Past 
 const OPTIONAL_COLS = [['strategy', 'Strategy Tag'], ['tf', 'TF'], ['entry', 'Entry Price'], ['exit', 'Exit Price'], ['pnl', 'Simulated P&L'], ['plan', 'Plan?'], ['date', 'Date Simulated']] as const;
 type OptionalCol = typeof OPTIONAL_COLS[number][0];
 type SortKey = 'date' | 'r';
+
+// Filters live in the URL (?strategy=ORB&outcome=loss&page=2...), so a refresh,
+// the back button or a shared link keeps them. Defaults are left out.
+const FILTER_DEFAULTS = { strategy: 'ALL', symbol: 'ALL', outcome: 'ALL', dir: 'ALL', tf: 'ALL', range: 'ALL', q: '', sort: 'date', page: '1', size: '10' } as const;
+type FilterKey = keyof typeof FILTER_DEFAULTS;
+const oneOf = <T extends string>(value: string | null, allowed: readonly T[], fallback: T): T => (allowed.includes(value as T) ? (value as T) : fallback);
 
 const chip = 'tw:px-space-xs tw:py-0.5 tw:rounded tw:font-label-caps tw:text-label-caps tw:uppercase tw:font-bold';
 const field = 'tw:w-full tw:min-h-[44px] tw:appearance-none tw:bg-surface-container tw:text-on-surface tw:font-body-sm tw:text-body-sm tw:pl-space-md tw:pr-space-lg tw:py-space-xs tw:rounded tw:focus:outline-none tw:focus:bg-surface-container-high';
@@ -34,16 +40,19 @@ function rChip(n: number) {
 export default function LogView() {
   const router = useRouter();
   const { trades, allTrades, loading, error, removeTrade, addTrade, strategies, setActiveSymbol } = useBacktest();
-  const [strategy, setStrategy] = useState('ALL');
-  const [symbol, setSymbol] = useState('ALL');
-  const [outcome, setOutcome] = useState<Outcome>('ALL');
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<SortKey>('date');
-  const [direction, setDirection] = useState<Direction>('ALL');
-  const [tf, setTf] = useState('ALL');
-  const [range, setRange] = useState<string>('ALL');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const params = useSearchParams();
+  const pathname = usePathname();
+  const initial = (key: FilterKey) => params.get(key) ?? FILTER_DEFAULTS[key];
+  const [strategy, setStrategy] = useState(() => initial('strategy'));
+  const [symbol, setSymbol] = useState(() => initial('symbol'));
+  const [outcome, setOutcome] = useState<Outcome>(() => oneOf(params.get('outcome'), ['ALL', 'win', 'loss', 'breakeven'] as const, 'ALL'));
+  const [search, setSearch] = useState(() => initial('q'));
+  const [sort, setSort] = useState<SortKey>(() => oneOf(params.get('sort'), ['date', 'r'] as const, 'date'));
+  const [direction, setDirection] = useState<Direction>(() => oneOf(params.get('dir'), ['ALL', 'long', 'short'] as const, 'ALL'));
+  const [tf, setTf] = useState(() => initial('tf'));
+  const [range, setRange] = useState<string>(() => oneOf(params.get('range'), RANGES.map(r => r.value), 'ALL'));
+  const [page, setPage] = useState(() => Math.max(1, Math.floor(Number(params.get('page'))) || 1));
+  const [pageSize, setPageSize] = useState(() => Number(oneOf(params.get('size'), ['10', '25', '50', '100'] as const, '10')));
   const [compact, setCompact] = useState(false);
   const [showCols, setShowCols] = useState(false);
   const [hiddenCols, setHiddenCols] = useState<Set<OptionalCol>>(() => new Set());
@@ -57,6 +66,18 @@ export default function LogView() {
     const timer = setTimeout(() => setToast(''), 2200);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Mirror the filters into the URL (replace, not push, so Back leaves the Log
+  // rather than stepping through every filter change).
+  useEffect(() => {
+    const values: Record<FilterKey, string> = { strategy, symbol, outcome, dir: direction, tf, range, q: search, sort, page: String(page), size: String(pageSize) };
+    const next = new URLSearchParams(params.toString());
+    for (const key of Object.keys(FILTER_DEFAULTS) as FilterKey[]) {
+      if (values[key] === FILTER_DEFAULTS[key]) next.delete(key); else next.set(key, values[key]);
+    }
+    const query = next.toString();
+    if (query !== params.toString()) router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [strategy, symbol, outcome, direction, tf, range, search, sort, page, pageSize, params, pathname, router]);
 
   const symbols = useMemo(() => Array.from(new Set(trades.map(t => t.symbol))).sort(), [trades]);
   const counts = useMemo(() => ({

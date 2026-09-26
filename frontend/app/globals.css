@@ -2184,45 +2184,11 @@ tbody tr.clickable:hover {
   margin-bottom: 24px;
 }
 
-.calendar-body-flex {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
-
-.calendar-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.calendar-side {
-  width: 130px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.calendar-side-title {
-  display: block;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.calendar-weekday-pnl-label {
   color: var(--text-muted);
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
 }
 
-/* Matches .calendar-grid's margin-top so the first week box lines up with row 1 */
-.calendar-side-spacer { height: 4px; }
-
-.calendar-side-weeks {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.calendar-side-week-box {
+.calendar-week-box {
   min-height: 90px;
   display: flex;
   flex-direction: column;
@@ -2234,25 +2200,31 @@ tbody tr.clickable:hover {
   border-radius: 8px;
   padding: 8px 6px;
 }
-.calendar-side-week-box.profit { background: var(--green-bg); border-color: var(--green-border); }
-.calendar-side-week-box.loss { background: var(--red-bg); border-color: var(--red-border); }
+.calendar-week-box.profit { background: var(--green-bg); border-color: var(--green-border); }
+.calendar-week-box.loss { background: var(--red-bg); border-color: var(--red-border); }
 
-.calendar-metrics-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+.calendar-stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
   margin-top: 20px;
-  padding-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
 }
+.calendar-stats-bar strong {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+.calendar-stats-bar strong.positive { color: var(--green); }
+.calendar-stats-bar strong.negative { color: var(--red); }
 
 @media (max-width: 900px) {
-  .calendar-body-flex { flex-direction: column; }
-  .calendar-side { width: 100%; }
-  .calendar-side-spacer { display: none; }
-  .calendar-side-weeks { flex-direction: row; flex-wrap: wrap; }
-  .calendar-side-week-box { flex: 1 1 90px; min-height: 64px; }
-  .calendar-metrics-row { grid-template-columns: repeat(2, 1fr); }
+  .calendar-weekday-row, .calendar-grid { grid-template-columns: repeat(7, 1fr); }
+  .calendar-weekday-pnl-label { display: none; }
+  .calendar-week-box { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; min-height: auto; padding: 8px 12px; }
 }
 
 .calendar-toolbar {
@@ -2277,7 +2249,7 @@ tbody tr.clickable:hover {
 
 .calendar-weekday-row {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, 1fr) 120px;
   text-align: center;
   font-size: 10px;
   font-weight: 700;
@@ -2290,7 +2262,7 @@ tbody tr.clickable:hover {
 
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, 1fr) 120px;
   gap: 4px;
   margin-top: 4px;
 }
@@ -2325,70 +2297,57 @@ tbody tr.clickable:hover {
   z-index: 2;
 }
 
-/* Institutional top-border indicators on calendar cards */
-.calendar-day.active-day::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  opacity: 0.95;
+.calendar-day.is-today {
+  box-shadow: 0 0 0 2px var(--accent);
 }
-.calendar-day.profit-day::before { background: var(--green); }
-.calendar-day.loss-day::before   { background: var(--red); }
 
 .calendar-day.profit-day {
-  background: var(--green-bg);
+  background: color-mix(in srgb, var(--green) 16%, var(--bg-surface));
   border-color: var(--green-border);
 }
-.calendar-day.profit-day .day-pnl {
-  color: var(--green);
-}
-
 .calendar-day.loss-day {
-  background: var(--red-bg);
+  background: color-mix(in srgb, var(--red) 14%, var(--bg-surface));
   border-color: var(--red-border);
-}
-.calendar-day.loss-day .day-pnl {
-  color: var(--red);
 }
 
 .day-num {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-secondary);
+  text-align: right;
 }
-.calendar-day.profit-day .day-num { color: #15803d; }
-.calendar-day.loss-day .day-num { color: #b91c1c; }
+.calendar-day.profit-day .day-num { color: var(--green); }
+.calendar-day.loss-day .day-num { color: var(--red); }
 
 .day-pnl {
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  text-align: right;
+  font-size: 14px;
+  font-weight: 800;
   letter-spacing: -0.2px;
 }
+.calendar-day.profit-day .day-pnl { color: var(--green); }
+.calendar-day.loss-day .day-pnl { color: var(--red); }
 
 .day-trades-lbl {
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--text-muted);
   font-weight: 500;
-  margin-top: 2px;
+  margin-bottom: 2px;
 }
-.calendar-day.profit-day .day-trades-lbl { color: #166534; opacity: 0.75; }
-.calendar-day.loss-day .day-trades-lbl { color: #991b1b; opacity: 0.75; }
+.calendar-day.profit-day .day-trades-lbl,
+.calendar-day.loss-day .day-trades-lbl {
+  opacity: 0.8;
+}
 
 .day-sub-metric {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 700;
-  text-align: right;
   margin-top: 1px;
-  opacity: 0.7;
+  opacity: 0.75;
 }
-.calendar-day.profit-day .day-sub-metric { color: #166534; }
-.calendar-day.loss-day .day-sub-metric { color: #991b1b; }
+.calendar-day.profit-day .day-sub-metric { color: var(--green); }
+.calendar-day.loss-day .day-sub-metric { color: var(--red); }
 
 .calendar-weekly-label {
   font-size: 9px;

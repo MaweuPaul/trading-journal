@@ -1,9 +1,9 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { Fragment, useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, X, Info,
-  DollarSign, TrendingUp, Percent, Award, SlidersHorizontal, Activity, AlertTriangle, Play,
+  SlidersHorizontal, AlertTriangle, Play,
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 import TradeReplayModal from '@/components/TradeReplayModal';
@@ -256,6 +256,7 @@ export default function CalendarPage() {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
+  const todayStr = new Date().toISOString().split('T')[0];
 
   // Calendar cells generation logic
   const firstDayOfMonth = new Date(year, month, 1);
@@ -293,44 +294,12 @@ export default function CalendarPage() {
   });
 
   const monthlyPnL = monthlyStats.reduce((sum, s) => sum + s.pnl, 0);
+  const monthlyTrades = monthlyStats.reduce((sum, s) => sum + s.tradesCount, 0);
   const totalTradingDays = monthlyStats.length;
   const greenDays = monthlyStats.filter(s => s.pnl > 0).length;
   const redDays = monthlyStats.filter(s => s.pnl < 0).length;
   const dailyWinRate = totalTradingDays > 0 ? (greenDays / totalTradingDays) * 100 : 0;
 
-  const bestDayStats = monthlyStats.length > 0 ? monthlyStats.reduce((best, s) => s.pnl > best.pnl ? s : best) : null;
-  const worstDayStats = monthlyStats.length > 0 ? monthlyStats.reduce((worst, s) => s.pnl < worst.pnl ? s : worst) : null;
-
-  const metricCards = [
-    {
-      label: `${MONTHS[month]} Net P&L`, icon: DollarSign, iconCls: monthlyPnL >= 0 ? 'green' : 'red',
-      value: (monthlyPnL >= 0 ? '+' : '') + fmtUSD(monthlyPnL),
-      cls: monthlyPnL >= 0 ? 'green' : 'red',
-      sub: `${totalTradingDays} active trading day${totalTradingDays > 1 ? 's' : ''}`,
-      cardCls: monthlyPnL >= 0 ? 'green-card' : 'red-card',
-    },
-    {
-      label: 'Consistency Score', icon: Percent, iconCls: dailyWinRate >= 50 ? 'green' : 'red',
-      value: `${dailyWinRate.toFixed(1)}% WR`,
-      cls: dailyWinRate >= 50 ? 'green' : 'red',
-      sub: `${greenDays} Win Day${greenDays !== 1 ? 's' : ''} / ${redDays} Loss Day${redDays !== 1 ? 's' : ''}`,
-      cardCls: dailyWinRate >= 50 ? 'green-card' : 'red-card',
-    },
-    {
-      label: 'Best Day Return', icon: TrendingUp, iconCls: 'green',
-      value: bestDayStats ? `+${fmtUSD(bestDayStats.pnl)}` : '$0.00',
-      cls: 'green',
-      sub: bestDayStats ? `On ${new Date(bestDayStats.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No wins this month',
-      cardCls: 'green-card',
-    },
-    {
-      label: 'Worst Day Return', icon: Award, iconCls: 'red',
-      value: worstDayStats ? fmtUSD(worstDayStats.pnl) : '$0.00',
-      cls: 'red',
-      sub: worstDayStats ? `On ${new Date(worstDayStats.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No losses this month',
-      cardCls: 'red-card',
-    },
-  ];
 
   if (!hasToken) return null;
 
@@ -398,8 +367,7 @@ export default function CalendarPage() {
 
       {/* Monthly Grid Card */}
       <div className="calendar-card">
-        <div className="calendar-body-flex">
-          <div className="calendar-main">
+        <div className="calendar-main">
             {/* Calendar Navigation Toolbar */}
             <div className="calendar-toolbar">
               <div className="calendar-month-title">
@@ -441,83 +409,76 @@ export default function CalendarPage() {
             {/* Days of week header */}
             <div className="calendar-weekday-row">
               {WEEKDAYS.map(day => <div key={day}>{day}</div>)}
+              <div className="calendar-weekday-pnl-label">P&amp;L</div>
             </div>
 
-            {/* Grid Cells */}
+            {/* Grid Cells -- a week's box shares the same grid row as its 7 days, so it always lines up. */}
             {loading ? (
               <div className="loading-wrap" style={{ minHeight: 280 }}><div className="spinner" /></div>
             ) : (
               <div className="calendar-grid">
                 {cells.map((cell, idx) => {
-                  if (cell.isEmpty) {
-                    return <div key={`empty-${idx}`} className="calendar-day empty" />;
-                  }
+                  const dayCell = cell.isEmpty ? (
+                    <div key={`empty-${idx}`} className="calendar-day empty" />
+                  ) : (() => {
+                    const stats = calendarStats[cell.dateStr];
+                    const statsExist = !!stats && stats.tradesCount > 0;
+                    const isProfit = statsExist && stats.pnl >= 0;
 
-                  const stats = calendarStats[cell.dateStr];
-                  const statsExist = !!stats && stats.tradesCount > 0;
-                  const isProfit = statsExist && stats.pnl >= 0;
+                    return (
+                      <div
+                        key={cell.dateStr}
+                        className={`calendar-day ${statsExist ? 'active-day' : ''} ${statsExist ? (isProfit ? 'profit-day' : 'loss-day') : ''} ${cell.dateStr === todayStr ? 'is-today' : ''}`}
+                        onClick={() => handleDayClick(cell.dateStr, statsExist)}
+                      >
+                        <span className="day-num">{cell.day}</span>
 
+                        {statsExist && (
+                          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
+                            <span className="day-pnl">
+                              {stats.pnl >= 0 ? '+' : '-'}${Math.abs(stats.pnl).toFixed(2)}
+                            </span>
+                            <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
+                            <span className="day-sub-metric">
+                              {stats.avgR !== null
+                                ? `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`
+                                : `${stats.winRate.toFixed(1)}%`}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })();
+
+                  // Every 7th cell closes out a calendar week -- append that week's box
+                  // right after it, so it lands in the same grid row via CSS grid auto-flow.
+                  if ((idx + 1) % 7 !== 0) return dayCell;
+                  const week = weeklyRollup[Math.floor(idx / 7)];
                   return (
-                    <div
-                      key={cell.dateStr}
-                      className={`calendar-day ${statsExist ? 'active-day' : ''} ${statsExist ? (isProfit ? 'profit-day' : 'loss-day') : ''}`}
-                      onClick={() => handleDayClick(cell.dateStr, statsExist)}
-                    >
-                      <span className="day-num">{cell.day}</span>
-
-                      {statsExist && (
-                        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
-                          <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
-                          <span className="day-pnl">
-                            {stats.pnl >= 0 ? '+' : ''}${Math.abs(stats.pnl).toFixed(0)}
-                          </span>
-                          <span className="day-sub-metric">
-                            {stats.avgR !== null
-                              ? `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`
-                              : `${stats.winRate.toFixed(1)}%`}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                    <Fragment key={`row-${idx}`}>
+                      {dayCell}
+                      <div className={`calendar-week-box ${week.days === 0 ? '' : week.pnl >= 0 ? 'profit' : 'loss'}`}>
+                        <span className="calendar-weekly-label">Week {Math.floor(idx / 7) + 1}</span>
+                        <span className={`calendar-weekly-pnl ${week.days === 0 ? 'muted' : week.pnl >= 0 ? 'positive' : 'negative'}`}>
+                          {week.days === 0 ? '—' : `${week.pnl >= 0 ? '+' : ''}$${Math.abs(week.pnl).toFixed(1)}`}
+                        </span>
+                        <span className="calendar-weekly-days">{week.days} day{week.days === 1 ? '' : 's'}</span>
+                      </div>
+                    </Fragment>
                   );
                 })}
               </div>
             )}
-          </div>
-
-          {/* Side panel: weekly P&L boxes, one beside each grid row */}
-          {!loading && (
-            <div className="calendar-side">
-              <span className="calendar-side-title">Weekly P&amp;L</span>
-              <div className="calendar-side-spacer" />
-              <div className="calendar-side-weeks">
-                {weeklyRollup.map((week, idx) => (
-                  <div className={`calendar-side-week-box ${week.days === 0 ? '' : week.pnl >= 0 ? 'profit' : 'loss'}`} key={idx}>
-                    <span className="calendar-weekly-label">Week {idx + 1}</span>
-                    <span className={`calendar-weekly-pnl ${week.days === 0 ? 'muted' : week.pnl >= 0 ? 'positive' : 'negative'}`}>
-                      {week.days === 0 ? '—' : `${week.pnl >= 0 ? '+' : ''}$${Math.abs(week.pnl).toFixed(1)}`}
-                    </span>
-                    <span className="calendar-weekly-days">{week.days} day{week.days === 1 ? '' : 's'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Monthly metric boxes, below the calendar + weekly side panel */}
+        {/* Flat monthly stats bar, below the calendar */}
         {!loading && (
-          <div className="calendar-metrics-row">
-            {metricCards.map(c => (
-              <div className={`stat-card ${c.cardCls}`} key={c.label}>
-                <div className={`stat-icon ${c.iconCls}`}>
-                  <c.icon size={14} />
-                </div>
-                <div className="stat-label">{c.label}</div>
-                <div className={`stat-value ${c.cls}`}>{c.value}</div>
-                <div className="stat-sub">{c.sub}</div>
-              </div>
-            ))}
+          <div className="calendar-stats-bar">
+            <span>Month P&amp;L: <strong className={monthlyPnL >= 0 ? 'positive' : 'negative'}>{monthlyPnL >= 0 ? '+' : '-'}{fmtUSD(Math.abs(monthlyPnL))}</strong></span>
+            <span>Total Trades: <strong>{monthlyTrades}</strong></span>
+            <span>Profit Days: <strong className="positive">{greenDays}</strong></span>
+            <span>Loss Days: <strong className="negative">{redDays}</strong></span>
+            <span>Day Win Rate: <strong>{dailyWinRate.toFixed(0)}%</strong></span>
           </div>
         )}
       </div>

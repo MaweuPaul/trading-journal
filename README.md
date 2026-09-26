@@ -118,7 +118,7 @@ The backend runs a [Model Context Protocol](https://modelcontextprotocol.io) ser
 - **No hindsight.** The replay clock lives on the server, and no candle that closes after it is ever sent to the agent. A candle that touches both the stop and the target is settled on smaller candles, down to 1 minute, the same way the Backtest chart does it.
 - **Blind mode.** Start a session with `blind: true` and the server picks a random window, shifts the dates into 1990 (weekday and time of day stay real) and rescales prices, so the model's memory of what the market did can't leak into its decisions. Your log still stores the real dates and prices, and the Backtest Log tools never show an agent a blind trade's real dates, prices or chart.
 - **Kept apart from your stats.** Agent trades carry an **AGENT** badge (**AGENT · BLIND** for blind sessions). Every Backtest page has a **Mine / Agent / All** switch, set to **Mine** by default, so agent runs never change your own numbers unless you choose to include them.
-- **Limits.** At most 10 active sessions per user, 40 cTrader candle requests a minute per user, and 120 MCP requests a minute per key.
+- **Limits.** At most 10 active sessions per user, 600 MCP requests a minute per key (`MCP_REQUESTS_PER_MINUTE` on the backend) and 120 cTrader candle downloads a minute per user (`AGENT_CTRADER_FETCHES_PER_MINUTE`). A call takes about 0.2 s, so one script stepping flat out makes roughly 300 a minute; stepping with `bars` or an until-condition instead of one candle at a time is far faster still.
 
 Requirements: cTrader connected on the Accounts page (it supplies the candles), and a database connection (sessions and keys are stored in MongoDB).
 

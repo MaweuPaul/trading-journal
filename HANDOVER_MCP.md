@@ -32,7 +32,7 @@ Everything in section 3 is implemented. Section 3 below still describes the desi
   - At most 10 active sessions per user.
   - cTrader candle fetches run one at a time per user, at most 40 per minute (error code `RATE_LIMITED`).
   - The candle cache fetches gaps in aligned 3000-bar blocks, so step-by-step replay rarely refetches. It holds about 600k candles, evicting least recently used.
-  - The MCP route is limited to 120 requests per minute per key.
+  - The MCP route is limited to 600 requests per minute per key (`MCP_REQUESTS_PER_MINUTE`); cTrader candle downloads to 120 a minute per user (`AGENT_CTRADER_FETCHES_PER_MINUTE`). Both were 120 and 40 at first, which made scripted runs sharing one key crawl.
 - **Other changes.**
   - `get_candles` takes `before` to page further back.
   - `step` reveals one bar when no `bars`/`untilPrice`/`untilTime` is given. With only an until-condition, it runs up to `maxBars`.

@@ -47,13 +47,17 @@ async function agentAuth(req, res, next) {
   }
 }
 
+// Requests per minute per access key. A replay call takes ~0.2 s, so one
+// client stepping as fast as it can makes ~300 a minute; the default leaves
+// room for a couple of runs at once. Override with MCP_REQUESTS_PER_MINUTE.
+const REQUESTS_PER_MINUTE = Math.max(1, Math.floor(Number(process.env.MCP_REQUESTS_PER_MINUTE)) || 600);
 const limiter = rateLimit({
   windowMs: 60_000,
-  limit: 120,
+  limit: REQUESTS_PER_MINUTE,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   keyGenerator: req => String(req.apiKey._id),
-  handler: (req, res) => res.status(429).json({ jsonrpc: '2.0', error: { code: -32003, message: 'Rate limit: at most 120 requests a minute per access key. Use step with bars/untilPrice/stopOnTradeExit instead of one call per candle.' }, id: null }),
+  handler: (req, res) => res.status(429).json({ jsonrpc: '2.0', error: { code: -32003, message: `Rate limit: at most ${REQUESTS_PER_MINUTE} requests a minute per access key. Use step with bars, untilPrice, untilCloseAbove/untilCloseBelow or stopOnTradeExit instead of one call per candle.` }, id: null }),
 });
 
 const SETUP_CODES = new Set(['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED']);
@@ -94,7 +98,7 @@ function buildServer(userId, apiKeyId) {
         'Typical loop: start_session -> read candles (get_indicators for EMA/RSI/ATR/Bollinger) -> step until a setup forms -> open_trade at market, or place_order for a limit/stop entry -> step with a large bars value (stopOnTradeExit stops at the exit), moving the stop with modify_trade if the rules say so -> log_trade -> repeat. Finish with end_session and get_metrics.',
         'To improve a strategy without fooling yourself: set_holdout on its later data first; tune only on sessions before that date, using get_metrics breakdowns (including feature:<name> for entry conditions you record with features on open_trade/place_order/log_trade); save each rule change with update_strategy_rules (say what changed and why); then run the new version on the held-out period and judge it once with evaluate_holdout. get_strategy shows the full history. Keep a change only if it holds up out of sample.',
         'You can also work with the whole Backtest Log: list_backtests and get_backtest read every logged backtest (the owner\'s and agents\'), update_backtest edits journal fields such as notes and lessons, and get_metrics breaks results down by strategy, symbol, direction, weekday, hour, month, timeframe or source.',
-        'Prefer step with bars/untilPrice/untilTime over one call per candle: calls are rate limited.',
+        'Prefer step with bars/untilPrice/untilCloseAbove/untilCloseBelow/untilTime over one call per candle: it is much faster.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
         'Trades you log are marked as agent runs and kept apart from the owner\'s own backtest statistics.',
       ].join(' '),

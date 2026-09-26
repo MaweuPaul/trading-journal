@@ -33,7 +33,10 @@ const MAX_SESSION_DAYS = 5 * 365;
 const MAX_BLIND_DAYS = 365;
 // cTrader throttles historical-data requests per connection, so each user's
 // fetches run one at a time and are capped per minute across all their agents.
-const FETCHES_PER_MINUTE = 40;
+// Override with AGENT_CTRADER_FETCHES_PER_MINUTE. Each fetch is at most ~14
+// cTrader requests (a 20,000-bar window), and candles arrive in 3,000-bar
+// blocks, so most replay steps never fetch at all.
+const FETCHES_PER_MINUTE = positiveInt(process.env.AGENT_CTRADER_FETCHES_PER_MINUTE, 120);
 // Each getTrendbars call covers at most this many bars (cTrader pages 1500 at a
 // time; getTrendbars stops at 14 pages).
 const FETCH_CHUNK_BARS = 20000;
@@ -45,6 +48,11 @@ const FETCH_BLOCK_BARS = 3000;
 const MAX_CACHED_CANDLES = 600_000;
 // Blind sessions are shifted so they start in the first week of 1990 (a Monday).
 const BLIND_EPOCH = 631152000;
+
+function positiveInt(value, fallback) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 class AgentError extends Error {
   constructor(message, code = 'BAD_REQUEST') { super(message); this.code = code; }

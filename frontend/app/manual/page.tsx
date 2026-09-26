@@ -482,8 +482,8 @@ export default function ManualPage() {
             <div className="manual-sub">Limits</div>
             <KvGrid items={[
               { label: 'Active sessions', value: '10 per user' },
-              { label: 'Agent requests', value: '120 / min per key' },
-              { label: 'Candle downloads', value: '40 / min per user' },
+              { label: 'Agent requests', value: '600 / min per key' },
+              { label: 'Candle downloads', value: '120 / min per user' },
               { label: 'Session expiry', value: '7 days idle' },
             ]} />
 

@@ -172,6 +172,8 @@ body {
 .sidebar-nav {
   padding: 20px 14px;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;

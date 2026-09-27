@@ -47,7 +47,7 @@ export default function AgentKeys() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
-  const [copied, setCopied] = useState<'key' | 'command' | 'desktop' | 'url' | null>(null);
+  const [copied, setCopied] = useState<'key' | 'command' | 'desktop' | 'url' | 'codex' | 'codexLogin' | null>(null);
 
   const load = useCallback(() => fetchKeys().then(setKeys, err => setError(err instanceof Error ? err.message : 'Could not load access keys')), []);
   useEffect(() => {
@@ -56,7 +56,11 @@ export default function AgentKeys() {
       .finally(() => setLoading(false));
   }, []);
 
-  const endpoint = typeof window !== 'undefined' ? `${window.location.origin}/api/mcp` : '/api/mcp';
+  // The origin is only known in the browser; reading it during render would
+  // keep the server-rendered "/api/mcp" after hydration.
+  const [endpoint, setEndpoint] = useState('/api/mcp');
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- browser-only value
+  useEffect(() => setEndpoint(`${window.location.origin}/api/mcp`), []);
   const command = created ? `claude mcp add --transport http tradejournal ${endpoint} --header "Authorization: Bearer ${created.key}"` : '';
   // Claude Desktop can't send a custom header itself, so it goes through the
   // mcp-remote bridge. The "Bearer ..." value lives in env because Claude
@@ -70,6 +74,10 @@ export default function AgentKeys() {
       },
     },
   }, null, 2) : '';
+  // Codex (CLI and IDE extension) reads ~/.codex/config.toml and speaks
+  // Streamable HTTP natively; the key stays in an environment variable.
+  const codexConfig = `[mcp_servers.tradejournal]\nurl = "${endpoint}"\nbearer_token_env_var = "TRADEJOURNAL_KEY"`;
+  const codexLogin = `codex mcp add tradejournal --url ${endpoint}\ncodex mcp login tradejournal`;
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -107,7 +115,7 @@ export default function AgentKeys() {
     await load();
   }
 
-  async function copy(text: string, what: 'key' | 'command' | 'desktop' | 'url') {
+  async function copy(text: string, what: 'key' | 'command' | 'desktop' | 'url' | 'codex' | 'codexLogin') {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(what);
@@ -147,7 +155,16 @@ export default function AgentKeys() {
             {copied === 'url' ? <Check size={12} /> : <Copy size={12} />} {copied === 'url' ? 'Copied' : 'Copy address'}
           </button>
         </div>
-        <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>Claude Code, Claude Desktop and your own agents can use the same sign-in, or an access key created below.</span>
+        <span style={{ color: 'var(--text-secondary)', fontSize: 12.5, lineHeight: 1.55, marginTop: 4 }}>
+          <b>Codex</b> (CLI or IDE extension) can use the same sign-in: run these two commands, then allow it in the browser page that opens.
+        </span>
+        <pre style={{ ...codeStyle, margin: 0, whiteSpace: 'pre-wrap' }}>{codexLogin}</pre>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn-ghost" style={small} onClick={() => copy(codexLogin, 'codexLogin')}>
+            {copied === 'codexLogin' ? <Check size={12} /> : <Copy size={12} />} {copied === 'codexLogin' ? 'Copied' : 'Copy commands'}
+          </button>
+        </div>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>Claude Code, Claude Desktop, Codex and your own agents can use the same sign-in, or an access key created below.</span>
       </div>
 
       {created && (
@@ -175,6 +192,16 @@ export default function AgentKeys() {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn-ghost" style={small} onClick={() => copy(desktopConfig, 'desktop')}>
                 {copied === 'desktop' ? <Check size={12} /> : <Copy size={12} />} {copied === 'desktop' ? 'Copied' : 'Copy config'}
+              </button>
+            </div>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 }}>
+              Connect Codex (CLI or IDE extension): add this to <code>~/.codex/config.toml</code>, set the environment variable
+              <code> TRADEJOURNAL_KEY</code> to the key above, then restart Codex.
+            </span>
+            <pre style={{ ...codeStyle, margin: 0, whiteSpace: 'pre-wrap' }}>{codexConfig}</pre>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn-ghost" style={small} onClick={() => copy(codexConfig, 'codex')}>
+                {copied === 'codex' ? <Check size={12} /> : <Copy size={12} />} {copied === 'codex' ? 'Copied' : 'Copy Codex config'}
               </button>
               <button className="btn-ghost" style={small} onClick={() => setCreated(null)}>I&apos;ve saved it</button>
             </div>

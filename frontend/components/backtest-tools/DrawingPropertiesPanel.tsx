@@ -10,6 +10,10 @@ export interface DrawingPropertiesCapabilities {
   coordinates?: boolean;
   visibility?: boolean;
   extendRight?: boolean;
+  /** false hides the line width picker (e.g. text notes). */
+  lineWidth?: boolean;
+  /** false hides the inside/above/below text placement (e.g. text notes). */
+  placement?: boolean;
 }
 
 export interface DrawingPropertiesValue {
@@ -37,6 +41,7 @@ interface DrawingPropertiesPanelProps {
   value: DrawingPropertiesValue;
   onSave: (value: DrawingPropertiesValue) => void;
   onCancel: () => void;
+  initialTab?: TabId;
 }
 
 type TabId = 'style' | 'text' | 'coordinates' | 'visibility';
@@ -56,6 +61,7 @@ export default function DrawingPropertiesPanel({
   value,
   onSave,
   onCancel,
+  initialTab,
 }: DrawingPropertiesPanelProps) {
   const tabs = useMemo(() => ([
     capabilities.style ? { id: 'style' as const, label: 'Style' } : null,
@@ -63,12 +69,15 @@ export default function DrawingPropertiesPanel({
     capabilities.coordinates ? { id: 'coordinates' as const, label: 'Coordinates' } : null,
     capabilities.visibility ? { id: 'visibility' as const, label: 'Visibility' } : null,
   ].filter(Boolean) as { id: TabId; label: string }[]), [capabilities]);
-  const [activeTab, setActiveTab] = useState<TabId>(tabs[0]?.id ?? 'style');
+  const [activeTab, setActiveTab] = useState<TabId>(tabs.some(tab => tab.id === initialTab) ? initialTab! : tabs[0]?.id ?? 'style');
   const [draft, setDraft] = useState(value);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (activeTab === 'text') textRef.current?.focus();
+    if (activeTab !== 'text') return;
+    // After the click that opened the panel has finished (it would take focus back).
+    const timer = window.setTimeout(() => textRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
   }, [activeTab]);
 
   useEffect(() => {
@@ -167,9 +176,11 @@ export default function DrawingPropertiesPanel({
                   <span className="tw:sr-only">Line color</span>
                   <input type="color" value={draft.lineColor} onChange={event => update('lineColor', event.target.value)} className="tw:h-8 tw:w-8 tw:cursor-pointer tw:border-0 tw:bg-transparent tw:p-0" />
                 </label>
-                <select value={draft.lineWidth} onChange={event => update('lineWidth', Number(event.target.value))} aria-label="Line width" className="tw:h-11 tw:rounded-lg tw:border tw:border-outline-variant tw:bg-surface-container-lowest tw:px-3 tw:text-base tw:text-on-surface">
-                  {LINE_WIDTHS.map(width => <option key={width} value={width}>{width}</option>)}
-                </select>
+                {capabilities.lineWidth !== false && (
+                  <select value={draft.lineWidth} onChange={event => update('lineWidth', Number(event.target.value))} aria-label="Line width" className="tw:h-11 tw:rounded-lg tw:border tw:border-outline-variant tw:bg-surface-container-lowest tw:px-3 tw:text-base tw:text-on-surface">
+                    {LINE_WIDTHS.map(width => <option key={width} value={width}>{width}</option>)}
+                  </select>
+                )}
                 <div className="tw:flex tw:flex-wrap tw:gap-2">
                   {COLOR_SWATCHES.map(color => (
                     <button key={color} type="button" aria-label={'Use ' + color} onClick={() => update('lineColor', color)} className={`tw:h-8 tw:w-8 tw:rounded-full tw:border-2 ${draft.lineColor.toLowerCase() === color ? 'tw:border-on-surface' : 'tw:border-outline-variant'}`} style={{ background: color }} />
@@ -211,7 +222,7 @@ export default function DrawingPropertiesPanel({
                 onKeyDown={handleTextKeyDown}
                 className="tw:w-full tw:resize-none tw:rounded-lg tw:border-2 tw:border-primary tw:bg-surface-container-lowest tw:px-3 tw:py-2 tw:text-base tw:text-on-surface tw:caret-primary tw:outline-none tw:placeholder:text-on-surface-variant/70"
               />
-              <div className="tw:grid tw:grid-cols-1 tw:gap-3 tw:sm:grid-cols-2">
+              {capabilities.placement !== false && <div className="tw:grid tw:grid-cols-1 tw:gap-3 tw:sm:grid-cols-2">
                 <label className="tw:flex tw:items-center tw:justify-between tw:gap-3 tw:text-base tw:font-semibold tw:text-on-surface">
                   Text alignment
                   <select value={draft.textPlacement} onChange={event => update('textPlacement', event.target.value as DrawingPropertiesValue['textPlacement'])} className="tw:h-11 tw:min-w-32 tw:rounded-lg tw:border tw:border-outline-variant tw:bg-surface-container-lowest tw:px-3 tw:text-base tw:font-normal">
@@ -225,7 +236,7 @@ export default function DrawingPropertiesPanel({
                   <option value="center">Center</option>
                   <option value="right">Right</option>
                 </select>
-              </div>
+              </div>}
             </div>
           )}
 
@@ -262,9 +273,7 @@ export default function DrawingPropertiesPanel({
         </div>
 
         <div className="tw:flex tw:items-center tw:justify-between tw:border-t tw:border-outline-variant tw:px-6 tw:py-5">
-          <button type="button" className="tw:h-11 tw:rounded-lg tw:border tw:border-outline-variant tw:px-4 tw:text-base tw:font-semibold tw:text-on-surface hover:tw:bg-surface-container" onClick={() => setActiveTab('text')} disabled={!capabilities.text}>
-            Template
-          </button>
+          <span />
           <div className="tw:flex tw:items-center tw:gap-3">
             <button type="button" onClick={onCancel} className="tw:h-11 tw:rounded-lg tw:border tw:border-on-surface tw:px-4 tw:text-base tw:font-semibold tw:text-on-surface hover:tw:bg-surface-container-high">
               Cancel

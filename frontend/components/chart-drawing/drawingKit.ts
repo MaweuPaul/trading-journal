@@ -41,8 +41,41 @@ export function fillWithOpacity(hex: string, opacity: number) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.max(0, Math.min(1, opacity))})`;
 }
 
+// Text notes keep their text, size and colour in their own settings, which
+// the library neither saves nor reads from the style. We keep them in the
+// style (drawingText, drawingTextFontSize…, lineColor) so they're saved, and
+// copy them onto the note whenever it's created or edited.
+type TextNote = IDrawing & { setTextOptions?: (o: Record<string, unknown>) => void; getText?: () => string };
+export function syncTextNote(drawing: IDrawing | null | undefined) {
+  if (!drawing || drawing.type !== 'text-annotation') return;
+  const note = drawing as TextNote;
+  const st = (drawing as DrawingWithText).style;
+  const color = st.lineColor || '#3b82f6';
+  note.setTextOptions?.({
+    text: st.drawingText ?? note.getText?.() ?? '',
+    fontSize: st.drawingTextFontSize || 14,
+    fontWeight: `${st.drawingTextItalic ? 'italic ' : ''}${st.drawingTextBold ? 'bold' : 'normal'}`,
+    borderColor: color,
+  });
+  if (st.labelColor !== color) drawing.updateStyle({ labelColor: color });
+  drawing.requestUpdate();
+}
+
+/** Change a drawing's colour (text notes: their text and border too). */
+export function setDrawingColor(drawing: IDrawing, color: string) {
+  drawing.updateStyle({ lineColor: color });
+  syncTextNote(drawing);
+  drawing.requestUpdate();
+}
+
 export function drawingFactory(type: string, data: SerializedDrawing) {
-  return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
+  const style = data.style as DrawingWithText['style'] | undefined;
+  const options = type === 'text-annotation'
+    ? { ...data.options, text: style?.drawingText ?? (data.options as { text?: string } | undefined)?.text ?? '' }
+    : data.options;
+  const drawing = getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, options);
+  syncTextNote(drawing);
+  return drawing;
 }
 
 export type DrawingWithText = IDrawing & {
@@ -67,8 +100,8 @@ export function getDrawingText(drawing: IDrawing) {
 
 export function setDrawingText(drawing: IDrawing, text: string) {
   const withText = drawing as DrawingWithText;
-  if (drawing.type === 'text-annotation' && withText.setText) withText.setText(text);
-  else drawing.updateStyle({ drawingText: text } as DrawingWithText['style']);
+  drawing.updateStyle({ drawingText: text } as DrawingWithText['style']);
+  if (drawing.type === 'text-annotation') withText.setText?.(text);
   drawing.requestUpdate();
 }
 
@@ -85,6 +118,8 @@ export function drawingCapabilities(drawing: IDrawing): DrawingPropertiesCapabil
     coordinates: true,
     visibility: true,
     extendRight: drawing.type === 'rectangle' || drawing.type === 'trend-line' || drawing.type === 'ray',
+    lineWidth: drawing.type !== 'text-annotation',
+    placement: drawing.type !== 'text-annotation',
   };
 }
 
@@ -97,7 +132,7 @@ export function drawingPropertiesValue(drawing: IDrawing): DrawingPropertiesValu
     fillOpacity: typeof drawing.style.fillOpacity === 'number' ? drawing.style.fillOpacity : 0.12,
     filled: Boolean(withText.options.filled),
     text: getDrawingText(drawing),
-    textFontSize: withText.style.drawingTextFontSize || 12,
+    textFontSize: withText.style.drawingTextFontSize || (drawing.type === 'text-annotation' ? 14 : 12),
     textBold: Boolean(withText.style.drawingTextBold),
     textItalic: Boolean(withText.style.drawingTextItalic),
     textPlacement: withText.style.drawingTextPlacement || 'inside',
@@ -130,6 +165,7 @@ export function applyDrawingProperties(drawing: IDrawing, value: DrawingProperti
     extendRight: value.extendRight,
     filled: value.filled,
   } as Partial<DrawingWithText['options']>);
+  syncTextNote(drawing);
   drawing.requestUpdate();
 }
 
@@ -162,6 +198,7 @@ export function legacyToDrawing(a: { type: string } & Record<string, unknown>): 
     anchors: anchors as SerializedDrawing['anchors'],
     style: style as SerializedDrawing['style'],
     options: { visible: true, ...(a.type === 'rect' ? { filled: true } : {}), ...(a.type === 'text' ? { text: String(a.text || '') } : {}) } as SerializedDrawing['options'],
+    ...(a.type === 'text' ? { style: { ...style, drawingText: String(a.text || '') } as SerializedDrawing['style'] } : {}),
   };
 }
 

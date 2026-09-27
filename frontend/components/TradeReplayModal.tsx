@@ -4,7 +4,7 @@ import {
   X, Play, Pause, SkipBack, SkipForward,
   Loader2, AlertTriangle, ExternalLink,
   BookOpenText, Tags, BarChart3, CheckCircle2, Trash2, MapPin,
-  ImagePlus, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronLeft, ChevronRight, GripVertical,
+  Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronLeft, ChevronRight, GripVertical,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
@@ -37,8 +37,8 @@ interface ReplayError { setup?: boolean; error?: string; code?: string; }
 interface DrawnImage { id: string; time: number; price: number; url: string; caption: string; screenshotId: string; color: string; }
 type ReplayAnnotation = { type: string; id: string };
 // Shapes (lines, zones, text…) come from the shared drawing tools; this canvas
-// only places timeline moments and pinned evidence images.
-type DrawingTool = 'none' | 'image' | 'event';
+// places timeline moments and shows images pinned before (no new uploads).
+type DrawingTool = 'none' | 'event';
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
   visibilityScope?: 'timeframe' | 'all'; order?: number;
@@ -74,7 +74,6 @@ const EMOTIONS = [
 ];
 const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
 const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  image: { label: 'Chart image', instruction: 'Add a caption, then click the chart to pin the evidence.' },
   event: { label: 'Timeline moment', instruction: 'Click the candle where the decision, emotion, mistake, or lesson happened.' },
 };
 const REPLAY_TIMEFRAMES = [
@@ -114,7 +113,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [error, setError] = useState('');
   const [isSetupError, setIsSetupError] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -132,8 +130,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const drawingsRef = useRef<SerializedDrawing[]>([]);
   const [drawings, setDrawings] = useState<SerializedDrawing[]>([]);
   const candlesRef = useRef<Candle[] | null>(null);
-  const [pendingImage, setPendingImage] = useState<Omit<DrawnImage, 'id' | 'time' | 'price' | 'color'> | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
   const [annotationSaveState, setAnnotationSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
   const [annotationSaveError, setAnnotationSaveError] = useState('');
   const [loadedAnnotationKey, setLoadedAnnotationKey] = useState('');
@@ -203,7 +199,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const activeToolGuidance = TOOL_GUIDANCE[drawingTool];
   const stopDrawing = () => {
     setDrawingTool('none');
-    setPendingImage(null);
     setEventLocation(null);
     setEditingEventId('');
     redrawCanvasRef.current();
@@ -212,14 +207,13 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const turningOff = drawingTool === tool;
     if (!turningOff) activateTool(null);
     setDrawingTool(turningOff ? 'none' : tool);
-    setPendingImage(null);
     setEventLocation(null);
     setEditingEventId('');
   };
   // Picking a shared drawing tool turns off the Moment / image placement.
   useEffect(() => {
     if (!engine.activeTool) return;
-    queueMicrotask(() => { setDrawingTool('none'); setPendingImage(null); });
+    queueMicrotask(() => setDrawingTool('none'));
   }, [engine.activeTool]);
   const annotationKey = `${tradeId}:${selectedInterval}`;
   useEffect(() => { activeAnnotationKeyRef.current = annotationKey; }, [annotationKey]);
@@ -239,7 +233,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         drawingsRef.current = loaded; setDrawings(loaded);
         const candles = candlesRef.current;
         replaceDrawings(candles ? snapToCandles(loaded, candles.map(c => Number(c.time))) : loaded);
-        setDrawnImages(images); setPendingImage(null);
+        setDrawnImages(images);
         // Older shapes are converted to the shared tools' format; only save once something changes.
         annotationBaselineRef.current = JSON.stringify([...images.map(image => ({ ...image, type: 'image' })), ...toDrawingEntries(loaded)]);
         if (eventsLoadedTradeRef.current !== tradeId) {
@@ -569,51 +563,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setEventLocation({ time: Number(time), price });
       return;
     }
-    if (drawingTool === 'image' && pendingImage) {
-      setDrawnImages(current => [...current, { id: `image-${Date.now()}`, time: Number(time), price, color: engine.color, ...pendingImage }]);
-      setPendingImage(null); setDrawingTool('none');
-    }
-  };
-
-  const uploadReplayImage = async (file: File) => {
-    if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
-    if (file.size > 8 * 1024 * 1024) { alert('Please keep chart images under 8MB.'); return; }
-    const token = localStorage.getItem('token'); if (!token) return;
-    setUploadingImage(true); setPendingImage(null);
-    try {
-      const imageData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Could not read the image')); reader.readAsDataURL(file);
-      });
-      const caption = file.name.replace(/\.[^.]+$/, '').slice(0, 160) || 'Replay chart evidence';
-      const response = await fetch(`${API}/trades/${tradeId}/screenshots`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ imageData, caption: `Replay evidence: ${caption}` }),
-      });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not upload chart image');
-      const screenshots = Array.isArray(body.screenshots) ? body.screenshots : [];
-      const uploaded = screenshots[screenshots.length - 1];
-      if (!uploaded?.url) throw new Error('The image uploaded but no image URL was returned');
-      activateTool(null);
-      setPendingImage({ url: String(uploaded.url), caption, screenshotId: String(uploaded._id || uploaded.publicId || '') });
-      setDrawingTool('image');
-    } catch (uploadError) {
-      alert(uploadError instanceof Error ? uploadError.message : 'Could not upload chart image'); setDrawingTool('none');
-    } finally { setUploadingImage(false); }
-  };
-  const handleReplayImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]; event.target.value = '';
-    if (file) uploadReplayImage(file);
-  };
-  const [isDraggingFileOverChart, setIsDraggingFileOverChart] = useState(false);
-  const handleChartDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes('Files')) return;
-    event.preventDefault(); setIsDraggingFileOverChart(true);
-  };
-  const handleChartDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes('Files')) return;
-    event.preventDefault(); setIsDraggingFileOverChart(false);
-    const file = event.dataTransfer.files?.[0];
-    if (file) uploadReplayImage(file);
   };
 
   const handleSave = async () => {
@@ -649,8 +598,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       if (showShortcutHelp) { e.preventDefault(); setShowShortcutHelp(false); }
       // The drawing tools handle Esc themselves (cancel the tool, deselect, close the editor).
       else if (drawingBusy) e.preventDefault();
-      else if (eventLocation || drawingTool !== 'none' || pendingImage) {
-        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setPendingImage(null); setDrawingTool('none');
+      else if (eventLocation || drawingTool !== 'none') {
+        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setDrawingTool('none');
       } else onClose();
     };
     const previousOverflow = document.body.style.overflow;
@@ -663,7 +612,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       document.body.classList.remove('replay-open');
       window.removeEventListener('keydown', onKey);
     };
-  }, [drawingBusy, drawingTool, eventLocation, onClose, pendingImage, showShortcutHelp]);
+  }, [drawingBusy, drawingTool, eventLocation, onClose, showShortcutHelp]);
 
   const totalCandles = replayData?.candles.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
@@ -703,7 +652,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     if (interval === selectedInterval) return;
     setPlaying(false); setReplayData(null); setLoading(true); setError('');
     setDrawnImages([]); drawingsRef.current = []; setDrawings([]); activateTool(null);
-    setPendingImage(null); setDrawingTool('none');
+    setDrawingTool('none');
     setSelectedInterval(interval);
     onIntervalChange?.(interval);
   };
@@ -836,8 +785,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <div className="replay-tool-group">
           <span className="replay-tool-group-label">Document</span>
           <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn replay-tool-primary${drawingTool === 'event' ? ' active' : ''}`} onClick={() => activateDrawingTool('event')} title="Record a decision, emotion, mistake, or lesson at a candle"><MapPin size={16} /> Moment</button>
-          <input ref={imageInputRef} className="replay-hidden-file" type="file" accept="image/*" onChange={handleReplayImageUpload} />
-          <button type="button" disabled={uploadingImage} aria-pressed={drawingTool === 'image'} className={`replay-tool-btn${drawingTool === 'image' ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload and pin visual evidence to the chart"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Evidence'}</button>
         </div>
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
@@ -859,18 +806,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
       <div className="replay-body">
         <ChartDrawingToolbar engine={engine} className="replay-drawing-toolbar" />
-        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop}>
+        <div className="replay-chart-wrap">
           <div ref={chartContainerRef} className="replay-chart-container" />
           <ChartDrawingLayer engine={engine} />
-          {isDraggingFileOverChart && (
-            <div className="replay-chart-drop-hint" role="status"><ImagePlus size={20} /> Drop image to pin as chart evidence</div>
-          )}
-          {drawingTool === 'image' && pendingImage && (
-            <div className="replay-chart-image-placer" role="status">
-              <ImagePlus size={16} /><div><strong>Image ready to place</strong><input aria-label="Image caption" maxLength={180} value={pendingImage.caption} onChange={event => setPendingImage(current => current ? { ...current, caption: event.target.value } : current)} /><span>Describe the evidence, then click the candle and price where it belongs.</span></div>
-              <button type="button" onClick={() => { setPendingImage(null); setDrawingTool('none'); }}>Cancel</button>
-            </div>
-          )}
           {eventLocation && (
             <div className="replay-event-editor" role="dialog" aria-label={editingEventId ? 'Edit timeline event' : 'Add timeline event'}>
               <div className="replay-event-editor-head"><strong>{editingEventId ? 'Edit chart event' : 'What happened here?'}</strong><button type="button" aria-label="Cancel timeline moment" onClick={() => { setEventLocation(null); setEditingEventId(''); setDrawingTool('none'); }}>×</button></div>

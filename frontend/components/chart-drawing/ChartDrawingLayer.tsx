@@ -33,6 +33,7 @@ export default function ChartDrawingLayer({ engine }: { engine: ChartDrawings })
               key={engine.editing.drawingId}
               drawingName={engine.editing.drawingName}
               isNew={engine.editing.isNew}
+              initialTab={editingDrawing.type === 'text-annotation' ? 'text' : undefined}
               capabilities={drawingCapabilities(editingDrawing)}
               value={drawingPropertiesValue(editingDrawing)}
               onSave={engine.saveProperties}

@@ -6,7 +6,7 @@ import {
   createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, MouseEventParams, Time } from 'lightweight-charts';
-import { Drawing, DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
+import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
@@ -25,7 +25,8 @@ import {
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
-import DrawingPropertiesPanel, { DrawingPropertiesCapabilities, DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
+import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
+import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, setDrawingColor } from '../chart-drawing/drawingKit';
 import DrawingTextOverlay from '../backtest-tools/DrawingTextOverlay';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
@@ -124,102 +125,10 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
 interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
-type DrawingWithText = IDrawing & {
-  style: IDrawing['style'] & {
-    drawingText?: string;
-    drawingTextFontSize?: number;
-    drawingTextBold?: boolean;
-    drawingTextItalic?: boolean;
-    drawingTextPlacement?: DrawingPropertiesValue['textPlacement'];
-    drawingTextAlign?: DrawingPropertiesValue['textAlign'];
-  };
-  options: IDrawing['options'] & { filled?: boolean };
-  getText?: () => string;
-  setText?: (text: string) => void;
-};
-
-function getDrawingText(drawing: IDrawing) {
-  const withText = drawing as DrawingWithText;
-  return (withText.getText?.() ?? withText.style.drawingText ?? '').trim();
-}
-
-function setDrawingText(drawing: IDrawing, text: string) {
-  const withText = drawing as DrawingWithText;
-  if (drawing.type === 'text-annotation' && withText.setText) withText.setText(text);
-  else drawing.updateStyle({ drawingText: text } as DrawingWithText['style']);
-  drawing.requestUpdate();
-}
-
 function drawingDisplayName(type: string) {
   return WORKSPACE_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
 }
 
-function drawingCapabilities(drawing: IDrawing): DrawingPropertiesCapabilities {
-  const textTypes = new Set(['rectangle', 'trend-line', 'ray', 'horizontal-line', 'parallel-channel', 'fib-retracement', 'fib-extension', 'arrow', 'text-annotation']);
-  const fillTypes = new Set(['rectangle']);
-  return {
-    style: true,
-    fill: fillTypes.has(drawing.type),
-    text: textTypes.has(drawing.type),
-    coordinates: true,
-    visibility: true,
-    extendRight: drawing.type === 'rectangle' || drawing.type === 'trend-line' || drawing.type === 'ray',
-  };
-}
-
-function drawingPropertiesValue(drawing: IDrawing): DrawingPropertiesValue {
-  const withText = drawing as DrawingWithText;
-  return {
-    lineColor: drawing.style.lineColor || '#3b82f6',
-    lineWidth: drawing.style.lineWidth || 2,
-    fillColor: drawing.style.fillColor || drawing.style.lineColor || '#3b82f6',
-    fillOpacity: typeof drawing.style.fillOpacity === 'number' ? drawing.style.fillOpacity : 0.12,
-    filled: Boolean(withText.options.filled),
-    text: getDrawingText(drawing),
-    textFontSize: withText.style.drawingTextFontSize || 12,
-    textBold: Boolean(withText.style.drawingTextBold),
-    textItalic: Boolean(withText.style.drawingTextItalic),
-    textPlacement: withText.style.drawingTextPlacement || 'inside',
-    textAlign: withText.style.drawingTextAlign || 'center',
-    visible: drawing.options.visible !== false,
-    locked: Boolean(drawing.options.locked),
-    extendRight: Boolean(drawing.options.extendRight),
-    anchors: drawing.anchors.map(anchor => ({ time: String(anchor.time), price: anchor.price })),
-  };
-}
-
-function applyDrawingProperties(drawing: IDrawing, value: DrawingPropertiesValue) {
-  setDrawingText(drawing, value.text);
-  drawing.updateStyle({
-    lineColor: value.lineColor,
-    lineWidth: value.lineWidth,
-    fillColor: value.fillColor,
-    fillOpacity: value.fillOpacity,
-    drawingText: value.text,
-    drawingTextFontSize: value.textFontSize,
-    drawingTextBold: value.textBold,
-    drawingTextItalic: value.textItalic,
-    drawingTextPlacement: value.textPlacement,
-    drawingTextAlign: value.textAlign,
-  } as Partial<DrawingWithText['style']>);
-  drawing.updateOptions({
-    visible: value.visible,
-    locked: value.locked,
-    extendRight: value.extendRight,
-    filled: value.filled,
-  } as Partial<DrawingWithText['options']>);
-  drawing.requestUpdate();
-}
-
-// The library feeds every drawing's anchor prices into the price scale's
-// auto-fit, so one old line far from price (even hidden or off screen)
-// squashed the candles, and "Reset chart" couldn't undo it. Like TradingView,
-// fit the price scale to the candles only.
-(Drawing.prototype as unknown as { autoscaleInfo: () => null }).autoscaleInfo = () => null;
-
-function drawingFactory(type: string, data: SerializedDrawing) {
-  return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
-}
 /**
  * Move each anchor onto a candle of the chart it's imported into: the last
  * revealed candle opening at or before it, or for points in the future, onto
@@ -521,7 +430,7 @@ export default function Workspace() {
       const d = manager.getDrawing(selectedDrawingId);
       if (d) {
         pushHistorySnapshot();
-        d.updateStyle({ lineColor: color });
+        setDrawingColor(d, color);
         d.requestUpdate();
         setDrawingRevision(revision => revision + 1);
       }
@@ -871,7 +780,7 @@ export default function Workspace() {
     const unsubscribers = [
       manager.on('drawing:added', event => {
         if (event.drawing) {
-          if (drawColorRef.current) event.drawing.updateStyle({ lineColor: drawColorRef.current });
+          if (drawColorRef.current) setDrawingColor(event.drawing, drawColorRef.current);
           // Zones extend with the replay: the right edge follows the latest candle (see the reveal effect).
           if (event.drawing.type === 'rectangle' && !event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: true });
           if (event.drawing.type === 'text-annotation') {
@@ -1408,6 +1317,8 @@ export default function Workspace() {
     const id = `${activeDrawType}-${crypto.randomUUID().slice(0, 8)}`;
     const drawing = registry.createDrawing(activeDrawType, id, Array.from({ length: required }, () => ({ ...anchor })), { lineColor: drawColor });
     if (!drawing) return;
+    if (drawing.type === 'text-annotation') drawing.updateStyle({ drawingText: '' } as Partial<IDrawing['style']>);
+    setDrawingColor(drawing, drawColor);
     pendingDrawingRef.current = { drawing, required, placed: 1, startX: x, startY: y, origin: anchor };
     manager.addDrawing(drawing);
     // The text tool's `drawing:added` handler may have removed it (prompt cancelled).
@@ -2091,6 +2002,7 @@ export default function Workspace() {
                 key={drawingPropertiesEdit.drawingId}
                 drawingName={drawingPropertiesEdit.drawingName}
                 isNew={drawingPropertiesEdit.isNew}
+                initialTab={drawing.type === 'text-annotation' ? 'text' : undefined}
                 capabilities={drawingCapabilities(drawing)}
                 value={drawingPropertiesValue(drawing)}
                 onSave={saveDrawingProperties}

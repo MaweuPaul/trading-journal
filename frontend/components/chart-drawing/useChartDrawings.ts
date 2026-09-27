@@ -9,7 +9,7 @@ import type { IChartApi, ISeriesApi, SeriesType } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import type { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
-import { DRAWING_SWATCHES, applyDrawingProperties, drawingDisplayName, drawingFactory } from './drawingKit';
+import { DRAWING_SWATCHES, applyDrawingProperties, drawingDisplayName, drawingFactory, setDrawingColor } from './drawingKit';
 
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 export interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
@@ -147,7 +147,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
       manager.on('drawing:added', ev => {
         if (importingRef.current) return;
         if (ev.drawing) {
-          ev.drawing.updateStyle({ lineColor: colorRef.current });
+          setDrawingColor(ev.drawing, colorRef.current);
           if (ev.drawing.type === 'text-annotation') setEditing({ drawingId: ev.drawing.id, drawingName: drawingDisplayName(ev.drawing.type), isNew: true });
         }
         changed();
@@ -284,6 +284,8 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     const id = `${activeTool}-${crypto.randomUUID().slice(0, 8)}`;
     const drawing = registry.createDrawing(activeTool, id, Array.from({ length: required }, () => ({ ...a })), { lineColor: color });
     if (!drawing) return;
+    if (drawing.type === 'text-annotation') drawing.updateStyle({ drawingText: '' } as Partial<IDrawing['style']>);
+    setDrawingColor(drawing, color);
     pushHistory();
     pendingRef.current = { drawing, required, placed: 1, startX: x, startY: y, origin: a };
     importingRef.current = true; // no save until it's placed
@@ -331,7 +333,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
   const pickColor = (c: string) => {
     setColor(c);
     const d = selectedId ? managerRef.current?.getDrawing(selectedId) : null;
-    if (d) { pushHistory(); d.updateStyle({ lineColor: c }); d.requestUpdate(); changed(); }
+    if (d) { pushHistory(); setDrawingColor(d, c); changed(); }
   };
   const editSelected = () => {
     const d = selectedId ? managerRef.current?.getDrawing(selectedId) : null;

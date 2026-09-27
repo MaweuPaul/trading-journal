@@ -175,3 +175,114 @@ test('over MCP: strategy_api, run_strategy and get_strategy_run', async () => {
     server.close();
   }
 });
+
+test('trend indicators: streaming values match the array functions; ADX/MACD/Donchian sane', async () => {
+  const user = H.newUserId();
+  const code = `
+    function near(a, b) { return a == null ? b == null : Math.abs(a - b) < 1e-7; }
+    function onBar(ctx) {
+      const s = ctx.series(), c = s.close, n = c.length;
+      const checks = {
+        sma: [ctx.sma(20), ctx.ta.sma(c, 20)[n - 1]],
+        ema: [ctx.ema(30), ctx.ta.ema(c, 30)[n - 1]],
+        rsi: [ctx.rsi(14), ctx.ta.rsi(c, 14)[n - 1]],
+        atr: [ctx.atr(14), ctx.ta.atr(s.high, s.low, c, 14)[n - 1]],
+        emaBack: [ctx.ema(30, { back: 2 }), ctx.ta.ema(c, 30)[n - 3]],
+      };
+      for (const [k, [a, b]] of Object.entries(checks)) if (!near(a, b)) ctx.log('mismatch', k, a, b);
+      const d = ctx.donchian(20);
+      if (d) {
+        const hi = Math.max(...s.high.slice(n - 21, n - 1)), lo = Math.min(...s.low.slice(n - 21, n - 1));
+        if (!near(d.upper, hi) || !near(d.lower, lo)) ctx.log('donchian', d, hi, lo);
+      }
+      const x = ctx.adx(14);
+      if (x && !(x.adx >= 0 && x.adx <= 100 && x.plusDI >= 0 && x.minusDI >= 0)) ctx.log('adx', x);
+      const m = ctx.macd();
+      if (m && !near(m.hist, m.macd - m.signal)) ctx.log('macd', m);
+      const b = ctx.bollinger(20);
+      if (b && !(b.upper >= b.mid && b.mid >= b.lower)) ctx.log('bollinger', b);
+      const st = ctx.supertrend(10, { mult: 3 });
+      if (st && !['up', 'down'].includes(st.direction)) ctx.log('supertrend', st);
+      if (ctx.index > 200 && (!x || !m || !st)) ctx.log('still null', ctx.index);
+    }`;
+  const res = await run(user, code, { timeframe: '1h', warmupBars: 0, to: '2024-02-20' });
+  assert.equal(res.status, 'done', JSON.stringify(res.error));
+  assert.equal(res.logs, undefined, JSON.stringify(res.logs && res.logs.slice(0, 5)));
+});
+
+test('pyramiding: several positions at once, each settled on its own; maxPositions enforced', async () => {
+  const user = H.newUserId();
+  const code = `
+    function onBar(ctx) {
+      if (ctx.time.utc.minute !== 0) return;
+      const c = ctx.bar.close;
+      if (ctx.positions.length < 3) ctx.buy({ stop: c - 3, target: c + 3, tag: 'unit' + (ctx.positions.length + 1) });
+      if (ctx.time.utc.hour === 12) ctx.buy({ stop: c - 3 }); // a 4th is rejected while 3 are open
+    }`;
+  const res = await run(user, code, { maxPositions: 3, to: '2024-01-25' });
+  assert.equal(res.status, 'done', JSON.stringify(res.error));
+  const trades = await all(user, res);
+  const overlaps = trades.filter((t, i) => trades.some((u, j) => j !== i && u.entryTime < t.exitTime && t.entryTime < u.exitTime)).length;
+  assert.ok(overlaps > 10, `positions overlap (${overlaps})`);
+  assert.ok(res.rejectedActions.first.some(r => /maxPositions/.test(r)));
+  for (const t of trades.filter(t => t.exitReason !== 'end')) {
+    const truth = H.firstLevelOn1m({ direction: 'long', stopLoss: t.stopLoss, takeProfit: t.takeProfit }, toSec(t.entryTime) + 900, Infinity);
+    assert.equal(t.exitReason, truth, t.entryTime);
+  }
+  const ids = new Set(trades.map(t => t.entryTime + t.tag));
+  assert.equal(ids.size, trades.length);
+});
+
+test('partial exits: R adds up each part at its own price; trailing stops move', async () => {
+  const user = H.newUserId();
+  const code = `
+    function onBar(ctx) {
+      const c = ctx.bar.close;
+      if (!ctx.position && ctx.time.utc.hour === 10 && ctx.time.utc.minute === 0) { ctx.buy({ stop: c - 50 }); return; }
+      const p = ctx.position;
+      if (!p) return;
+      if (p.barsHeld === 2) ctx.close({ fraction: 0.5 });
+      else if (p.barsHeld === 4) ctx.modify({ stop: c - 40 });
+      else if (p.barsHeld === 6) ctx.close();
+    }`;
+  const res = await run(user, code, { to: '2024-01-20' });
+  const trades = await all(user, res);
+  assert.ok(trades.length > 3);
+  for (const t of trades) {
+    assert.equal(t.partials.length, 1);
+    assert.equal(t.partials[0].portion, 0.5);
+    const risk = t.entryPrice - t.stopLoss;
+    const expected = 0.5 * (t.partials[0].price - t.entryPrice) / risk + 0.5 * (t.exitPrice - t.entryPrice) / risk;
+    assert.ok(Math.abs(t.rMultiple - expected) < 2e-3, `${t.rMultiple} vs ${expected}`);
+    assert.ok(t.finalStopLoss > t.stopLoss, 'stop was trailed up');
+    assert.equal(t.exitReason, 'manual');
+  }
+});
+
+test('several symbols in one run, combined and broken down by symbol', async () => {
+  const user = H.newUserId();
+  const code = `function onBar(ctx) { if (!ctx.position && ctx.time.utc.hour === 14 && ctx.time.utc.minute === 0) ctx.buy({ stop: ctx.bar.close - 1, target: ctx.bar.close + 1, tag: ctx.symbol }); }`;
+  const res = await run(user, code, { symbol: undefined, symbols: ['XAUUSD', 'XAUEUR'], to: '2024-01-25' });
+  assert.equal(res.status, 'done', JSON.stringify(res.error));
+  const r = await runner.getRun(user, res.runId, { groupBy: ['symbol'] });
+  assert.deepEqual(r.breakdowns.symbol.map(g => g.symbol).sort(), ['XAUEUR', 'XAUUSD']);
+  assert.equal(r.breakdowns.symbol[0].trades, r.breakdowns.symbol[1].trades, 'same feed, same trades');
+  assert.equal(r.summary.trades, r.breakdowns.symbol[0].trades * 2);
+  assert.ok((await all(user, res)).every(t => t.tag === undefined || t.tag === 'XAUUSD' || t.tag === 'XAUEUR'));
+});
+
+test('the reference examples run', async () => {
+  const { REFERENCE } = require('../lib/strategySandbox/reference');
+  const blocks = REFERENCE.split('## Example').slice(1).map(b => b.slice(b.indexOf('\n') + 1));
+  const settings = [
+    { timeframe: '15min' },
+    { timeframe: '1h', maxPositions: 3, params: { entry: 20, add: 0.5, trail: 3 } },
+    { timeframe: '5min', to: '2024-01-25' },
+  ];
+  assert.equal(blocks.length, settings.length);
+  for (const [i, code] of blocks.entries()) {
+    const res = await run(H.newUserId(), code, settings[i]);
+    assert.equal(res.status, 'done', `example ${i}: ${JSON.stringify(res.error)}`);
+    assert.ok(res.summary.trades > 0, `example ${i} traded`);
+  }
+});

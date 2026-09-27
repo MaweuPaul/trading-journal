@@ -485,10 +485,11 @@ export default function ManualPage() {
             <ul className="manual-feature-list">
               <li><b>Still no hindsight</b>: the code is fed one closed candle at a time, on every timeframe it uses, so it can&apos;t peek ahead.</li>
               <li><b>The journal settles every trade</b>, the same way as replays: stops, targets and pending orders are checked on 1-minute candles. The agent can add spread and commission.</li>
+              <li><b>Trend following too</b>: trailing stops, scaling into a winner (several positions at once), partial profits, trend indicators (ADX, MACD, Donchian, Supertrend and more), up to 25 years of history and up to 20 markets in one run.</li>
               <li><b>Sandboxed</b>: the code can&apos;t reach the internet, your data or the server, and runs with strict time and memory limits.</li>
               <li><b>Results</b> come back with likely ranges and breakdowns (by setup tag, weekday, hour, exit reason or any entry condition), and can be logged to your Backtest Log as agent trades.</li>
             </ul>
-            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Code up my ORB liquidity sweep on gold, 5-minute candles, and run it on the last year with a 0.3 spread. Break the results down by weekday.&quot;</i> Strategies that need judgement (reading structure, discretionary setups) still use the bar-by-bar replay.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Code up my ORB liquidity sweep on gold, 5-minute candles, and run it on the last year with a 0.3 spread. Break the results down by weekday.&quot;</i> or <i>&quot;Test a 55-day breakout trend-following system with a 3 ATR trailing stop on gold, US30 and EURUSD since 2012, adding up to 3 units.&quot;</i> Strategies that need judgement (reading structure, discretionary setups) still use the bar-by-bar replay.</p>
             <div className="manual-sub">Reviewing your real trades</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>With <b>journal access</b> on, the agent can read your real trades the way a coach would, with your actual data in front of it. It is read-only: it can&apos;t edit, tag or delete anything.</p>
             <ul className="manual-feature-list">

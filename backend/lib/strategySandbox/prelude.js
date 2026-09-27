@@ -9,7 +9,7 @@ const __tfs = {};          // tf -> { sec, time[], open[], high[], low[], close[
 let __base = null;         // base timeframe name
 let __live = false;        // false while warmup bars are pushed (onBar isn't called)
 let __tested = -1;         // index of the current bar among tested bars
-let __S = { position: null, order: null, events: [], trades: 0, wins: 0, losses: 0, totalR: 0, lastTrade: null, forming: {} };
+let __S = { positions: [], orders: [], events: [], trades: 0, wins: 0, losses: 0, totalR: 0, lastTrade: null, forming: {} };
 let __actions = [];
 const __logs = [];
 let __logCount = 0;
@@ -64,44 +64,108 @@ const ta = {
   stdev(values, n) { const s = values.slice(-n); const mean = s.reduce((a, b) => a + b, 0) / s.length; return Math.sqrt(s.reduce((a, v) => a + (v - mean) ** 2, 0) / s.length); },
 };
 
-// Streaming indicator values per (tf, name, period, source), caught up on demand.
+// Streaming indicator values per (tf, name, settings), caught up on demand:
+// each is updated once per new closed candle, so calling it every bar is cheap.
 const __series = new Map();
-function __indicator(name, period, opts) {
-  opts = opts || {};
-  const tf = opts.tf || __base;
+function __tfData(tf) {
   const s = __tfs[tf];
   if (!s) throw new Error(`Timeframe ${tf} is not loaded. Add it to timeframes when calling run_strategy.`);
-  const source = opts.source || 'close';
-  const key = `${tf}|${name}|${period}|${source}`;
+  return s;
+}
+function __srcFn(s, source) {
+  if (source === 'hl2') return i => (s.high[i] + s.low[i]) / 2;
+  if (source === 'hlc3') return i => (s.high[i] + s.low[i] + s.close[i]) / 3;
+  if (!s[source]) throw new Error(`Unknown source "${source}": use close, open, high, low, hl2 or hlc3.`);
+  return i => s[source][i];
+}
+const __smoother = (period, kind) => {
+  // kind 'ema' | 'rma' | 'sma'; returns update(x) -> value or null while warming up
+  let n = 0, sum = 0, e = null; const buf = [];
+  return x => {
+    n++;
+    if (kind === 'sma') { buf.push(x); sum += x; if (buf.length > period) sum -= buf.shift(); return buf.length === period ? sum / period : null; }
+    if (n <= period) { sum += x; if (n === period) e = sum / period; return n === period ? e : null; }
+    e = kind === 'ema' ? x * (2 / (period + 1)) + e * (1 - 2 / (period + 1)) : (e * (period - 1) + x) / period;
+    return e;
+  };
+};
+const __INDICATORS = {
+  sma: (s, o) => { const f = __smoother(o.period, 'sma'), src = __srcFn(s, o.source); return i => f(src(i)); },
+  ema: (s, o) => { const f = __smoother(o.period, 'ema'), src = __srcFn(s, o.source); return i => f(src(i)); },
+  rma: (s, o) => { const f = __smoother(o.period, 'rma'), src = __srcFn(s, o.source); return i => f(src(i)); },
+  atr: (s, o) => { const f = __smoother(o.period, 'rma'); return i => f(i === 0 ? s.high[i] - s.low[i] : Math.max(s.high[i] - s.low[i], Math.abs(s.high[i] - s.close[i - 1]), Math.abs(s.low[i] - s.close[i - 1]))); },
+  rsi: (s, o) => {
+    const g = __smoother(o.period, 'rma'), l = __smoother(o.period, 'rma'), src = __srcFn(s, o.source);
+    return i => { if (i === 0) return null; const d = src(i) - src(i - 1); const ag = g(Math.max(d, 0)), al = l(Math.max(-d, 0)); return ag == null ? null : al === 0 ? 100 : 100 - 100 / (1 + ag / al); };
+  },
+  macd: (s, o) => {
+    const fast = __smoother(o.fast || 12, 'ema'), slow = __smoother(o.slow || 26, 'ema'), sig = __smoother(o.signal || 9, 'ema'), src = __srcFn(s, o.source);
+    return i => { const a = fast(src(i)), b = slow(src(i)); if (a == null || b == null) return null; const m = a - b, sg = sig(m); return sg == null ? null : { macd: m, signal: sg, hist: m - sg }; };
+  },
+  adx: (s, o) => {
+    const p = o.period, tr = __smoother(p, 'rma'), pdm = __smoother(p, 'rma'), mdm = __smoother(p, 'rma'), adx = __smoother(p, 'rma');
+    return i => {
+      if (i === 0) return null;
+      const up = s.high[i] - s.high[i - 1], dn = s.low[i - 1] - s.low[i];
+      const t = tr(Math.max(s.high[i] - s.low[i], Math.abs(s.high[i] - s.close[i - 1]), Math.abs(s.low[i] - s.close[i - 1])));
+      const pd = pdm(up > dn && up > 0 ? up : 0), md = mdm(dn > up && dn > 0 ? dn : 0);
+      if (t == null || !t) return null;
+      const plusDI = 100 * pd / t, minusDI = 100 * md / t, dx = plusDI + minusDI ? 100 * Math.abs(plusDI - minusDI) / (plusDI + minusDI) : 0;
+      const a = adx(dx);
+      return a == null ? null : { adx: a, plusDI, minusDI };
+    };
+  },
+  donchian: (s, o) => i => {
+    // Channel of the `period` candles BEFORE this one (so a close above upper is a breakout).
+    if (i < o.period) return null;
+    let hi = -Infinity, lo = Infinity;
+    for (let k = i - o.period; k < i; k++) { hi = Math.max(hi, s.high[k]); lo = Math.min(lo, s.low[k]); }
+    return { upper: hi, lower: lo, mid: (hi + lo) / 2 };
+  },
+  bollinger: (s, o) => {
+    const src = __srcFn(s, o.source), mult = o.mult ?? 2;
+    return i => {
+      if (i < o.period - 1) return null;
+      let sum = 0; for (let k = i - o.period + 1; k <= i; k++) sum += src(k);
+      const mid = sum / o.period; let v = 0; for (let k = i - o.period + 1; k <= i; k++) v += (src(k) - mid) ** 2;
+      const sd = Math.sqrt(v / o.period);
+      return { mid, upper: mid + mult * sd, lower: mid - mult * sd, width: 2 * mult * sd };
+    };
+  },
+  keltner: (s, o) => {
+    const e = __INDICATORS.ema(s, { period: o.period, source: o.source }), a = __INDICATORS.atr(s, { period: o.atrPeriod || o.period }), mult = o.mult ?? 2;
+    return i => { const m = e(i), r = a(i); return m == null || r == null ? null : { mid: m, upper: m + mult * r, lower: m - mult * r }; };
+  },
+  supertrend: (s, o) => {
+    const a = __INDICATORS.atr(s, { period: o.period }), mult = o.mult ?? 3;
+    let up = null, dn = null, dir = 1;
+    return i => {
+      const r = a(i); if (r == null) return null;
+      const mid = (s.high[i] + s.low[i]) / 2, c = s.close[i], pc = i > 0 ? s.close[i - 1] : c;
+      let bu = mid - mult * r, bd = mid + mult * r;
+      if (up != null && pc > up) bu = Math.max(bu, up);
+      if (dn != null && pc < dn) bd = Math.min(bd, dn);
+      if (dn != null && c > dn) dir = 1; else if (up != null && c < up) dir = -1;
+      up = bu; dn = bd;
+      return { value: dir === 1 ? up : dn, direction: dir === 1 ? 'up' : 'down' };
+    };
+  },
+};
+const __DEFAULT_PERIOD = { sma: 20, ema: 20, rma: 14, atr: 14, rsi: 14, adx: 14, donchian: 20, bollinger: 20, keltner: 20, supertrend: 10, macd: 0 };
+function __indicator(name, period, opts) {
+  if (period && typeof period === 'object') { opts = period; period = undefined; }
+  opts = opts || {};
+  if (!__INDICATORS[name]) throw new Error(`Unknown indicator "${name}". Available: ${Object.keys(__INDICATORS).join(', ')} (or ctx.ta.* on ctx.series()).`);
+  const tf = opts.tf || __base;
+  const s = __tfData(tf);
+  const cfg = { period: period ?? opts.period ?? __DEFAULT_PERIOD[name], source: opts.source || 'close', mult: opts.mult, fast: opts.fast, slow: opts.slow, signal: opts.signal, atrPeriod: opts.atrPeriod };
+  const key = `${tf}|${name}|${JSON.stringify(cfg)}`;
   let st = __series.get(key);
-  if (!st) { st = { values: [], done: 0, e: null, ag: null, al: null, n: 0, sum: 0 }; __series.set(key, st); }
-  const src = source === 'hl2' ? i => (s.high[i] + s.low[i]) / 2 : source === 'hlc3' ? i => (s.high[i] + s.low[i] + s.close[i]) / 3 : i => s[source][i];
-  for (let i = st.done; i < s.close.length; i++) {
-    let v = null;
-    if (name === 'sma') { st.sum += src(i); if (i >= period) st.sum -= src(i - period); v = i >= period - 1 ? st.sum / period : null; }
-    else if (name === 'ema' || name === 'rma') {
-      if (i === period - 1) { let t = 0; for (let j = 0; j < period; j++) t += src(j); st.e = t / period; }
-      else if (i >= period) st.e = name === 'ema' ? src(i) * (2 / (period + 1)) + st.e * (1 - 2 / (period + 1)) : (st.e * (period - 1) + src(i)) / period;
-      v = i >= period - 1 ? st.e : null;
-    } else if (name === 'atr') {
-      const tr = i === 0 ? s.high[i] - s.low[i] : Math.max(s.high[i] - s.low[i], Math.abs(s.high[i] - s.close[i - 1]), Math.abs(s.low[i] - s.close[i - 1]));
-      st.n++; if (st.n <= period) { st.sum += tr; if (st.n === period) st.e = st.sum / period; } else st.e = (st.e * (period - 1) + tr) / period;
-      v = st.n >= period ? st.e : null;
-    } else if (name === 'rsi') {
-      if (i > 0) {
-        const d = src(i) - src(i - 1), g = Math.max(d, 0), l = Math.max(-d, 0);
-        st.n++;
-        if (st.n <= period) { st.ag = (st.ag || 0) + g; st.al = (st.al || 0) + l; if (st.n === period) { st.ag /= period; st.al /= period; } }
-        else { st.ag = (st.ag * (period - 1) + g) / period; st.al = (st.al * (period - 1) + l) / period; }
-        if (st.n >= period) v = st.al === 0 ? 100 : 100 - 100 / (1 + st.ag / st.al);
-      }
-    } else throw new Error(`Unknown indicator "${name}". Use sma, ema, rma, atr or rsi (or the ta.* functions on ctx.series()).`);
-    st.values.push(v);
-  }
+  if (!st) { st = { values: [], done: 0, update: __INDICATORS[name](s, cfg) }; __series.set(key, st); }
+  for (let i = st.done; i < s.close.length; i++) st.values.push(st.update(i));
   st.done = s.close.length;
-  const back = opts.back || 0;
-  const i = st.values.length - 1 - back;
-  return i >= 0 ? st.values[i] : null;
+  const k = st.values.length - 1 - (opts.back || 0);
+  return k >= 0 ? st.values[k] : null;
 }
 
 // ── The ctx object handed to onBar ──────────────────────────────────────────
@@ -113,7 +177,7 @@ function __barAt(tf, i) {
 }
 function __order(kind, direction, price, o) {
   o = o || {};
-  __actions.push({ kind, direction, price, stop: o.stop, target: o.target, risk: o.risk, tag: o.tag, features: o.features, expiresInBars: o.expiresInBars, expiresAt: o.expiresAt, notes: o.notes });
+  __actions.push({ kind, direction, price, stop: o.stop, target: o.target, risk: o.risk, tag: o.tag, features: o.features, expiresInBars: o.expiresInBars, expiresAt: o.expiresAt, notes: o.notes, id: o.id });
 }
 const __ctx = {
   params: {},
@@ -121,8 +185,10 @@ const __ctx = {
   ta,
   get bar() { return __barAt(__base, __tfs[__base].time.length - 1); },
   get index() { return __tested; },
-  get position() { return __S.position; },
-  get order() { return __S.order; },
+  get position() { return __S.positions[0] || null; },
+  get positions() { return __S.positions; },
+  get order() { return __S.orders[0] || null; },
+  get orders() { return __S.orders; },
   get events() { return __S.events; },
   get stats() { return { trades: __S.trades, wins: __S.wins, losses: __S.losses, totalR: __S.totalR, lastTrade: __S.lastTrade }; },
   get time() {
@@ -142,6 +208,15 @@ const __ctx = {
   ema(p, o) { return __indicator('ema', p, o); },
   rsi(p, o) { return __indicator('rsi', p, o); },
   atr(p, o) { return __indicator('atr', p, o); },
+  adx(p, o) { return __indicator('adx', p, o); },
+  macd(o) { return __indicator('macd', 0, o); },
+  donchian(p, o) { return __indicator('donchian', p, o); },
+  bollinger(p, o) { return __indicator('bollinger', p, o); },
+  keltner(p, o) { return __indicator('keltner', p, o); },
+  supertrend(p, o) { return __indicator('supertrend', p, o); },
+  /** Highest high / lowest low of the last n closed candles (including the latest). */
+  highest(n, o) { o = o || {}; const s = __tfData(o.tf || __base); return ta.highest(s[o.source || 'high'], n); },
+  lowest(n, o) { o = o || {}; const s = __tfData(o.tf || __base); return ta.lowest(s[o.source || 'low'], n); },
   /** Unix seconds of a wall-clock time, e.g. ctx.at('ny', ctx.time.ny.date, 9, 30). */
   at: __zonedTime,
   buy(o) { __order('market', 'long', null, o); },
@@ -150,9 +225,9 @@ const __ctx = {
   sellLimit(price, o) { __order('limit', 'short', price, o); },
   buyStop(price, o) { __order('stop', 'long', price, o); },
   sellStop(price, o) { __order('stop', 'short', price, o); },
-  cancel() { __actions.push({ kind: 'cancel' }); },
-  close(o) { __actions.push({ kind: 'close', notes: o && o.notes }); },
-  modify(o) { o = o || {}; __actions.push({ kind: 'modify', stop: o.stop, target: o.target, price: o.price }); },
+  cancel(o) { __actions.push({ kind: 'cancel', id: o && o.id }); },
+  close(o) { o = o || {}; __actions.push({ kind: 'close', id: o.id, fraction: o.fraction, notes: o.notes }); },
+  modify(o) { o = o || {}; __actions.push({ kind: 'modify', id: o.id, stop: o.stop, target: o.target, price: o.price }); },
   log(...args) {
     __logCount++;
     if (__logs.length < 300) __logs.push(`[${new Date((__tfs[__base].time[__tfs[__base].time.length - 1]) * 1000).toISOString().slice(0, 16)}] ` + args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ').slice(0, 300));
@@ -166,6 +241,7 @@ function __setup(json) {
   __base = cfg.base;
   for (const [tf, sec] of Object.entries(cfg.timeframes)) __defineTf(tf, sec);
   __ctx.params = cfg.params || {};
+  __ctx.symbol = cfg.symbol || null;
   if (typeof onBar !== 'function') throw new Error('Define function onBar(ctx) { ... } in your strategy code.');
 }
 /** Warmup history: closed candles pushed without calling onBar. */

@@ -359,16 +359,18 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
   tool('run_strategy', 'Run strategy code',
     'Backtest a mechanical strategy written as JavaScript (define onBar(ctx); see strategy_api) over cTrader history on the server. The code only ever sees closed candles; entries, stops and targets are settled by the server on 1-minute data. '
     + 'Runs in the background: waits up to `wait` seconds, then returns the result, or a runId to follow with get_strategy_run. With logAs, trades are logged to the Backtest Log under that strategy (as agent runs, with the current rules version); trades in its held-out period are logged but hidden here (use evaluate_holdout). '
-    + 'Start with a short range to check the code, then run the full period.',
+    + 'Start with a short range to check the code, then run the full period. Up to 25 years and 20 symbols per run (e.g. daily trend following across a basket).',
     {
       code: z.string().describe('JavaScript defining onBar(ctx) (and optionally init/onEnd).'),
-      symbol: z.string(),
+      symbol: z.string().optional(),
+      symbols: z.array(z.string()).max(20).optional().describe('Run the same code on several symbols (each on its own, results combined; groupBy "symbol" to compare).'),
       timeframe: timeframe.default('15min').describe('Base timeframe: onBar runs once per closed candle of it.'),
       from: timeInput, to: timeInput,
       timeframes: z.array(timeframe).max(4).default([]).describe('Higher timeframes the code reads (ctx.candle(0, "1h"), ctx.ema(50, { tf: "4h" })...).'),
       params: z.record(z.string(), z.any()).default({}).describe('Values the code reads as ctx.params, so you can test variations without editing it.'),
       warmupBars: z.number().int().min(0).max(2000).default(300).describe('Candles before "from" loaded as history (for indicators); onBar is not called on them.'),
       riskAmount: z.number().positive().default(100).describe('USD risked per trade unless an order sets risk.'),
+      maxPositions: z.number().int().min(1).max(20).default(1).describe('Positions plus pending orders allowed open at once per symbol (raise it to scale in / pyramid).'),
       costs: z.object({ spread: z.number().min(0).optional().describe('Price units added against you on every entry.'), commission: z.number().min(0).optional().describe('USD per trade.') }).default({}),
       logAs: z.string().max(60).optional().describe('Strategy name to log the trades under in the Backtest Log. Leave out while developing.'),
       name: z.string().max(100).optional().describe('A label for this run, e.g. "v2: skip Mondays".'),
@@ -377,7 +379,7 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     ({ wait, ...args }) => runner.startRun(userId, apiKeyId, args, { wait }));
 
   tool('get_strategy_run', 'Get strategy run',
-    'Progress or result of a run_strategy run: summary (win rate, expectancy, profit factor, drawdown, streaks, SQN, 95% ranges), exits, a page of trades, rejected actions and your code\'s logs. groupBy breaks results down by tag, exitReason, direction, weekday, hour, month or feature:<name>.',
+    'Progress or result of a run_strategy run: summary (win rate, expectancy, profit factor, drawdown, streaks, SQN, 95% ranges), exits, a page of trades, rejected actions and your code\'s logs. groupBy breaks results down by symbol, tag, exitReason, direction, weekday, hour, month or feature:<name>.',
     {
       runId: z.string(),
       groupBy: z.array(z.string()).max(4).default([]),

@@ -16,29 +16,42 @@ ctx.series(tf)              whole closed arrays { time[], open[], high[], low[],
 ctx.forming(tf)             the still-forming candle of a higher timeframe (from closed base candles only)
 ctx.sma(p, o) ctx.ema(p, o) ctx.rsi(p, o) ctx.atr(p, o)
                             current value; o = { tf, source: 'close'|'open'|'high'|'low'|'hl2'|'hlc3', back }
+ctx.adx(p, o)               { adx, plusDI, minusDI }
+ctx.macd(o)                 { macd, signal, hist }; o = { fast: 12, slow: 26, signal: 9, tf, back }
+ctx.donchian(p, o)          { upper, lower, mid } of the p candles BEFORE the latest (close > upper = breakout)
+ctx.bollinger(p, o)         { mid, upper, lower, width }; o.mult (default 2)
+ctx.keltner(p, o)           { mid, upper, lower }; o.mult (2), o.atrPeriod
+ctx.supertrend(p, o)        { value, direction: 'up'|'down' }; o.mult (3)
+ctx.highest(n, o) ctx.lowest(n, o)   highest high / lowest low of the last n candles (including the latest)
+                            All return null until they have enough history (warmupBars helps).
 ctx.ta.*                    sma, ema, rma, rsi, atr, trueRange (arrays in, arrays out), highest, lowest, stdev (last n)
 ctx.time                    candle close time: { unix, iso, utc, ny, london }, each zone
                             { hour, minute, minutes (since midnight), weekday (0 = Sun), weekdayName, date 'YYYY-MM-DD' }
 ctx.at(zone, date, h, m)    unix seconds of a wall-clock time: zone 'ny' | 'london' | 'utc' (DST handled)
 ctx.params                  the params you passed to run_strategy (tune without editing code)
+ctx.symbol                  the symbol being run (with symbols: [...] the code runs once per symbol, fresh state each)
 Higher timeframes must be listed in run_strategy's timeframes (e.g. ["1h", "1day"]).
 
-## Your position
-ctx.position   null or { direction, entryPrice, entryTime, stopLoss, initialStopLoss, takeProfit, riskAmount, barsHeld, unrealizedR, tag }
-ctx.order      null or the pending order { type, direction, price, stopLoss, takeProfit, expiresAt, tag }
-ctx.events     what happened since the last call: filled, closed { reason, rMultiple, outcome }, expired, rejected { reason }
+## Your positions
+ctx.positions  open positions: { id, direction, entryPrice, entryTime, stopLoss, initialStopLoss, takeProfit, riskAmount, size, barsHeld, unrealizedR, tag }
+ctx.position   the first of them, or null (enough for one-position strategies)
+ctx.orders / ctx.order   pending orders { id, type, direction, price, stopLoss, takeProfit, expiresAt, tag }
+ctx.events     since the last call: opened, filled, partial, closed { id, reason, rMultiple, outcome }, expired, rejected { reason }
 ctx.stats      { trades, wins, losses, totalR, lastTrade }
-One position or pending order at a time.
+By default one position or order at a time; run_strategy's maxPositions allows more (to scale in / pyramid).
+Each position is its own trade, risking its own riskAmount, with R from its own original stop.
 
 ## Acting (executed at this candle's close)
 ctx.buy({ stop, target, risk, tag, notes, features })        market entry at the close
 ctx.sell({ ... })
 ctx.buyLimit(price, { stop, target, expiresInBars | expiresAt, ... })   also sellLimit, buyStop, sellStop
-ctx.modify({ stop, target })       move the position's stop/target (or { price, stop, target } of a pending order)
-ctx.cancel()                        cancel the pending order
-ctx.close({ notes })                exit the position at the close
+ctx.modify({ id, stop, target })   move stops/targets (e.g. a trailing stop, every candle); without id: all positions
+                                   (or, with none open, { price, stop, target } of pending orders)
+ctx.cancel({ id })                  cancel a pending order (without id: all)
+ctx.close({ id, fraction, notes })  exit at the close; fraction 0.5 takes half of what is still open (a partial exit);
+                                   without id: all positions. A trade's R counts every part at its own exit price.
 ctx.log(...)                        debug output (first 300 lines kept); console.log works too
-stop is required; target is optional. risk (USD) defaults to riskAmount. tag labels the setup
+stop is required; target is optional (leave it out to trail). risk (USD) defaults to riskAmount; id is optional. tag labels the setup
 (results can be broken down by it). features records entry conditions ({ name: number | boolean | short text }),
 so get_strategy_run / get_metrics can split results by them (groupBy "feature:<name>").
 
@@ -59,6 +72,30 @@ function onBar(ctx) {
   const c = ctx.bar.close, k = ctx.params.atrStop ?? 1.5;
   if (fastPrev <= slowPrev && fast > slow) ctx.buy({ stop: c - k * atr, target: c + 2 * k * atr, tag: 'cross up', features: { atr } });
   if (fastPrev >= slowPrev && fast < slow) ctx.sell({ stop: c + k * atr, target: c - 2 * k * atr, tag: 'cross down', features: { atr } });
+}
+
+## Example: trend following -- Donchian breakout, ATR trailing stop, pyramiding (daily, maxPositions 3)
+// run_strategy({ symbols: ["XAUUSD", "US30", "EURUSD"], timeframe: "1day", from: "2010-01-01", to: "2026-01-01", maxPositions: 3, params: { entry: 55, add: 0.5, trail: 3 }, code })
+function onBar(ctx) {
+  const p = ctx.params, ch = ctx.donchian(p.entry), atr = ctx.atr(20), c = ctx.bar.close;
+  if (!ch || !atr) return;
+  const open = ctx.positions;
+  // Trail every open unit 'trail' ATRs behind the close, never loosening it.
+  for (const u of open) {
+    const long = u.direction === 'long';
+    const trail = long ? c - p.trail * atr : c + p.trail * atr;
+    if (long ? trail > u.stopLoss : trail < u.stopLoss) ctx.modify({ id: u.id, stop: trail });
+  }
+  if (!open.length) {
+    if (c > ch.upper) ctx.buy({ stop: c - 2 * atr, tag: 'breakout' });
+    else if (c < ch.lower) ctx.sell({ stop: c + 2 * atr, tag: 'breakout' });
+    return;
+  }
+  // Add a unit each time price moves another 'add' ATRs in our favour.
+  const last = open[open.length - 1], long = last.direction === 'long';
+  if (long ? c >= last.entryPrice + p.add * atr : c <= last.entryPrice - p.add * atr) {
+    long ? ctx.buy({ stop: c - 2 * atr, tag: 'add' }) : ctx.sell({ stop: c + 2 * atr, tag: 'add' });
+  }
 }
 
 ## Example: opening range sweep (New York, 5-minute base)

@@ -235,13 +235,14 @@ For mechanical rules the agent doesn't need to replay candle by candle. It write
 
 - **No hindsight.** The code runs in a [QuickJS](https://github.com/justjake/quickjs-emscripten) WebAssembly sandbox that is fed one closed candle at a time, so it never holds future data, on the base timeframe or any higher one (`timeframes: ["1h", "1day"]`). Forming higher-timeframe candles are built only from closed base candles.
 - **The server settles every trade** with the replay engine's rules: market entries at the candle close, limit/stop fills and stop-vs-target order on 1-minute candles, R from the original stop. Optional `costs.spread` (price units, against you on entry) and `costs.commission` (USD per trade).
-- **What the code gets:** closed candles on any loaded timeframe, streaming SMA/EMA/RSI/ATR and array helpers, New York/London/UTC clock with DST, `params` to test variations without editing code, position/order state and events. Actions: market, limit and stop orders with stop/target/expiry, modify, cancel, close, plus `tag` and `features` for later breakdowns.
-- **Safe to run:** no network, files or host objects inside the sandbox; 128 MB memory, 2 s per `onBar` call and 180 s of strategy CPU per run; 2 runs at a time per user (`STRATEGY_RUNS_MAX` server-wide, default 2); at most 250,000 base candles and 5,000 trades per run.
+- **What the code gets:** closed candles on any loaded timeframe; streaming SMA, EMA, RSI, ATR, ADX, MACD, Donchian, Bollinger, Keltner and Supertrend, plus array helpers; New York/London/UTC clock with DST; `params` to test variations without editing code; position/order state and events. Actions: market, limit and stop orders with stop/target/expiry, modify (e.g. trailing stops), cancel, close or partially close, plus `tag` and `features` for later breakdowns.
+- **Trend following:** `maxPositions` (up to 20) lets a strategy scale in / pyramid, each unit its own trade with its own stop; `close({ fraction })` takes partial profits; runs cover up to 25 years and up to 20 `symbols` at once (each run on its own, results combined and comparable by symbol). Where old history has no 1-minute data, pending-order fills fall back to the base candle and are flagged as approximate.
+- **Safe to run:** no network, files or host objects inside the sandbox; 128 MB memory, 2 s per `onBar` call and 180 s of strategy CPU per run; 2 runs at a time per user (`STRATEGY_RUNS_MAX` server-wide, default 2); at most 250,000 base candles per symbol (400,000 per run) and 5,000 trades per symbol.
 - **Results:** `get_strategy_run` returns the summary with 95% ranges, exits, trades (paged), rejected actions and the code's logs, broken down by tag, exit reason, weekday, hour, month or `feature:<name>`. With `logAs`, trades go to the Backtest Log as agent runs under that strategy and its current rules version; trades in a held-out period are logged but hidden until `evaluate_holdout`.
 
 | Tool | What it does |
 |------|--------------|
-| `strategy_api` | The code reference with two complete examples (EMA cross; opening-range liquidity sweep) |
+| `strategy_api` | The code reference with three complete examples (EMA cross; Donchian trend following with a trailing stop and pyramiding; opening-range liquidity sweep) |
 | `run_strategy` | Start a run; waits up to `wait` seconds (default 20) and returns the result or a `runId` |
 | `get_strategy_run`, `list_strategy_runs`, `get_strategy_run_code`, `cancel_strategy_run` | Follow, list, reproduce and stop runs |
 

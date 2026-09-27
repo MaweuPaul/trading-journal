@@ -36,7 +36,7 @@ require.cache[require.resolve('../lib/ctraderReplay')] = {
   id: require.resolve('../lib/ctraderReplay'), loaded: true,
   exports: {
     getTrendbars: async ({ symbol, periodLabel, fromMs, toMs }) => {
-      if (symbol !== 'XAUUSD') {
+      if (!['XAUUSD', 'XAUEUR'].includes(symbol)) { // XAUEUR: the same feed, for multi-symbol runs
         const err = new Error(`cTrader does not have a symbol matching "${symbol}" on this account.`);
         err.code = 'SYMBOL_NOT_FOUND';
         throw err;

@@ -6,7 +6,7 @@ import {
   createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, MouseEventParams, Time } from 'lightweight-charts';
-import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
+import { Drawing, DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
@@ -121,6 +121,12 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
+
+// The library feeds every drawing's anchor prices into the price scale's
+// auto-fit, so one old line far from price (even hidden or off screen)
+// squashed the candles, and "Reset chart" couldn't undo it. Like TradingView,
+// fit the price scale to the candles only.
+(Drawing.prototype as unknown as { autoscaleInfo: () => null }).autoscaleInfo = () => null;
 
 function drawingFactory(type: string, data: SerializedDrawing) {
   return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);

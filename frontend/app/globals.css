@@ -3559,6 +3559,77 @@ table.manual-ref td:not(.term) { color: var(--text-secondary); }
 
 .manual-download-bar { display: flex; gap: 10px; flex-wrap: wrap; }
 
+/* "You vs. You" — the first thing a new reader sees; stronger than a callout. */
+.manual-manifesto {
+  position: relative; margin: 4px 0 30px; padding: 24px 26px 22px;
+  background: linear-gradient(180deg, var(--accent-light), var(--bg-surface) 70%);
+  border: 1px solid var(--accent-mid); border-top: 4px solid var(--accent);
+  border-radius: var(--radius-md);
+}
+.manual-manifesto-eyebrow {
+  display: inline-block; font: 700 10px var(--font-mono); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent); background: var(--bg-surface); border: 1px solid var(--accent-mid);
+  border-radius: 999px; padding: 3px 9px; margin-bottom: 12px;
+}
+.manual-manifesto h3 { font-size: 26px; font-weight: 800; letter-spacing: -.01em; line-height: 1.15; margin: 0 0 10px; color: var(--text-primary); }
+.manual-manifesto p { margin: 0 0 11px; font-size: 13.5px; line-height: 1.65; color: var(--text-secondary); }
+.manual-manifesto p.manual-manifesto-lead { font-size: 16px; font-weight: 700; line-height: 1.45; color: var(--text-primary); margin-bottom: 14px; }
+.manual-manifesto-sub {
+  font: 700 11px var(--font-sans); text-transform: uppercase; letter-spacing: .06em; color: var(--accent);
+  margin: 20px 0 10px; padding-top: 16px; border-top: 1px solid var(--accent-mid);
+}
+.manual-manifesto-list { margin: 0 0 16px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.manual-manifesto-list li {
+  position: relative; padding: 10px 12px 10px 36px; font-size: 13px; line-height: 1.55; color: var(--text-primary);
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.manual-manifesto-list li::before {
+  content: '✓'; position: absolute; left: 11px; top: 10px; width: 16px; height: 16px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--accent); color: var(--bg-surface); font: 800 10px var(--font-sans);
+}
+.manual-manifesto-list li b { font-weight: 700; }
+.manual-manifesto p.manual-manifesto-close { margin: 0; font-size: 14.5px; color: var(--text-primary); }
+.manual-manifesto p.manual-manifesto-close strong { font-weight: 800; }
+
+/* General polish */
+.manual-toc { padding: 10px 6px 10px 0; border-right: 1px solid var(--border); }
+.manual-chapter { padding-top: 34px; margin-top: 10px; }
+.manual-chapter h2 { font-size: 22px; letter-spacing: -.01em; }
+.manual-chapter-num { background: var(--accent-light); color: var(--accent); border-color: var(--accent-mid); }
+.manual-sub { color: var(--text-secondary); display: flex; align-items: center; gap: 8px; }
+.manual-sub::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.manual-callout { box-shadow: none; }
+.manual-intro { padding: 24px 26px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); }
+.manual-intro-stack { border-top-color: var(--border); }
+
+/* Reachable without signing in (from the login page): no sidebar, a small top bar instead. */
+body:has(.manual-page.public) .main-content { margin-left: 0 !important; }
+.manual-public-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 18px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-surface);
+  font-size: 12.5px; color: var(--text-muted);
+}
+.manual-public-bar .links { display: flex; gap: 8px; margin-right: auto; }
+.manual-public-bar > span:first-child { flex: 1 1 100%; }
+@media (min-width: 720px) { .manual-public-bar > span:first-child { flex: 0 1 auto; } .manual-public-bar .links { margin-left: 14px; } }
+.manual-public-theme { width: 220px; }
+.manual-public-bar a { font-weight: 700; text-decoration: none; color: var(--accent); }
+
+@media print {
+  .sidebar, .topbar, .manual-toc, .manual-public-bar, .page-header .btn-primary, .theme-control-auth { display: none !important; }
+  @page { margin: 0.6in 0.65in; }
+  html, body, .main-content { background: #fff !important; }
+  .main-content { margin-left: 0 !important; padding: 0 !important; }
+  .manual-page { padding: 0 !important; }
+  .manual-page .page-header { margin-top: 1.2in; }
+  #getting-started { break-before: page; }
+  .manual-chapter { padding-top: 0.25in; }
+  .manual-content, .manual-chapter { max-width: none; }
+  .manual-manifesto, .manual-callout, .manual-steps > li, .manual-code, table.manual-ref tr { break-inside: avoid; }
+  .manual-chapter h2, .manual-sub { break-after: avoid; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
 @media (max-width: 980px) {
   .manual-toc { display: none; }
 }

@@ -147,6 +147,8 @@ export default function LoginPage() {
         </div>
         <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '6px' }}>
           <Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link>
+          <span style={{ color: 'var(--text-muted)' }}> · </span>
+          <Link href="/manual" style={{ color: 'var(--text-muted)' }}>Read the manual</Link>
         </div>
       </div>
       </div>

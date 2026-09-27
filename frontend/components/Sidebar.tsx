@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { PAGE_PURPOSE } from './pagePurpose';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
 import { LayoutDashboard, List, BarChart2, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import LogoMark from './LogoMark';
@@ -177,9 +177,15 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
   );
 }
 
+const noSubscribe = () => () => {};
+
 export default function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const signedIn = useSyncExternalStore(noSubscribe, () => Boolean(localStorage.getItem('token')), () => true);
+
+  // The manual is readable before signing in (linked from the login page).
+  if (path === '/manual' && !signedIn) return null;
 
   if (path === '/login' || path === '/signup' || path === '/privacy' || path.startsWith('/investor') || path.startsWith('/oauth') || path === '/forgot-password' || path === '/reset-password') return null;
 

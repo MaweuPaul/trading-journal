@@ -21,8 +21,19 @@ const { REFERENCE: STRATEGY_API } = require('../lib/strategySandbox/reference');
 
 const LAST_USED_RESOLUTION_MS = 60_000;
 
-function unauthorized(res, message) {
-  res.set('WWW-Authenticate', 'Bearer realm="tradejournal-mcp"');
+// The public address the app used (the frontend, which proxies /api here), so
+// the 401 can point OAuth clients at its discovery document (RFC 9728).
+function publicOrigin(req) {
+  if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL.replace(/\/$/, '');
+  const fromProxy = String(req.headers['x-tj-public-origin'] || '');
+  if (/^https?:\/\/[^/\s]+$/.test(fromProxy)) return fromProxy;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const proto = String(req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http')).split(',')[0].trim();
+  return host ? `${proto}://${host}` : null;
+}
+function unauthorized(req, res, message, error = 'invalid_token') {
+  const origin = publicOrigin(req);
+  res.set('WWW-Authenticate', `Bearer realm="tradejournal-mcp", error="${error}"${origin ? `, resource_metadata="${origin}/.well-known/oauth-protected-resource"` : ''}`);
   return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message }, id: null });
 }
 
@@ -30,15 +41,16 @@ function unauthorized(res, message) {
 // in the query string would end up in the logs.
 async function agentAuth(req, res, next) {
   const header = req.header('Authorization') || '';
-  const match = /^Bearer\s+(tjk_[A-Za-z0-9_-]+)$/.exec(header.trim());
-  if (!match) return unauthorized(res, 'Send an access key as "Authorization: Bearer tjk_...". Create one on the Accounts page.');
+  const match = /^Bearer\s+(tj[ko]_[A-Za-z0-9_-]+)$/.exec(header.trim());
+  if (!match) return unauthorized(req, res, 'Send an access key as "Authorization: Bearer tjk_...", created on the Accounts page, or connect through the OAuth sign-in.', header ? 'invalid_token' : 'invalid_request');
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({ jsonrpc: '2.0', error: { code: -32002, message: 'The journal database is offline; agent backtesting is unavailable.' }, id: null });
   }
   try {
     const keyHash = crypto.createHash('sha256').update(match[1]).digest('hex');
     const key = await ApiKey.findOne({ keyHash, revokedAt: null });
-    if (!key || !key.scopes.includes('backtest')) return unauthorized(res, 'This access key is invalid or has been revoked.');
+    if (!key || !key.scopes.includes('backtest')) return unauthorized(req, res, 'This access key is invalid or has been revoked.');
+    if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return unauthorized(req, res, 'The access token has expired; refresh it.');
     if (!key.lastUsedAt || Date.now() - key.lastUsedAt.getTime() > LAST_USED_RESOLUTION_MS) {
       ApiKey.updateOne({ _id: key._id }, { $set: { lastUsedAt: new Date() } }).catch(() => {});
     }

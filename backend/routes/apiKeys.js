@@ -20,7 +20,7 @@ function offlineResponse(res) {
 
 const MAX_KEYS = 20;
 const publicKey = k => ({
-  _id: k._id, name: k.name, prefix: k.prefix, journal: (k.scopes || []).includes('journal'), createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: Boolean(k.revokedAt), revokedAt: k.revokedAt,
+  _id: k._id, name: k.name, prefix: k.prefix, journal: (k.scopes || []).includes('journal'), kind: k.kind || 'key', createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: Boolean(k.revokedAt), revokedAt: k.revokedAt,
 });
 
 router.get('/api-keys', auth, ownerOnly, async (req, res) => {
@@ -38,7 +38,7 @@ router.post('/api-keys', auth, ownerOnly, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim().slice(0, 60);
     if (!name) return res.status(400).json({ error: 'Give the key a name, e.g. "Claude Code laptop".' });
-    const active = await ApiKey.countDocuments({ user: req.user.userId, revokedAt: null });
+    const active = await ApiKey.countDocuments({ user: req.user.userId, revokedAt: null, kind: { $ne: 'oauth' } });
     if (active >= MAX_KEYS) return res.status(400).json({ error: `You already have ${MAX_KEYS} active keys. Revoke one first.` });
     const key = `tjk_${crypto.randomBytes(32).toString('base64url')}`;
     const doc = await ApiKey.create({

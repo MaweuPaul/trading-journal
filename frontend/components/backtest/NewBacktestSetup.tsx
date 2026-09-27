@@ -220,6 +220,7 @@ export default function NewBacktestSetup() {
         <div>
           <h1 className="tw:text-headline-md tw:font-semibold tw:text-on-surface">New backtest</h1>
           <p className="tw:text-body-sm tw:text-on-surface-variant tw:mt-1">Pick a market and a date range. Candles are revealed one at a time, so you trade without seeing the future.</p>
+          <p className="tw:text-[11px] tw:text-outline tw:mt-1">Candles come from your cTrader connection: you need at least a free cTrader demo account connected on the <a href="/accounts" className="tw:text-primary tw:underline">Accounts</a> page.</p>
         </div>
 
         {/* Two columns on wide screens: market & window | replay settings */}

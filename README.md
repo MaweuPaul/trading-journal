@@ -122,6 +122,12 @@ The backend runs a [Model Context Protocol](https://modelcontextprotocol.io) ser
 
 Requirements: cTrader connected on the Accounts page (it supplies the candles), and a database connection (sessions and keys are stored in MongoDB).
 
+### Easiest: claude.ai on web or phone (sign-in, no key)
+
+In claude.ai open **Settings → Connectors → Add custom connector**, paste the MCP address (`https://your-journal.example.com/api/mcp`) and click **Connect**. You're sent to the journal to sign in and **Allow** it (tick *Read my trade journal* on that page for journal access). It then appears on the Accounts page under AI agent access, where you can turn journal access off or **Disconnect** it.
+
+This is standard OAuth 2.1 with PKCE and dynamic client registration: the frontend serves `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`, the consent page is `/oauth/authorize`, and the backend (`routes/oauth.js`) handles `/api/oauth/register`, `/api/oauth/authorize` and `/api/oauth/token`. Access tokens (`tjo_…`) last an hour and are refreshed with rotating refresh tokens (90 days); only hashes are stored. Set `PUBLIC_APP_URL` (e.g. `https://your-journal.example.com`) on the backend and frontend if the public address can't be taken from the proxy headers. Any MCP client that supports OAuth (Claude Code and Claude Desktop included) can use the same sign-in instead of a key.
+
 ### 1. Create an access key
 
 On the **Accounts** page, under **AI agent access**, enter a name (e.g. "Claude Code laptop") and click **Create access key**. The key (`tjk_…`) is shown **once**, together with ready-to-copy connection settings for Claude Code and Claude Desktop, with the key filled in. Only a hash is stored, so a lost key can't be recovered: revoke it and create a new one.
@@ -188,7 +194,7 @@ Content-Type: application/json
 Accept: application/json, text/event-stream
 ```
 
-Call `initialize`, then `tools/list` and `tools/call`. Keys are only accepted in the `Authorization` header, never in the URL (URLs end up in server logs). `GET` and `DELETE` return 405. Custom connectors on claude.ai (web) need OAuth sign-in, which isn't built yet.
+Call `initialize`, then `tools/list` and `tools/call`. Keys are only accepted in the `Authorization` header, never in the URL (URLs end up in server logs). `GET` and `DELETE` return 405. claude.ai custom connectors use the OAuth sign-in above.
 
 ### 3. Run a backtest
 
@@ -516,6 +522,8 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 | `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | Balance, headline stats, equity curve, and a financial-fields-only trade list |
 | `/api/export/ai` | GET | Filtered trades, statistics and playbooks as Markdown for an AI chat (Trades page → Export for AI) |
 | `/api/api-keys` | GET / POST | List the caller's AI agent access keys, or create one (the plaintext key is returned once) |
+| `/api/oauth/register`, `/api/oauth/token` | POST | OAuth 2.1 for MCP apps (dynamic registration; code + PKCE and refresh-token grants) |
+| `/api/oauth/authorize-info`, `/api/oauth/authorize` | GET / POST | The consent page's lookup and approve/deny (owner login) |
 | `/api/api-keys/:id` | PATCH / DELETE | Turn journal access on or off (`{ "journal": true }`); revoke an access key |
 | `/api/mcp` | POST *(access key)* | MCP server for AI agent backtesting (stateless Streamable HTTP); see [AI Agent Backtesting](#ai-agent-backtesting-mcp) |
 | `/api/investor/trades/:id/replay` | GET *(investor token)* | The same historical candles as owner Replay, sanitized to chart-only fields (no notes/emotion/grade) |

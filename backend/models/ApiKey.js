@@ -13,6 +13,14 @@ const apiKeySchema = new mongoose.Schema({
   scopes: { type: [String], default: ['backtest'] },
   lastUsedAt: { type: Date, default: null },
   revokedAt: { type: Date, default: null },
+  // 'key': created on the Accounts page, never expires. 'oauth': a connection an
+  // app (e.g. claude.ai) made through the OAuth sign-in (routes/oauth.js); its
+  // keyHash is a short-lived access token, rotated with the refresh token.
+  kind: { type: String, enum: ['key', 'oauth'], default: 'key' },
+  clientId: { type: String, default: null },
+  expiresAt: { type: Date, default: null },
+  refreshHash: { type: String, default: null, index: { unique: true, sparse: true } },
+  refreshExpiresAt: { type: Date, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model('ApiKey', apiKeySchema);

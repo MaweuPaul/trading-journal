@@ -181,7 +181,7 @@ export default function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
 
-  if (path === '/login' || path === '/signup' || path === '/privacy' || path.startsWith('/investor')) return null;
+  if (path === '/login' || path === '/signup' || path === '/privacy' || path.startsWith('/investor') || path.startsWith('/oauth')) return null;
 
   return (
     <>

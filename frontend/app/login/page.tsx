@@ -7,6 +7,12 @@ import LogoMark from '@/components/LogoMark';
 
 const API = '/api';
 
+// Where to go after signing in: ?next=/some/path (same site only), e.g. back to an app's sign-in request.
+function nextPath() {
+  const next = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('next') : null;
+  return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/';
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -19,7 +25,7 @@ export default function LoginPage() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      router.push('/');
+      router.push(nextPath());
       return;
     }
     fetch(`${API}/auth/setup-status`)
@@ -52,8 +58,8 @@ export default function LoginPage() {
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
 
-      // Redirect to main dashboard
-      router.push('/');
+      // Back to where the user was headed, or the dashboard
+      router.push(nextPath());
       router.refresh();
     } catch (err: any) {
       setError(err.message || 'Connection failed. Please make sure the backend is running.');

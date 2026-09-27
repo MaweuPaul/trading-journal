@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Bot, Check, Copy, KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Bot, Check, Copy, Globe, KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
 
 interface AccessKey {
   _id: string;
@@ -11,6 +11,7 @@ interface AccessKey {
   lastUsedAt: string | null;
   revoked: boolean;
   journal: boolean;
+  kind?: 'key' | 'oauth';
 }
 
 function authHeaders(): Record<string, string> {
@@ -46,7 +47,7 @@ export default function AgentKeys() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
-  const [copied, setCopied] = useState<'key' | 'command' | 'desktop' | null>(null);
+  const [copied, setCopied] = useState<'key' | 'command' | 'desktop' | 'url' | null>(null);
 
   const load = useCallback(() => fetchKeys().then(setKeys, err => setError(err instanceof Error ? err.message : 'Could not load access keys')), []);
   useEffect(() => {
@@ -106,7 +107,7 @@ export default function AgentKeys() {
     await load();
   }
 
-  async function copy(text: string, what: 'key' | 'command' | 'desktop') {
+  async function copy(text: string, what: 'key' | 'command' | 'desktop' | 'url') {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(what);
@@ -128,10 +129,26 @@ export default function AgentKeys() {
           </div>
           <p>Let an AI agent backtest your strategies on cTrader history, bar by bar with the future hidden. Its trades land in the Backtest Log marked AGENT and stay out of your own stats.
             Turn on journal access for a key to also let the agent read your real trades (notes, grades, checklists, screenshots, candles around each trade) and review your trading. Read-only: it can&apos;t change anything.</p>
+          <p style={{ marginTop: 6 }}><b>Needs cTrader:</b> bar replay and backtesting use candles from your own cTrader connection, so connect at least a (free) cTrader demo account above first. Reviewing your journal works without it.</p>
         </div>
       </section>
 
       {error && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}
+
+      <div className="account-card" style={{ marginBottom: 16, display: 'grid', gap: 8 }}>
+        <strong style={{ color: 'var(--text-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}><Globe size={15} /> Connect claude.ai (web and phone app), no key needed</strong>
+        <span style={{ color: 'var(--text-secondary)', fontSize: 12.5, lineHeight: 1.55 }}>
+          In claude.ai open <b>Settings → Connectors → Add custom connector</b>, paste this address, then click <b>Connect</b>. You&apos;ll be sent here to sign in and allow it
+          (tick journal access there if you want Claude to read your trades). It then appears in the list below, where you can turn journal access off or disconnect it.
+        </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <code style={{ ...codeStyle, flex: 1, minWidth: 220 }}>{endpoint}</code>
+          <button className="btn-ghost" style={small} onClick={() => copy(endpoint, 'url')}>
+            {copied === 'url' ? <Check size={12} /> : <Copy size={12} />} {copied === 'url' ? 'Copied' : 'Copy address'}
+          </button>
+        </div>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>Claude Code, Claude Desktop and your own agents can use the same sign-in, or an access key created below.</span>
+      </div>
 
       {created && (
         <div className="account-card" style={{ marginBottom: 16, borderColor: 'var(--accent-mid)' }}>
@@ -163,7 +180,7 @@ export default function AgentKeys() {
             </div>
             <span style={{ color: 'var(--text-muted)', fontSize: 11.5, lineHeight: 1.5 }}>
               Custom agents send JSON-RPC to <code>{endpoint}</code> with an <code>Authorization: Bearer</code> header.
-              Custom connectors on claude.ai (web) need OAuth sign-in, which this journal doesn&apos;t offer yet.
+              For claude.ai (web and phone), use the connector address above instead of a key.
             </span>
           </div>
         </div>
@@ -187,18 +204,18 @@ export default function AgentKeys() {
         <div style={{ display: 'grid', gap: 8 }}>
           {active.map(k => (
             <div key={k._id} className="account-card" style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <KeyRound size={17} style={{ color: 'var(--accent)' }} />
+              {k.kind === 'oauth' ? <Globe size={17} style={{ color: 'var(--accent)' }} /> : <KeyRound size={17} style={{ color: 'var(--accent)' }} />}
               <div style={{ flex: 1, minWidth: 180, display: 'grid', gap: 2 }}>
                 <strong style={{ color: 'var(--text-primary)', fontSize: 13 }}>{k.name}</strong>
                 <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
-                  <code>{k.prefix}…</code> · created {when(k.createdAt)} · last used {when(k.lastUsedAt)}
+                  {k.kind === 'oauth' ? 'Connected app (signed in)' : <><code>{k.prefix}…</code></>} · {k.kind === 'oauth' ? 'connected' : 'created'} {when(k.createdAt)} · last used {when(k.lastUsedAt)}
                 </span>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: k.journal ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={k.journal} onChange={e => setJournalAccess(k, e.target.checked)} aria-label={`Journal access for ${k.name}`} />
                 Journal access
               </label>
-              <button className="btn-ghost" style={{ fontSize: 12, color: 'var(--red)' }} onClick={() => revoke(k)} aria-label={`Revoke ${k.name}`}><Trash2 size={14} /> Revoke</button>
+              <button className="btn-ghost" style={{ fontSize: 12, color: 'var(--red)' }} onClick={() => revoke(k)} aria-label={`${k.kind === 'oauth' ? 'Disconnect' : 'Revoke'} ${k.name}`}><Trash2 size={14} /> {k.kind === 'oauth' ? 'Disconnect' : 'Revoke'}</button>
             </div>
           ))}
         </div>

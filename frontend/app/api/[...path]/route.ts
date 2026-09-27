@@ -41,9 +41,12 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const backendUrl = buildBackendUrl(path, request.nextUrl.search);
   const method = request.method.toUpperCase();
 
+  const headers = buildForwardHeaders(request);
+  // The address the browser/app used, so the backend can point OAuth clients back here.
+  headers.set('x-tj-public-origin', request.nextUrl.origin);
   const response = await fetch(backendUrl, {
     method,
-    headers: buildForwardHeaders(request),
+    headers,
     body: method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer(),
     cache: 'no-store',
   });

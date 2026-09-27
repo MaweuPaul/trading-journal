@@ -126,6 +126,8 @@ const models = {
   KnowledgeEntry: memoryModel(require('../models/KnowledgeEntry')),
   PreTradeAnalysis: memoryModel(require('../models/PreTradeAnalysis')),
   AccountEvent: memoryModel(require('../models/AccountEvent')),
+  OAuthClient: memoryModel(require('../models/OAuthClient')),
+  OAuthCode: memoryModel(require('../models/OAuthCode')),
 };
 // Only after the models are compiled: routes check this before touching the DB.
 Object.defineProperty(mongoose.connection, 'readyState', { get: () => 1 });

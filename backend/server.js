@@ -18,6 +18,7 @@ const backtestTradesRouter = require('./routes/backtestTrades');
 const backtestStrategiesRouter = require('./routes/backtestStrategies');
 const apiKeysRouter = require('./routes/apiKeys');
 const mcpRouter = require('./routes/mcp');
+const oauthRouter = require('./routes/oauth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -63,6 +64,7 @@ app.use('/api', backtestTradesRouter);
 app.use('/api', backtestStrategiesRouter);
 app.use('/api', apiKeysRouter);
 app.use('/api', mcpRouter);
+app.use('/api', oauthRouter);
 app.use('/api', tradesRouter);
 
 // Desktop Sync Agent download — serves the newest built .zip from

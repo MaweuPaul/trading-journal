@@ -387,6 +387,14 @@ export default function ManualPage() {
               <li><b>This journal&apos;s MCP address</b> is <code>{mcpUrl}</code>. It&apos;s already filled into every example below, so you only need to swap in your key. (Claude runs on your own computer, so it has to be told where your journal lives; that&apos;s why the address appears in the setup at all.)</li>
             </ul>
 
+            <div className="manual-sub">Easiest · claude.ai on web or phone (no key)</div>
+            <ol className="manual-steps">
+              <li><b>In claude.ai, open Settings → Connectors → Add custom connector</b><span className="d">Paste <code>{mcpUrl}</code> as the address and click <b>Connect</b>.</span></li>
+              <li><b>Sign in and click Allow</b><span className="d">You&apos;re sent to this journal. Tick <b>Read my trade journal</b> if you want Claude to review your real trades too.</span></li>
+              <li><b>Use it in any chat</b><span className="d">Turn the connector on in a chat and ask away. It appears under Accounts → AI agent access, where you can switch journal access off or <b>Disconnect</b> it.</span></li>
+            </ol>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Prefer Claude Code or Claude Desktop? They can use the same sign-in, or an access key as below.</p>
+
             <div className="manual-sub">Step 1 · Create an access key</div>
             <ol className="manual-steps">
               <li><b>Open Accounts</b><span className="d">Scroll to the bottom, to the <b>AI agent access</b> card.</span></li>

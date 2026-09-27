@@ -115,6 +115,22 @@ interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
 function drawingFactory(type: string, data: SerializedDrawing) {
   return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
 }
+/**
+ * Move each anchor onto a candle of the chart it's imported into: the last
+ * candle opening at or before it. Anchors from another timeframe (e.g. 05:25
+ * on a 15m chart) otherwise match no bar, and the chart can't place the drawing.
+ */
+function snapDrawings(drawings: SerializedDrawing[], candles: { time: unknown }[] | null): SerializedDrawing[] {
+  if (!candles || !candles.length) return drawings;
+  const times = candles.map(c => Number(c.time));
+  const snap = (t: number) => {
+    let lo = 0, hi = times.length - 1;
+    if (t <= times[0]) return times[0];
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (times[mid] <= t) lo = mid; else hi = mid - 1; }
+    return times[lo];
+  };
+  return drawings.map(d => ({ ...d, anchors: d.anchors.map(a => ({ ...a, time: snap(Number(a.time)) as Anchor['time'] })) }));
+}
 function cssVar(el: Element | null, name: string, fallback: string) {
   const v = el ? getComputedStyle(el).getPropertyValue(name).trim() : '';
   return v || fallback;
@@ -212,6 +228,17 @@ export default function Workspace() {
   // ── Trade ──────────────────────────────────────────────────────────────────
   const [placingDirection, setPlacingDirection] = useState<'long' | 'short' | null>(null);
   const [riskAmountInput, setRiskAmountInput] = useState(() => params.get('risk') || '100');
+  // Starting account balance for the backtest: shows the risk as a % of it (remembered per browser).
+  const [balanceInput, setBalanceInput] = useState('10000');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('backtest-initial-balance');
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- read the saved balance once after mount
+      if (saved) setBalanceInput(saved);
+    } catch { /* storage blocked */ }
+  }, []);
+  const changeBalance = (v: string) => { setBalanceInput(v); try { localStorage.setItem('backtest-initial-balance', v); } catch { /* storage blocked */ } };
+  const riskPct = Number(balanceInput) > 0 && Number(riskAmountInput) > 0 ? (Number(riskAmountInput) / Number(balanceInput)) * 100 : null;
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   const draggingHandleRef = useRef<TradeHandle | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
@@ -541,7 +568,7 @@ export default function Workspace() {
     managerRef.current = manager;
     const restoring = pendingRestoreRef.current;
     if (restoring) {
-      if (restoring.drawings.length) manager.importDrawings(restoring.drawings, drawingFactory);
+      if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current), drawingFactory);
       pendingRestoreRef.current = null;
     }
     const recount = () => setDrawingCount(manager.getAllDrawings().length);
@@ -549,6 +576,8 @@ export default function Workspace() {
       manager.on('drawing:added', event => {
         if (event.drawing) {
           if (drawColorRef.current) event.drawing.updateStyle({ lineColor: drawColorRef.current });
+          // Zones extend with the replay: the right edge follows the latest candle (see the reveal effect).
+          if (event.drawing.type === 'rectangle' && !event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: true });
           if (event.drawing.type === 'text-annotation') {
             const note = (window.prompt('Text for this note:', '') || '').trim().slice(0, 80);
             if (note) { (event.drawing as unknown as { setText: (t: string) => void }).setText(note); event.drawing.requestUpdate(); }
@@ -704,11 +733,18 @@ export default function Workspace() {
   }, [chartEpoch]);
 
   // Hide drawings anchored past the revealed candle -- no peeking at your own future analysis.
+  // Extending zones instead grow their right edge to the latest revealed candle.
   useEffect(() => {
     const manager = managerRef.current; if (!manager || !candles) return;
     const revealedTime = Number(candles[replayIdx]?.time ?? Number.POSITIVE_INFINITY);
     for (const d of manager.getAllDrawings()) {
-      const maxAnchorTime = d.anchors.length ? Math.max(...d.anchors.map(a => Number(a.time))) : 0;
+      const extending = d.type === 'rectangle' && d.options.extendRight === true && d.anchors.length === 2;
+      if (extending && Number.isFinite(revealedTime)) {
+        const right = Number(d.anchors[0].time) >= Number(d.anchors[1].time) ? 0 : 1;
+        if (Number(d.anchors[right].time) < revealedTime) { d.updateAnchor(right, { ...d.anchors[right], time: revealedTime as Anchor['time'] }); d.requestUpdate(); }
+      }
+      const times = d.anchors.map(a => Number(a.time));
+      const maxAnchorTime = !times.length ? 0 : extending ? Math.min(...times) : Math.max(...times);
       const shouldShow = maxAnchorTime <= revealedTime;
       if ((d.options.visible !== false) !== shouldShow) { d.updateOptions({ visible: shouldShow }); d.requestUpdate(); }
     }
@@ -1293,6 +1329,12 @@ export default function Workspace() {
             <span className="tw:text-on-surface-variant tw:text-[10px]">Risk $:</span>
             <input aria-label="Risk amount in dollars" type="number" min="0" step="any" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} disabled={Boolean(closedTrade)}
               className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
+          </label>
+          <label className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5" title="Initial balance of the simulated account; the risk is shown as a % of it">
+            <span className="tw:text-on-surface-variant tw:text-[10px]">Balance $:</span>
+            <input aria-label="Initial balance in dollars" type="number" min="0" step="any" value={balanceInput} onChange={e => changeBalance(e.target.value)}
+              className="tw:w-20 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
+            {riskPct != null && <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">risk {riskPct < 1 ? riskPct.toFixed(2) : riskPct.toFixed(1)}%</span>}
           </label>
         </div>
       </section>

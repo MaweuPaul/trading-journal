@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
 const { getTrendbars } = require('../lib/ctraderReplay');
+const { specWithUsd } = require('../lib/symbolSpecs');
 const { normalizeBacktestDrawings } = require('../lib/backtestDrawings');
 const { normalizeTags, strategyAndTags } = require('../lib/backtestTags');
 
@@ -42,6 +43,20 @@ const INTERVAL_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3,
 function maxRangeMsFor(interval) {
   return (INTERVAL_MS[interval] || INTERVAL_MS['15min']) * MAX_CHART_BARS;
 }
+
+// GET /backtest-trades/symbol-spec?symbol=XAUUSD&at=<ms>  contract size, lot
+// limits and USD conversion, so the position tool can size real lots.
+router.get('/backtest-trades/symbol-spec', auth, ownerOnly, async (req, res) => {
+  const symbol = String(req.query.symbol || '').trim();
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+  const at = Number(req.query.at) || Date.now();
+  try {
+    res.json(await specWithUsd(req.user.userId, symbol, Math.min(at, Date.now())));
+  } catch (err) {
+    const setup = ['NOT_CONNECTED', 'NO_ACCOUNT_SELECTED'].includes(err.code);
+    res.status(setup ? 503 : err.code === 'SYMBOL_NOT_FOUND' ? 422 : 502).json({ error: err.message, code: err.code || 'CTRADER_ERROR', setup });
+  }
+});
 
 // GET /backtest-trades/chart  candles for an explicit, arbitrary historical
 // window -- unlike Pre-Trade Analysis's "last N days from now", a backtest
@@ -120,7 +135,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
   try {
     const {
       name, strategy, tags, source, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
-      stopLoss, takeProfit, outcome, riskAmount, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
+      stopLoss, takeProfit, outcome, riskAmount, lots, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
       planFollowed, setupQuality, executionQuality, mistakes, lesson,
     } = req.body;
     // Quick logs (from the Backtest Log's "New Backtest" form) carry only a
@@ -164,6 +179,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
       takeProfit: takeProfit === '' || takeProfit == null ? null : Number(takeProfit),
       outcome,
       riskAmount: Number.isFinite(Number(riskAmount)) ? Number(riskAmount) : 0,
+      lots: lots != null && Number.isFinite(Number(lots)) && Number(lots) > 0 ? Number(lots) : null,
       pnlUSD: Number.isFinite(Number(pnlUSD)) ? Number(pnlUSD) : 0,
       rMultiple: Number.isFinite(Number(rMultiple)) ? Number(rMultiple) : 0,
       notes: String(notes || '').slice(0, 5000),

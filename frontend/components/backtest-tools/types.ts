@@ -14,6 +14,8 @@ export interface OpenTrade {
   entryTime: number; entryPrice: number;
   stopLoss: number; takeProfit: number | null;
   riskAmount: number;
+  /** Position size in lots, from the symbol's contract size; null when the symbol spec isn't known. */
+  lots?: number | null;
 }
 export interface ClosedTrade extends OpenTrade {
   exitTime: number; exitPrice: number;
@@ -80,3 +82,17 @@ export function nearestCandleIndex(candles: Candle[], time: number) {
   }
   return lo;
 }
+
+/** Contract facts from the broker (GET /api/backtest-trades/symbol-spec). */
+export interface SymbolSpec {
+  symbol: string;
+  contractSize: number;
+  minLots: number;
+  maxLots: number | null;
+  lotStep: number;
+  quoteCurrency: string | null;
+  usdPerQuote: number | null;
+  /** USD per 1.00 lot for a 1.0 price move; null when the quote currency couldn't be converted. */
+  usdPerPointPerLot: number | null;
+}
+export type SizingMode = 'risk' | 'lots';

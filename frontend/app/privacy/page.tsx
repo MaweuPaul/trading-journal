@@ -35,12 +35,25 @@ export default function PrivacyPage() {
           <li><b>Everything you type or upload</b> <span className="muted">— notes, grades, emotion tags, playbook answers, strategy names, and screenshots. This is the actual &quot;journal&quot; layered on top of the read-only trade data, and it only exists because you added it.</span></li>
           <li><b>Screenshots</b> <span className="muted">— stored via Cloudinary, the one external service this app uses, so images load quickly without bloating the database. If the database is briefly unreachable when you upload one, it&apos;s held on the server&apos;s own disk and auto-uploaded once it reconnects.</span></li>
           <li><b>Investor access code &amp; password</b> <span className="muted">— generated only if you turn it on for a specific account; the password is bcrypt-hashed and shown to you once, the same way your own login password is handled.</span></li>
+          <li><b>Backtests</b> <span className="muted">— your replay sessions, drawings, simulated trades, chart snapshots and strategy notes. Candles for replays are fetched from your own cTrader connection (with each symbol&apos;s contract size, for lot sizing) and cached briefly on the server; they&apos;re market prices, not personal data.</span></li>
+          <li><b>AI access keys and connected apps</b> <span className="muted">— only if you create one. Like your password, only a fingerprint (SHA-256 hash) of each key or sign-in token is stored, never the key itself. Sign-in tokens for connected apps (e.g. claude.ai) expire after an hour and are renewed automatically.</span></li>
+          <li><b>AI strategy runs</b> <span className="muted">— when an AI tests a strategy, the code it wrote, its settings and the resulting simulated trades are kept so you (and it) can review or rerun them. Trades it logs are marked AGENT and kept apart from your own backtest stats.</span></li>
+        </ul>
+
+        <Sub>AI agents (optional, experimental)</Sub>
+        <ul className="manual-feature-list">
+          <li><b>Off by default.</b> An AI can only reach your journal if you create an access key or approve a connection on <Link href="/accounts" style={{ color: 'var(--accent)' }}>Accounts → AI agent access</Link>.</li>
+          <li><b>Backtesting only, unless you say otherwise.</b> A key or connection starts with backtesting access. Reading your real trades, notes, screenshots, playbooks, knowledge base, pre-trade plans and deposits/withdrawals needs <b>journal access</b>, which you tick per key or on the approval page and can switch off any time.</li>
+          <li><b>Read-only on your real journal.</b> An AI can never change or delete your real trades or notes, and like everything else here it can never place a real trade.</li>
+          <li><b>Where the data goes:</b> whatever the AI reads is sent to the company that runs that AI (for example Anthropic for Claude) and handled under <i>their</i> privacy terms, not this page&apos;s. Only connect AI services you trust with your trading data.</li>
+          <li><b>Strategy code</b> an AI writes runs in a sealed sandbox on the server: no internet, no files, no access to your data or credentials, with strict time and memory limits.</li>
+          <li><b>Export for AI</b> (Trades page) builds a document from your journal and hands it only to your own browser. Nothing is sent to any AI until you paste or upload it into a chat yourself, and then it&apos;s subject to that AI service&apos;s terms. You can leave your notes and screenshot links out of it.</li>
         </ul>
 
         <Sub>What we don&apos;t do</Sub>
         <ul className="manual-feature-list">
           <li>Every broker connection is <b>read-only</b> — TradeJournal cannot place, modify, or close a real trade for you, on MT5 or cTrader.</li>
-          <li>No advertising trackers, analytics pixels, or third-party scripts run in the app. Cloudinary is the only external service involved, and it only ever sees the screenshots you choose to upload.</li>
+          <li>No advertising trackers, analytics pixels, or third-party scripts run in the app. The only outside services involved are your broker&apos;s own API (to read your trades and candles), Cloudinary (only the screenshots you choose to upload), and any AI service <i>you</i> choose to connect.</li>
           <li>Your data isn&apos;t sold, rented, or shared with anyone outside your own account.</li>
           <li>If this instance has more than one person signed up, accounts are fully isolated — nobody can see another user&apos;s trades, notes, or broker connections. There&apos;s no admin view into another user&apos;s journal.</li>
         </ul>
@@ -50,11 +63,13 @@ export default function PrivacyPage() {
           <li>By default: only you, signed in with your own password.</li>
           <li>If you explicitly enable <Link href="/accounts" style={{ color: 'var(--accent)' }}>Investor Access</Link> on a broker account, whoever holds that link and one-time password gets a read-only performance view of <i>that account only</i> — no notes, no other accounts, no ability to edit anything.</li>
           <li>Turning investor access back off (or rotating its password) invalidates the old link immediately.</li>
+          <li>AI agents and apps you connect see what their access allows (backtesting, and your journal only with journal access) until you revoke them.</li>
         </ul>
 
         <Sub>Your control over it</Sub>
         <ul className="manual-feature-list">
           <li><b>Disconnect</b> any broker account from <Link href="/accounts" style={{ color: 'var(--accent)' }}>Accounts</Link> at any time — syncing stops immediately; trades already synced stay in your history until you remove them yourself.</li>
+          <li><b>Revoke AI access</b> on <Link href="/accounts" style={{ color: 'var(--accent)' }}>Accounts → AI agent access</Link>: <i>Revoke</i> a key or <i>Disconnect</i> an app and it&apos;s cut off on its very next request; untick <i>Journal access</i> to keep backtesting but hide your real trades.</li>
           <li><b>Export everything</b> — a full JSON or CSV backup is one click away on the <Link href="/archive" style={{ color: 'var(--accent)' }}>Backup &amp; Export</Link> page.</li>
           <li>There&apos;s currently no self-service &quot;delete my account&quot; button — if you want your account and its data fully removed, just ask whoever gave you access; it&apos;s a small, known group here, not a support queue.</li>
         </ul>

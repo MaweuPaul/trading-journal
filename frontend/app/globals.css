@@ -3605,7 +3605,7 @@ table.manual-ref td:not(.term) { color: var(--text-secondary); }
   background: var(--bg-base);
 }
 /* Kept flat: no shadows on the sign-in / create-account pages. */
-.auth-split .login-card { box-shadow: none; animation: none; }
+.auth-split .login-card { box-shadow: none; }
 .auth-ill-grid { stroke: var(--border); stroke-width: 1; }
 .auth-ill-up { fill: var(--green, #16a34a); stroke: var(--green, #16a34a); }
 .auth-ill-down { fill: var(--red, #dc2626); stroke: var(--red, #dc2626); }

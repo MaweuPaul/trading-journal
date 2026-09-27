@@ -112,6 +112,19 @@ test('accounts, playbooks and candles around a trade', async () => {
   assert.equal(times.filter(t => t < '2024-01-08T14:05Z').length, 20, '20 bars before the entry candle');
   assert.equal(times.filter(t => t > '2024-01-08T15:00Z').length, 5, '5 bars after the exit candle');
   assert.ok(c.candles.length <= 600);
+
+  // A 2-minute trade gets 1-minute candles over a window of several thousand
+  // bars, more than one 1500-bar cTrader page: the bars before entry must still be there.
+  const quick = String((await H.models.JournalTrade.create({
+    user, dealId: 'q1', symbol: 'XAUUSD', direction: 'SELL', entryPrice: 2000, exitPrice: 1999, lotSize: 1, pnlUSD: 10,
+    openTime: new Date(Date.UTC(2024, 0, 10, 14, 1)), closeTime: new Date(Date.UTC(2024, 0, 10, 14, 3)),
+    durationMinutes: 2, accountKey: 'ctrader:1', accountName: 'Main', accountType: 'live',
+  }))._id);
+  const q = await journal.getTradeCandles(user, quick, { barsBefore: 100, barsAfter: 30 });
+  assert.equal(q.interval, '1min');
+  const qt = q.candles.map(k => k[0]);
+  assert.equal(qt.filter(t => t < '2024-01-10T14:01Z').length, 100, '100 bars before a short trade\'s entry');
+  assert.equal(qt[100], '2024-01-10T14:01Z', 'the entry candle follows them');
 });
 
 // ── Over MCP: journal tools need the opt-in scope ──────────────────────────

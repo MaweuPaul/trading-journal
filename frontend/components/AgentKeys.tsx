@@ -122,7 +122,10 @@ export default function AgentKeys() {
     <>
       <section className="account-list-head" style={{ marginTop: 32 }}>
         <div>
-          <div className="account-title-line"><Bot size={22} /><h2>AI agent access</h2></div>
+          <div className="account-title-line">
+            <Bot size={22} /><h2>AI agent access</h2>
+            <span title="New and still being tested: expect changes" style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--amber, #b7791f)', border: '1px solid currentColor', borderRadius: 999, padding: '2px 8px', lineHeight: 1.4 }}>Experimental</span>
+          </div>
           <p>Let an AI agent backtest your strategies on cTrader history, bar by bar with the future hidden. Its trades land in the Backtest Log marked AGENT and stay out of your own stats.
             Turn on journal access for a key to also let the agent read your real trades (notes, grades, checklists, screenshots, candles around each trade) and review your trading. Read-only: it can&apos;t change anything.</p>
         </div>

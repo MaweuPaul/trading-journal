@@ -4,12 +4,13 @@ import { PAGE_PURPOSE } from '@/components/pagePurpose';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
+import ExportForAI from '@/components/ExportForAI';
 import PlaybookRuleInput from '@/components/PlaybookRuleInput';
 import type { PlaybookRule, PlaybookBlock, PlaybookSnapshot, Playbook } from '@/types/playbook';
 import {
   SlidersHorizontal, ChevronLeft, ChevronRight, List,
   X, Award, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun, Plus
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun, Plus, Sparkles
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
@@ -283,6 +284,7 @@ function TradesPageContent() {
   const [activePlaybookPhase, setActivePlaybookPhase] = useState<JournalPhase>('plan');
   const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
   const [showAddTrade, setShowAddTrade] = useState(false);
+  const [showExportAI, setShowExportAI] = useState(false);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -712,10 +714,16 @@ function TradesPageContent() {
             <h2>Trades</h2>
             <p><strong style={{ color: 'var(--text-secondary)' }}>{PAGE_PURPOSE['/trades'].question}</strong> {PAGE_PURPOSE['/trades'].detail} {total.toLocaleString()} closed positions synced.</p>
           </div>
-          <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
-            <Plus size={14} />
-            Add Trade
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-ghost" onClick={() => setShowExportAI(true)} title="Copy your trades and stats for ChatGPT, Claude or any AI to review">
+              <Sparkles size={14} />
+              Export for AI
+            </button>
+            <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
+              <Plus size={14} />
+              Add Trade
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1609,6 +1617,12 @@ function TradesPageContent() {
         canNavigatePrev={trades.findIndex(trade => trade._id === replayTradeId) > 0}
         canNavigateNext={(() => { const i = trades.findIndex(trade => trade._id === replayTradeId); return i >= 0 && i < trades.length - 1; })()}
       />}
+      {showExportAI && (
+        <ExportForAI
+          filters={{ symbol, direction, accountType: accountTypeFilter, accountKey: accountKeyFilter || '', from, to }}
+          onClose={() => setShowExportAI(false)}
+        />
+      )}
       {showAddTrade && (
         <AddTradeModal
           onClose={() => setShowAddTrade(false)}

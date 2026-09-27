@@ -452,6 +452,6 @@ async function getAccountEvents(userId, { account, from, to } = {}) {
 }
 
 module.exports = {
-  GROUPS, listAccounts, listTrades, getTrade, getMetrics, getPlaybooks, getTradeCandles, publicTrade,
+  GROUPS, findTrades, listAccounts, listTrades, getTrade, getMetrics, getPlaybooks, getTradeCandles, publicTrade,
   listKnowledge, getKnowledgeEntry, listPreTradeAnalyses, getPreTradeAnalysis, getAccountEvents,
 };

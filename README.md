@@ -248,6 +248,10 @@ For mechanical rules the agent doesn't need to replay candle by candle. It write
 
 Replay sessions (`start_session`/`step`) stay the way to test **judgement-based** strategies, where the agent itself reads each candle and decides.
 
+### Export for AI (any chat, no setup)
+
+On the **Trades** page, **Export for AI** builds one Markdown document from the trades matching the page's filters: a review brief for the AI, overall statistics with likely ranges, breakdowns (setup, session, emotion, rules followed, exit reason, grades, hold time, weekday, direction, symbol), your playbooks, and the newest trades in full with their journal (notes, checklists, playbook answers, screenshot links; optional). **Copy to clipboard** or **Download .md**, then paste or upload it into ChatGPT, Claude, Gemini or any other chat. Served by `GET /api/export/ai` (owner login; `symbol`, `direction`, `accountType`, `accountKey`, `from`, `to`, `maxTrades` 0-1000, `notes=0` to leave journal text out).
+
 ### Reviewing your real trades
 
 A key with **journal access** also gets read-only tools over your real (synced or manually entered) trades, so an agent can act as a trading coach with your actual data in front of it:
@@ -510,6 +514,7 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 | `/api/ctrader/sync` / `/api/ctrader/sync/:ctidTraderAccountId` | POST | Sync every connected cTrader account, or just one |
 | `/api/investor/login` | POST *(public, rate-limited)* | Exchange an investor account number + password for a scoped read-only token |
 | `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | Balance, headline stats, equity curve, and a financial-fields-only trade list |
+| `/api/export/ai` | GET | Filtered trades, statistics and playbooks as Markdown for an AI chat (Trades page → Export for AI) |
 | `/api/api-keys` | GET / POST | List the caller's AI agent access keys, or create one (the plaintext key is returned once) |
 | `/api/api-keys/:id` | PATCH / DELETE | Turn journal access on or off (`{ "journal": true }`); revoke an access key |
 | `/api/mcp` | POST *(access key)* | MCP server for AI agent backtesting (stateless Streamable HTTP); see [AI Agent Backtesting](#ai-agent-backtesting-mcp) |

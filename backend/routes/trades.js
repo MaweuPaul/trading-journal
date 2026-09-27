@@ -3480,6 +3480,24 @@ router.get('/export/csv', auth, ownerOnly, async (req, res) => {
 });
 
 // GET /api/export/status  Export/backup status metadata
+// GET /api/export/ai -- journaled trades, stats and playbooks as Markdown for any AI chat.
+router.get('/export/ai', auth, ownerOnly, async (req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The AI export needs the database connection.' });
+  try {
+    const { symbol, direction, accountType, accountKey, from, to, maxTrades, notes } = req.query;
+    const { buildExport } = require('../lib/journalExport');
+    const result = await buildExport(req.user.userId, {
+      symbol, accountType, from, to, maxTrades,
+      direction: direction ? (String(direction).toUpperCase() === 'SELL' ? 'short' : String(direction).toUpperCase() === 'BUY' ? 'long' : direction) : undefined,
+      account: accountKey === '__unassigned__' ? '(unassigned)' : accountKey,
+      notes: notes !== '0' && notes !== 'false',
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(err.code === 'BAD_REQUEST' ? 400 : 500).json({ error: err.message || 'Could not build the export' });
+  }
+});
+
 router.get('/export/status', auth, ownerOnly, async (req, res) => {
   try {
     let tradeCount = 0;

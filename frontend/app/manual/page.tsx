@@ -490,6 +490,7 @@ export default function ManualPage() {
               <li><b>Results</b> come back with likely ranges and breakdowns (by setup tag, weekday, hour, exit reason or any entry condition), and can be logged to your Backtest Log as agent trades.</li>
             </ul>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Code up my ORB liquidity sweep on gold, 5-minute candles, and run it on the last year with a 0.3 spread. Break the results down by weekday.&quot;</i> or <i>&quot;Test a 55-day breakout trend-following system with a 3 ATR trailing stop on gold, US30 and EURUSD since 2012, adding up to 3 units.&quot;</i> Strategies that need judgement (reading structure, discretionary setups) still use the bar-by-bar replay.</p>
+            <Callout icon="No setup">Not using Claude Desktop or Claude Code? On the <b>Trades</b> page, <b>Export for AI</b> copies your filtered trades, statistics and playbooks as one document, with instructions for the AI already at the top. Paste it into ChatGPT, Claude, Gemini or any chat, on any device.</Callout>
             <div className="manual-sub">Reviewing your real trades</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>With <b>journal access</b> on, the agent can read your real trades the way a coach would, with your actual data in front of it. It is read-only: it can&apos;t edit, tag or delete anything.</p>
             <ul className="manual-feature-list">

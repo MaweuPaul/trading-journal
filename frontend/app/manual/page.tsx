@@ -362,7 +362,7 @@ export default function ManualPage() {
             </ul>
             <div className="manual-sub">The chart</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>A candlestick chart loads for whatever symbol you type — with the same drawing tools as Backtest and Trade Replay, so you can mark up key levels yourself instead of the app guessing them for you.</p>
-            <Pills items={['Trend line', 'Ray', 'Horizontal line', 'Rectangle / zone', 'Parallel channel', 'Fib retracement', 'Fib extension', 'Arrow', 'Text note', 'Magnet', 'Pin image', 'Undo', 'Delete', 'Clear']} />
+            <Pills items={['Trend line', 'Ray', 'Horizontal line', 'Rectangle / zone', 'Parallel channel', 'Fib retracement', 'Fib extension', 'Arrow', 'Text note', 'Magnet', 'Undo', 'Delete', 'Clear']} />
             <ul className="manual-feature-list">
               <li>Type a symbol and a <b>datalist</b> suggests real names from your connected broker account, so you&apos;re not guessing a spelling like &quot;USTEC&quot; vs. &quot;NAS100&quot; vs. &quot;US100&quot; yourself.</li>
               <li>Choose a <b>timeframe</b> (1m–1D) and <b>lookback window</b> (2–30 days) to bring the right amount of history into view.</li>

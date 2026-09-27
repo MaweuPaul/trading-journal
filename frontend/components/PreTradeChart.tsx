@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, AlertTriangle, ExternalLink, ImagePlus, Trash2 } from 'lucide-react';
+import { Loader2, AlertTriangle, ExternalLink, Trash2 } from 'lucide-react';
 import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { SerializedDrawing } from 'lightweight-charts-drawing';
@@ -36,7 +36,6 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const [interval, setInterval_] = useState(initialInterval && CHART_INTERVALS.some(t => t.value === initialInterval) ? initialInterval : '15min');
   const [days, setDays] = useState(5);
@@ -49,8 +48,6 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
   const drawingsRef = useRef<SerializedDrawing[]>(initial.drawings);
   const [drawings, setDrawings] = useState<SerializedDrawing[]>(initial.drawings);
   const [images, setImages] = useState<DrawnImage[]>(() => initial.other.filter(a => a.type === 'image') as unknown as DrawnImage[]);
-  const [pendingImage, setPendingImage] = useState<Omit<DrawnImage, 'id' | 'time' | 'price' | 'color'> | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
   const [showImages, setShowImages] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [saveError, setSaveError] = useState('');
@@ -158,40 +155,6 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
   }, [images, resolvedTheme]);
   useEffect(() => { redrawRef.current = redrawImages; redrawImages(); }, [redrawImages, engine.revision]);
 
-  const placeImage = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const chart = chartRef.current, series = seriesRef.current;
-    if (!pendingImage || !chart || !series) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    const time = chart.timeScale().coordinateToTime(e.clientX - r.left); const price = series.coordinateToPrice(e.clientY - r.top);
-    if (time == null || price == null) return;
-    setImages(cur => [...cur, { id: `image-${Date.now()}`, time: Number(time), price, color: engine.color, ...pendingImage }]);
-    setPendingImage(null);
-  };
-  const uploadChartImage = async (file: File) => {
-    if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
-    if (file.size > 8 * 1024 * 1024) { alert('Please keep chart images under 8MB.'); return; }
-    const token = localStorage.getItem('token'); if (!token) return;
-    setUploadingImage(true); setPendingImage(null);
-    try {
-      const imageData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Could not read the image')); reader.readAsDataURL(file);
-      });
-      const caption = file.name.replace(/\.[^.]+$/, '').slice(0, 160) || 'Chart evidence';
-      const response = await fetch(`${API}/pre-trade-analyses/${analysisId}/screenshots`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ imageData, caption }),
-      });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not upload chart image');
-      const screenshots = Array.isArray(body.screenshots) ? body.screenshots : [];
-      const uploaded = screenshots[screenshots.length - 1];
-      if (!uploaded?.url) throw new Error('The image uploaded but no image URL was returned');
-      engine.activateTool(null);
-      setPendingImage({ url: String(uploaded.url), caption, screenshotId: String(uploaded._id || uploaded.publicId || '') });
-    } catch (uploadError) {
-      alert(uploadError instanceof Error ? uploadError.message : 'Could not upload chart image');
-    } finally { setUploadingImage(false); }
-  };
-
   // ── Autosave (debounced): drawings + pinned images ─────────────────────
   const annotations = useMemo(
     () => [...images.map(i => ({ ...i, type: 'image' as const })), ...toDrawingEntries(drawings)],
@@ -234,13 +197,14 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
             {[2, 5, 10, 20, 30].map(d => <option key={d} value={d}>{d}d</option>)}
           </select>
         </div>
-        <div className="replay-toolbar-divider" />
-        <div className="replay-tool-group">
-          <span className="replay-tool-group-label">Evidence</span>
-          <input ref={imageInputRef} className="replay-hidden-file" type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadChartImage(f); }} />
-          <button type="button" disabled={uploadingImage} aria-pressed={Boolean(pendingImage)} className={`replay-tool-btn${pendingImage ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload and pin visual evidence to the chart"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Pin image'}</button>
-          {images.length > 0 && <button type="button" aria-pressed={showImages} className={`replay-tool-btn${showImages ? ' active' : ''}`} onClick={() => setShowImages(v => !v)}>Images ({images.length})</button>}
-        </div>
+        {images.length > 0 && (
+          <>
+            <div className="replay-toolbar-divider" />
+            <div className="replay-tool-group">
+              <button type="button" aria-pressed={showImages} className={`replay-tool-btn${showImages ? ' active' : ''}`} onClick={() => setShowImages(v => !v)} title="Rename or remove pinned images">Images ({images.length})</button>
+            </div>
+          </>
+        )}
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${saveState}`} role="status" title={saveError || 'Chart drawings save automatically'}>{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}</span>
       </div>
@@ -250,15 +214,9 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
         <div className="replay-chart-wrap" style={{ position: 'relative', flex: 1, minWidth: 0, height: '100%' }}>
           <div ref={chartContainerRef} className="replay-chart-container" />
           <ChartDrawingLayer engine={engine} />
-          <canvas ref={canvasRef} onMouseDown={placeImage}
-            style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: pendingImage ? 'auto' : 'none', cursor: pendingImage ? 'crosshair' : undefined }}
+          <canvas ref={canvasRef}
+            style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none' }}
             aria-label="Pinned chart images" />
-          {pendingImage && (
-            <div className="replay-chart-image-placer" role="status" style={{ zIndex: 7 }}>
-              <ImagePlus size={16} /><div><strong>Image ready to place</strong><input aria-label="Image caption" maxLength={180} value={pendingImage.caption} onChange={event => setPendingImage(cur => cur ? { ...cur, caption: event.target.value } : cur)} /><span>Describe the evidence, then click the candle and price where it belongs.</span></div>
-              <button type="button" onClick={() => setPendingImage(null)}>Cancel</button>
-            </div>
-          )}
           {showImages && images.length > 0 && (
             <div className="replay-annotation-manager" aria-label="Pinned images" style={{ zIndex: 7 }}>
               <div className="replay-annotation-manager-head"><strong>Pinned images</strong></div>

@@ -362,11 +362,18 @@ async function getTradeCandles(userId, id, { interval, barsBefore = 100, barsAft
   // Weekends and closed hours have no bars, so ask for extra time and trim by count.
   const fromMs = (openSec - before * sec * 3 - 3 * 86400) * 1000;
   const toMs = Math.min(Date.now(), (closeSec + after * sec * 3 + 3 * 86400) * 1000);
+  // The padded window can hold several thousand bars on short intervals, past
+  // cTrader's 1500-bar page, so page back far enough to reach the entry.
+  const maxPages = Math.ceil((toMs - fromMs) / 1000 / sec / 1500) + 1;
   const data = await throttledFetch(userId, () => getTrendbars({
-    userId, symbol: trade.symbol, periodLabel: tf, fromMs, toMs,
+    userId, symbol: trade.symbol, periodLabel: tf, fromMs, toMs, maxPages,
     preferredCtidTraderAccountId: String(trade.accountKey || '').startsWith('ctrader:') ? trade.accountKey.slice('ctrader:'.length) : undefined,
   }));
   const all = (data.candles || []).sort((a, b) => a.time - b.time);
+  // Never pass off candles from after the trade as the ones around it.
+  if (!all.length || all[0].time > openSec) {
+    throw new AgentError(`cTrader returned no ${tf} candles reaching back to this trade's entry; try a higher interval.`, 'NO_DATA');
+  }
   const entryIdx = all.findIndex(c => c.time + sec > openSec);
   const exitIdx = all.findIndex(c => c.time + sec > closeSec);
   const start = Math.max(0, (entryIdx < 0 ? all.length : entryIdx) - before);

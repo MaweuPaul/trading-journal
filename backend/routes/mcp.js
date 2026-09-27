@@ -149,14 +149,16 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
 
   tool('step', 'Step the replay',
     'Reveal the next candles in the session timeframe, resolving any open trade against each one (a candle touching both stop and target is settled on smaller candles, down to 1 minute; if still ambiguous, the stop). '
-    + 'Without bars or an until-condition it reveals one candle. To avoid one call per candle: pass bars (up to maxBars), untilPrice (stop on the candle that trades through it), untilCloseAbove/untilCloseBelow (stop on the first close beyond a level; combine both to catch a breakout either way, and add untilTime as a deadline) or untilTime; '
-    + 'with stopOnTradeExit (default true) it stops as soon as an open trade exits or a pending order expires. Returns the revealed candles (last 200), events (order_filled, order_expired, trade_closed, price_reached, close_above, close_below, time_reached, session_end) and the session state.',
+    + 'Without bars or an until-condition it reveals one candle. To avoid one call per candle: pass bars (up to maxBars), untilPrice (stop on the candle that trades through it), untilCloseAbove/untilCloseBelow (stop on the first close beyond a level; combine both to catch a breakout either way, and add untilTime as a deadline), untilHighAbove/untilLowBelow (stop on the first wick beyond a level, e.g. a liquidity sweep of a range high/low; check the close to tell a sweep from a breakout) or untilTime; '
+    + 'with stopOnTradeExit (default true) it stops as soon as an open trade exits or a pending order expires. Returns the revealed candles (last 200), events (order_filled, order_expired, trade_closed, price_reached, close_above, close_below, high_above, low_below, time_reached, session_end) and the session state.',
     {
       sessionId,
       bars: z.number().int().min(1).max(5000).optional(),
       untilPrice: z.number().optional().describe('Stop on the candle that trades through this price (a touch).'),
       untilCloseAbove: z.number().optional().describe('Stop on the first candle that closes above this level (breakouts).'),
       untilCloseBelow: z.number().optional().describe('Stop on the first candle that closes below this level.'),
+      untilHighAbove: z.number().optional().describe('Stop on the first candle whose high goes above this level (sweeps).'),
+      untilLowBelow: z.number().optional().describe('Stop on the first candle whose low goes below this level.'),
       untilTime: timeInput.optional(),
       stopOnTradeExit: z.boolean().default(true),
       maxBars: z.number().int().min(1).max(5000).default(2000),

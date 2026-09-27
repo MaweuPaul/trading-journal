@@ -470,12 +470,15 @@ async function step(userId, sessionId, input = {}) {
   // Breakout-style stops: the first candle that CLOSES beyond a level (a wick through it doesn't count).
   const closeAbove = input.untilCloseAbove == null ? null : v.priceIn(Number(input.untilCloseAbove));
   const closeBelow = input.untilCloseBelow == null ? null : v.priceIn(Number(input.untilCloseBelow));
-  if ([untilPrice, closeAbove, closeBelow].some(x => x != null && !Number.isFinite(x))) throw new AgentError('untilPrice, untilCloseAbove and untilCloseBelow must be numbers.');
+  // Sweep-style stops: the first candle whose wick goes beyond a level (a touch of the level itself doesn't count).
+  const highAbove = input.untilHighAbove == null ? null : v.priceIn(Number(input.untilHighAbove));
+  const lowBelow = input.untilLowBelow == null ? null : v.priceIn(Number(input.untilLowBelow));
+  if ([untilPrice, closeAbove, closeBelow, highAbove, lowBelow].some(x => x != null && !Number.isFinite(x))) throw new AgentError('untilPrice, untilCloseAbove, untilCloseBelow, untilHighAbove and untilLowBelow must be numbers.');
   const untilTimeRaw = parseTime(input.untilTime, 'untilTime');
   const untilTime = untilTimeRaw == null ? null : v.timeIn(untilTimeRaw);
   const stopOnTradeExit = input.stopOnTradeExit !== false;
   const maxBars = Math.max(1, Math.min(MAX_STEP_BARS, Math.floor(Number(input.maxBars ?? 2000)) || 2000));
-  const hasCondition = untilPrice != null || untilTime != null || closeAbove != null || closeBelow != null;
+  const hasCondition = [untilPrice, untilTime, closeAbove, closeBelow, highAbove, lowBelow].some(x => x != null);
   const limit = input.bars != null ? Math.max(1, Math.min(maxBars, Math.floor(Number(input.bars)) || 1)) : hasCondition ? maxBars : 1;
 
   const revealed = [];
@@ -545,6 +548,12 @@ async function step(userId, sessionId, input = {}) {
         events.push({ type: 'close_below', level: v.px(closeBelow), close: v.px(c.close), time: v.iso(c.time) });
         stopped = true; break;
       }
+      // Both can happen on one candle (it swept both sides); report both.
+      const wentAbove = highAbove != null && c.high > highAbove;
+      const wentBelow = lowBelow != null && c.low < lowBelow;
+      if (wentAbove) events.push({ type: 'high_above', level: v.px(highAbove), high: v.px(c.high), close: v.px(c.close), time: v.iso(c.time) });
+      if (wentBelow) events.push({ type: 'low_below', level: v.px(lowBelow), low: v.px(c.low), close: v.px(c.close), time: v.iso(c.time) });
+      if (wentAbove || wentBelow) { stopped = true; break; }
       if (untilTime != null && s.clock >= untilTime) {
         events.push({ type: 'time_reached', time: v.iso(s.clock) });
         stopped = true; break;

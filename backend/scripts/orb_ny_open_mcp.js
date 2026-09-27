@@ -16,6 +16,12 @@
 //   --breakout-tf 5min   confirm the breakout on a 5-minute close (default 1min)
 //   --retest             enter on a retest of the broken edge (limit order) instead of at the breakout close
 //   --retest-expiry-min 60  cancel the retest order if not filled within this many minutes
+//   --sweep              liquidity sweep instead of a breakout: wait for a wick beyond one side of the
+//                        range and a close back inside, then trade back toward the other side
+//   --reclaim-bars 3     sweep: how many candles (of --breakout-tf, 5min by default) price has to close back inside
+//   --stop-buffer 0.1    sweep: stop this many range widths beyond the sweep's extreme
+//   --sweep-target opposite  sweep: target the opposite side of the range, or a number for a fixed R multiple
+//   --min-rr 1           sweep: skip setups whose target is less than this many R away
 // Node 18+; no dependencies.
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -38,15 +44,27 @@ const cfg = {
   log: !args['no-log'],
   strategy: args.strategy || 'ORB NY Open',
   // Breakout confirmation timeframe: the first 1min (default) or 5min close beyond the range.
-  breakoutTf: args['breakout-tf'] === '5min' ? '5min' : '1min',
+  breakoutTf: args['breakout-tf'] === '5min' || (args.sweep && args['breakout-tf'] !== '1min') ? '5min' : '1min',
   // Retest mode: after the breakout, wait for price to come back to the broken
   // edge and buy/sell it there with a limit order (risk = range width, so a
   // 1x-width target pays 1R), cancelled if not filled within retestExpiryMin.
   retest: Boolean(args.retest),
   retestExpiryMin: Number(args['retest-expiry-min'] || 60),
+  // Sweep mode: liquidity resting beyond the range gets taken (a wick through it),
+  // price closes back inside, and the trade goes the other way.
+  sweep: Boolean(args.sweep),
+  reclaimBars: Math.max(1, Number(args['reclaim-bars'] || 3)),
+  stopBuffer: Number(args['stop-buffer'] ?? 0.1),
+  sweepTarget: args['sweep-target'] && args['sweep-target'] !== 'opposite' ? Number(args['sweep-target']) : 'opposite',
+  minRR: Number(args['min-rr'] || 1),
 };
+if (cfg.sweep && cfg.retest) { console.error('Pick --sweep or --retest, not both.'); process.exit(1); }
 const TF_SEC = { '1min': 60, '5min': 300 };
-const STRATEGY_RULES = `ORB New York Open (smc-strategy-lab). Mark the high/low of the M1 candles from ${9}:${30 - cfg.candleMinutes}-9:30 America/New_York (DST-aware). `
+const SWEEP_RULES = `ORB NY Open liquidity sweep. Mark the high/low of the M1 candles from 9:${30 - cfg.candleMinutes}-9:30 America/New_York. `
+  + `After 9:30 (within ${cfg.monitorHours}h), wait for a wick beyond one side and an ${cfg.breakoutTf === '5min' ? 'M5' : 'M1'} close back inside within ${cfg.reclaimBars} candles. Sweep of the high = short, of the low = long. `
+  + `${cfg.bias ? "Bias: only shorts (high sweeps) if today's range midpoint is below yesterday's, only longs if above. " : ''}`
+  + `Enter at the reclaim close; stop ${cfg.stopBuffer}x range width beyond the sweep extreme; target ${cfg.sweepTarget === 'opposite' ? 'the opposite side of the range' : `${cfg.sweepTarget}R`}, skipped if under ${cfg.minRR}R. One trade per day.`;
+const STRATEGY_RULES = cfg.sweep ? SWEEP_RULES : `ORB New York Open (smc-strategy-lab). Mark the high/low of the M1 candles from ${9}:${30 - cfg.candleMinutes}-9:30 America/New_York (DST-aware). `
   + `After 9:30, take the first ${cfg.breakoutTf === '5min' ? 'M5' : 'M1'} close beyond the range within ${cfg.monitorHours}h: above = long, below = short. `
   + `${cfg.bias ? "Daily bias: only longs if today's range midpoint is above yesterday's, only shorts if below. " : ''}`
   + (cfg.retest
@@ -95,7 +113,9 @@ async function rpc(method, params) {
 async function call(name, a = {}) {
   for (let attempt = 0; ; attempt++) {
     const result = await rpc('tools/call', { name, arguments: a });
-    const data = JSON.parse(result.content[0].text);
+    const text = result.content[0].text;
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error(`${name}: ${text}`); } // argument validation errors come back as plain text
     if (!result.isError) return data;
     if (data.code === 'RATE_LIMITED' && attempt < 10) { process.stdout.write(' [cTrader rate limit, waiting 30s]'); await sleep(30_000); continue; }
     const err = new Error(`${name}: ${data.error}`); err.code = data.code; throw err;
@@ -124,15 +144,20 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
   const tools = (await rpc('tools/list', {})).tools;
   const fastBreakout = Boolean(tools.find(t => t.name === 'step')?.inputSchema?.properties?.untilCloseAbove);
   if (!fastBreakout) console.log('(This server has no untilCloseAbove/untilCloseBelow on step yet: watching bar by bar, which is much slower.)');
-  console.log(`ORB NY Open on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ candleMinutes: cfg.candleMinutes, monitorHours: cfg.monitorHours, targetMult: cfg.targetMult, bias: cfg.bias, breakoutTf: cfg.breakoutTf, retest: cfg.retest ? `${cfg.retestExpiryMin} min` : false }));
+  console.log(`ORB NY Open on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ candleMinutes: cfg.candleMinutes, monitorHours: cfg.monitorHours, targetMult: cfg.targetMult, bias: cfg.bias, breakoutTf: cfg.breakoutTf, retest: cfg.retest ? `${cfg.retestExpiryMin} min` : false, sweep: cfg.sweep ? { reclaimBars: cfg.reclaimBars, stopBuffer: cfg.stopBuffer, target: cfg.sweepTarget, minRR: cfg.minRR } : false }));
+  const fastSweep = Boolean(tools.find(t => t.name === 'step')?.inputSchema?.properties?.untilHighAbove);
+  if (cfg.sweep && !fastSweep) console.log('(This server has no untilHighAbove/untilLowBelow on step yet: watching bar by bar, which is much slower.)');
   if (cfg.log) await call('create_strategy', { name: cfg.strategy, description: STRATEGY_RULES.slice(0, 500) });
 
-  const session = await call('start_session', { symbol: cfg.symbol, interval: '1min', from: cfg.from, to: cfg.to, strategy: cfg.log ? cfg.strategy : undefined, context: 0 });
+  // Sweep runs step in the confirmation timeframe, so the log shows that chart; stops and targets are still settled on 1-minute candles.
+  const sessionTf = cfg.sweep ? cfg.breakoutTf : '1min';
+  const holdBars = Math.ceil(cfg.maxHoldBars * 60 / TF_SEC[sessionTf]);
+  const session = await call('start_session', { symbol: cfg.symbol, interval: sessionTf, from: cfg.from, to: cfg.to, strategy: cfg.log ? cfg.strategy : undefined, context: 0 });
   const sid = session.sessionId;
   let clock = toSec(session.clock);
   const results = [];
   let prevMid = null;
-  const stats = { days: 0, noData: 0, noBreakout: 0, noRetest: 0, skippedBusy: 0, filtered: 0 };
+  const stats = { days: 0, noData: 0, noBreakout: 0, noRetest: 0, noSweep: 0, bothSides: 0, noReclaim: 0, lowRR: 0, skippedBusy: 0, filtered: 0 };
 
   try {
     const start = new Date(cfg.from + 'T00:00:00Z'), end = new Date(cfg.to + 'T00:00:00Z');
@@ -159,9 +184,89 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
       const prevMidForFeature = prevMid;
       prevMid = mid;
       if (width <= 0 || (!allowLong && !allowShort)) { stats.filtered++; continue; }
+      const deadline = open + cfg.monitorHours * 3600;
+
+      if (cfg.sweep) {
+        // 2s. Wait for a wick beyond an allowed side (high -> short, low -> long).
+        const watchHigh = allowShort, watchLow = allowLong;
+        let c = null, short = null;
+        if (fastSweep) {
+          const s = await call('step', { sessionId: sid, maxBars: 5000, untilTime: isoMin(deadline), ...(watchHigh ? { untilHighAbove: high } : {}), ...(watchLow ? { untilLowBelow: low } : {}) });
+          clock = toSec(s.state.clock);
+          const hi = s.events.some(e => e.type === 'high_above'), lo = s.events.some(e => e.type === 'low_below');
+          if (hi && lo) { stats.bothSides++; continue; }
+          if (hi || lo) { c = s.candles[s.candles.length - 1]; short = hi; }
+          else if (s.events.some(e => e.type === 'session_end')) break;
+        }
+        while (!fastSweep && !c && clock < deadline) {
+          const s = await call('step', { sessionId: sid, bars: 1 });
+          clock = toSec(s.state.clock);
+          if (s.events.some(e => e.type === 'session_end')) break;
+          const k = s.candles[s.candles.length - 1];
+          if (!k) continue;
+          const hi = watchHigh && k.high > high, lo = watchLow && k.low < low;
+          if (hi && lo) { stats.bothSides++; break; }
+          if (hi || lo) { c = k; short = hi; }
+        }
+        if (!c) { if (clock >= deadline) stats.noSweep++; continue; }
+        const sweepTime = toSec(c.time);
+        // 3s. Price has to close back inside the range within reclaimBars candles.
+        let extreme = short ? c.high : c.low, reclaim = null, barsToReclaim = 0;
+        for (let k = 0; k < cfg.reclaimBars; k++) {
+          if (k > 0) {
+            const s = await call('step', { sessionId: sid, bars: 1 });
+            clock = toSec(s.state.clock);
+            if (s.events.some(e => e.type === 'session_end')) break;
+            c = s.candles[s.candles.length - 1];
+            extreme = short ? Math.max(extreme, c.high) : Math.min(extreme, c.low);
+          }
+          barsToReclaim = k + 1;
+          if (c.close <= high && c.close >= low) { reclaim = c; break; }
+        }
+        if (!reclaim) { stats.noReclaim++; continue; }
+        const entry = reclaim.close;
+        const stop = short ? extreme + cfg.stopBuffer * width : extreme - cfg.stopBuffer * width;
+        const risk = Math.abs(stop - entry);
+        const target = cfg.sweepTarget === 'opposite' ? (short ? low : high) : (short ? entry - cfg.sweepTarget * risk : entry + cfg.sweepTarget * risk);
+        const rr = risk > 0 ? Math.abs(target - entry) / risk : 0;
+        if (!(risk > 0) || rr < cfg.minRR || (short ? target >= entry : target <= entry)) { stats.lowRR++; continue; }
+        const direction = short ? 'short' : 'long';
+        const features = {
+          rangeWidth: +width.toFixed(5),
+          rangeWidthPct: +(width / entry * 100).toFixed(4),
+          sweptSide: short ? 'high' : 'low',
+          sweepDepth: +((short ? extreme - high : low - extreme) / width).toFixed(3), // how far the wick went past the range, in range widths
+          minutesToSweep: Math.round((sweepTime - open) / 60),
+          barsToReclaim,
+          plannedRR: +rr.toFixed(2),
+          riskInRanges: +(risk / width).toFixed(3),
+          ...(prevMidForFeature != null ? { biasGapInRanges: +((mid - prevMidForFeature) / width).toFixed(3) } : {}),
+          weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()],
+        };
+        const opened = await call('open_trade', { sessionId: sid, direction, riskAmount: cfg.risk, features, stopLoss: stop, takeProfit: target });
+        const run = await call('step', { sessionId: sid, bars: holdBars });
+        clock = toSec(run.state.clock);
+        let closed = run.events.find(e => e.type === 'trade_closed')?.trade;
+        if (!closed) closed = (await call('close_trade', { sessionId: sid })).closed; // max hold reached
+        results.push({ day: d.toISOString().slice(0, 10), ...closed, rangeWidth: width });
+        process.stdout.write(`\n${d.toISOString().slice(0, 10)} ${direction.padEnd(5)} sweep ${short ? 'high' : 'low '} entry ${opened.opened.entryPrice} (${rr.toFixed(1)}R to target) -> ${closed.exitReason.padEnd(6)} ${closed.rMultiple >= 0 ? '+' : ''}${closed.rMultiple}R`);
+        if (cfg.log) {
+          await call('log_trade', {
+            sessionId: sid,
+            name: `ORB Sweep ${d.toISOString().slice(0, 10)} ${cfg.symbol} ${short ? 'Short' : 'Long'}`,
+            notes: `Marking range ${cfg.candleMinutes}m before 9:30 NY: high ${high}, low ${low} (width ${width.toFixed(3)}). ${cfg.bias ? `Bias: ${biasText}. ` : ''}`
+              + `Wick beyond the range ${short ? 'high' : 'low'} at ${new Date(sweepTime * 1000).toISOString().slice(0, 16)}Z (extreme ${+extreme.toFixed(5)}, ${features.sweepDepth} range widths past it); `
+              + `${cfg.breakoutTf === '5min' ? 'M5' : 'M1'} close back inside at ${reclaim.time} (close ${entry}, ${barsToReclaim} candle${barsToReclaim > 1 ? 's' : ''}). `
+              + `Stop ${cfg.stopBuffer}x width beyond the extreme (${+stop.toFixed(5)}), target ${cfg.sweepTarget === 'opposite' ? 'the opposite side of the range' : `${cfg.sweepTarget}R`} (${+target.toFixed(5)}, ${rr.toFixed(2)}R).`,
+            planFollowed: true,
+          });
+        } else {
+          await call('discard_trade', { sessionId: sid });
+        }
+        continue;
+      }
 
       // 2. Watch M1 closes after the open for the first allowed close beyond the range.
-      const deadline = open + cfg.monitorHours * 3600;
       let breakout = null;
       if (cfg.breakoutTf !== '1min') await call('set_timeframe', { sessionId: sid, timeframe: cfg.breakoutTf });
       if (fastBreakout) {

@@ -173,3 +173,20 @@ test('step stops on the first candle that closes beyond a level', async () => {
   }
   await assert.rejects(replay.step(user, s.sessionId, { untilCloseAbove: 'x' }), /must be numbers/);
 });
+
+test('step stops on the first wick beyond a level (sweeps), reporting both sides when one candle takes both', async () => {
+  const user = H.newUserId();
+  const s = await start(user);
+  for (let i = 0; i < 20; i++) {
+    const st = await replay.getState(user, s.sessionId);
+    const now = st.lastCandle.close;
+    const above = now + 1.5, below = now - 1.5;
+    const from = toSec(st.clock);
+    const res = await replay.step(user, s.sessionId, { untilHighAbove: above, untilLowBelow: below });
+    const truth = H.series['15min'].find(c => c.time >= from && (c.high > above || c.low < below));
+    const types = res.events.filter(e => e.type === 'high_above' || e.type === 'low_below').map(e => e.type);
+    assert.deepEqual(types, [...(truth.high > above ? ['high_above'] : []), ...(truth.low < below ? ['low_below'] : [])], `run ${i}`);
+    assert.equal(toSec(res.state.clock), truth.time + 900, `run ${i}: stopped on the wrong candle`);
+  }
+  await assert.rejects(replay.step(user, s.sessionId, { untilHighAbove: 'x' }), /must be numbers/);
+});

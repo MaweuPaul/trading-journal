@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState } from 'react';
 import { Icon } from '../backtest/BacktestShell';
 
 interface DrawingTextEditorProps {
@@ -26,9 +26,23 @@ export default function DrawingTextEditor({
     inputRef.current?.select();
   }, []);
 
+  useEffect(() => {
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onCancel();
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onCancel]);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onSave(value.trim().slice(0, 160));
+  };
+
+  const stopChartInteraction = (event: MouseEvent) => {
+    event.stopPropagation();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -43,13 +57,24 @@ export default function DrawingTextEditor({
   };
 
   return (
-    <div className="tw:absolute tw:inset-x-0 tw:top-3 tw:z-30 tw:flex tw:justify-center tw:px-3 tw:pointer-events-none">
+    <div className="tw:absolute tw:inset-0 tw:z-50 tw:flex tw:items-start tw:justify-center tw:px-3 tw:pt-3">
+      <button
+        type="button"
+        aria-label="Close text editor"
+        onMouseDown={event => {
+          event.preventDefault();
+          onCancel();
+        }}
+        className="tw:absolute tw:inset-0 tw:cursor-default"
+      />
       <form
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawing-text-title"
         onSubmit={submit}
-        className="tw:w-full tw:max-w-md tw:rounded-xl tw:border tw:border-outline-variant tw:bg-surface-container/95 tw:p-3 tw:shadow-xl tw:backdrop-blur-md tw:pointer-events-auto"
+        onMouseDown={stopChartInteraction}
+        onClick={stopChartInteraction}
+        className="tw:relative tw:w-full tw:max-w-md tw:rounded-xl tw:border tw:border-outline-variant tw:bg-surface-container/95 tw:p-3 tw:shadow-xl tw:backdrop-blur-md"
       >
         <div className="tw:mb-2 tw:flex tw:items-start tw:justify-between tw:gap-3">
           <div>
@@ -57,7 +82,7 @@ export default function DrawingTextEditor({
               {isNew ? 'Add text' : 'Edit text'}
             </h3>
             <p className="tw:mt-0.5 tw:text-xs tw:text-on-surface-variant">
-              {drawingName} · Ctrl/⌘ + Enter to save
+              {drawingName} - Ctrl/Cmd + Enter to save
             </p>
           </div>
           <button
@@ -75,7 +100,7 @@ export default function DrawingTextEditor({
           maxLength={160}
           rows={3}
           aria-label={'Text for ' + drawingName}
-          placeholder="Add a setup note, level, or reminder…"
+          placeholder="Add a setup note, level, or reminder..."
           onChange={event => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
           className="tw:w-full tw:resize-none tw:rounded-lg tw:border tw:border-outline-variant tw:bg-surface-container-lowest tw:px-3 tw:py-2 tw:text-sm tw:text-on-surface tw:caret-primary tw:outline-none tw:transition tw:placeholder:text-on-surface-variant/70 focus:tw:border-primary focus:tw:ring-2 focus:tw:ring-primary/20"

@@ -296,7 +296,7 @@ function viewOf(s) {
       const o = plain(raw);
       if (!o) return null;
       return {
-        type: o.type, direction: o.direction, price: px(o.price), stopLoss: px(o.stopLoss), takeProfit: px(o.takeProfit),
+        type: o.type, direction: o.direction, ...(o.type === 'market' ? { fill: 'next_open', takeProfitDistance: px(o.takeProfitDistance) } : { price: px(o.price) }), stopLoss: px(o.stopLoss), takeProfit: px(o.takeProfit),
         riskAmount: o.riskAmount, placedAt: iso(o.placedAt), expiresAt: o.expiresAt == null ? null : iso(o.expiresAt),
         ...(o.features ? { features: viewFeatures(o.features) } : {}),
       };
@@ -351,6 +351,7 @@ async function stateOf(s, ctx = ctxOf(s)) {
     lastCandle: last ? v.candle(last) : null,
     pendingOrder: s.pendingOrder ? v.order(s.pendingOrder) : null,
     openTrade,
+    gapFills: s.gapFills !== false,
     closedTrade: s.closedTrade ? v.trade(s.closedTrade) : null,
     loggedTrades: s.loggedTrades,
   };
@@ -404,6 +405,7 @@ async function startSession(userId, apiKeyId, input) {
   for (const [from, to] of windows) {
     const s = new AgentReplaySession({
       user: userId, apiKey: apiKeyId, symbol, interval, fromMs: from * 1000, toMs: to * 1000, clock: from, strategy, strategyVersion,
+      gapFills: input.gapFills !== false,
       blind: blind ? { enabled: true, timeShift: Math.floor((from - BLIND_EPOCH) / WEEK) * WEEK, priceScale: randomBlindScale() } : { enabled: false },
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
@@ -484,6 +486,7 @@ async function step(userId, sessionId, input = {}) {
   const revealed = [];
   const events = [];
   let stopped = false;
+  if (untilTime != null && input.bars == null && s.clock >= untilTime) { events.push({ type: 'time_reached', time: v.iso(s.clock) }); stopped = true; }
   while (!stopped && revealed.length < limit) {
     const { candles: batch, reachedEnd } = await nextCandles(ctx, s.interval, s.clock, Math.min(limit - revealed.length, 2000), endSec);
     if (!batch.length) {
@@ -500,37 +503,49 @@ async function step(userId, sessionId, input = {}) {
       let settledThisCandle = false;
       if (s.pendingOrder) {
         const order = plain(s.pendingOrder);
-        const segStart = Math.max(prevClock, c.time);
-        const segEnd = order.expiresAt != null ? Math.min(c.time + sec, order.expiresAt) : c.time + sec;
-        const res = segEnd > segStart && orderTouched(c, order) ? await resolveOrder(ctx, order, segStart, segEnd) : null;
-        if (res && res.filled) {
+        if (order.type === 'market') {
           s.pendingOrder = null;
-          s.openTrade = res.trade;
-          settledThisCandle = true;
-          events.push({ type: 'order_filled', trade: v.trade(res.trade) });
-          if (res.closed) {
-            s.closedTrade = closedTradeFrom(res.trade, res.closed.which, res.closed.time, res.closed.price);
-            s.openTrade = null;
-            events.push({ type: 'trade_closed', trade: v.trade(s.closedTrade), message: 'Call log_trade to record it in the Backtest Log, or discard_trade to drop it.' });
+          const long = order.direction === 'long';
+          const target = order.takeProfit ?? (order.takeProfitDistance != null ? (long ? c.open + order.takeProfitDistance : c.open - order.takeProfitDistance) : null);
+          const badStop = long ? order.stopLoss >= c.open : order.stopLoss <= c.open;
+          const badTarget = target != null && (long ? target <= c.open : target >= c.open);
+          if (badStop || badTarget) events.push({ type: 'order_cancelled', time: v.iso(c.time), message: `The candle opened at ${v.px(c.open)}, already beyond the ${badStop ? 'stop' : 'target'}; the order was not filled.` });
+          else {
+            const features = { ...(await autoFeatures(s, c.open, order.stopLoss)), ...normalizeFeatures(order.features) };
+            s.openTrade = { direction: order.direction, entryTime: c.time, entryPrice: c.open, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss, takeProfit: target, riskAmount: order.riskAmount, features };
+            events.push({ type: 'order_filled', trade: v.trade(s.openTrade) });
+          }
+        } else {
+          const segStart = Math.max(prevClock, c.time);
+          const segEnd = order.expiresAt != null ? Math.min(c.time + sec, order.expiresAt) : c.time + sec;
+          const res = segEnd > segStart && orderTouched(c, order) ? await resolveOrder(ctx, order, segStart, segEnd) : null;
+          if (res && res.filled) {
+            s.pendingOrder = null; s.openTrade = res.trade; settledThisCandle = true;
+            events.push({ type: 'order_filled', trade: v.trade(res.trade) });
+            if (res.closed) {
+              s.closedTrade = closedTradeFrom(res.trade, res.closed.which, res.closed.time, res.closed.price); s.openTrade = null;
+              events.push({ type: 'trade_closed', trade: v.trade(s.closedTrade), message: 'Call log_trade to record it in the Backtest Log, or discard_trade to drop it.' });
+              if (stopOnTradeExit) { stopped = true; break; }
+            }
+          } else if (order.expiresAt != null && s.clock >= order.expiresAt) {
+            s.pendingOrder = null; events.push({ type: 'order_expired', order: v.order(order) });
             if (stopOnTradeExit) { stopped = true; break; }
           }
-        } else if (order.expiresAt != null && s.clock >= order.expiresAt) {
-          s.pendingOrder = null;
-          events.push({ type: 'order_expired', order: v.order(order) });
-          if (stopOnTradeExit) { stopped = true; break; }
         }
       }
       if (s.openTrade && !settledThisCandle) {
         const trade = plain(s.openTrade);
+        const long = trade.direction === 'long';
+        const gap = s.gapFills !== false && c.time >= prevClock ? ((long ? c.open <= trade.stopLoss : c.open >= trade.stopLoss) ? 'sl' : trade.takeProfit != null && (long ? c.open >= trade.takeProfit : c.open <= trade.takeProfit) ? 'tp' : null) : null;
         const h = levelsHit(c, trade);
         // Only price action after the previous clock counts (the trade was
         // opened at or after it); a candle that opened earlier, or that spans
         // both levels, is settled on smaller candles.
-        const which = !h.sl && !h.tp ? null
+        const which = gap || (!h.sl && !h.tp ? null
           : c.time >= prevClock && !(h.sl && h.tp) ? (h.sl ? 'sl' : 'tp')
-          : await firstHit(ctx, s.interval, Math.max(prevClock, c.time), c.time + sec, trade);
+          : await firstHit(ctx, s.interval, Math.max(prevClock, c.time), c.time + sec, trade));
         if (which) {
-          s.closedTrade = closedTradeFrom(trade, which, c.time);
+          s.closedTrade = closedTradeFrom(trade, which, c.time, gap ? c.open : undefined);
           s.openTrade = null;
           events.push({ type: 'trade_closed', trade: v.trade(s.closedTrade), message: 'Call log_trade to record it in the Backtest Log, or discard_trade to drop it.' });
           if (stopOnTradeExit) { stopped = true; break; }
@@ -541,10 +556,12 @@ async function step(userId, sessionId, input = {}) {
         stopped = true; break;
       }
       if (closeAbove != null && c.close > closeAbove) {
+        events.push({ type: 'close_beyond', side: 'above', candle: v.candle(c) });
         events.push({ type: 'close_above', level: v.px(closeAbove), close: v.px(c.close), time: v.iso(c.time) });
         stopped = true; break;
       }
       if (closeBelow != null && c.close < closeBelow) {
+        events.push({ type: 'close_beyond', side: 'below', candle: v.candle(c) });
         events.push({ type: 'close_below', level: v.px(closeBelow), close: v.px(c.close), time: v.iso(c.time) });
         stopped = true; break;
       }
@@ -582,15 +599,24 @@ async function openTrade(userId, sessionId, input = {}) {
   const v = viewOf(s);
   if (s.openTrade) throw new AgentError('A trade is already open in this session. Close it (close_trade) or step until it exits.', 'TRADE_OPEN');
   if (s.closedTrade) throw new AgentError('The last trade is closed but not logged yet. Call log_trade to record it or discard_trade to drop it first.', 'UNLOGGED_TRADE');
-  if (s.pendingOrder) throw new AgentError('A pending order is waiting. Cancel it (cancel_order) before entering at market.', 'ORDER_PENDING');
+  if (s.pendingOrder) throw new AgentError('A pending order is already waiting. Cancel it (cancel_order) before entering at market.', 'ORDER_PENDING');
   const direction = input.direction;
   if (!['long', 'short'].includes(direction)) throw new AgentError('direction must be long or short.');
   const stopLoss = v.priceIn(Number(input.stopLoss));
   const takeProfit = input.takeProfit == null ? null : v.priceIn(Number(input.takeProfit));
+  const takeProfitDistance = input.takeProfitDistance == null ? null : v.priceIn(Number(input.takeProfitDistance));
   const riskAmount = input.riskAmount == null ? 100 : Number(input.riskAmount);
   if (!Number.isFinite(stopLoss)) throw new AgentError('stopLoss is required.');
   if (takeProfit != null && !Number.isFinite(takeProfit)) throw new AgentError('takeProfit must be a number.');
+  if (takeProfitDistance != null && !(takeProfitDistance > 0)) throw new AgentError('takeProfitDistance must be positive.');
+  if (takeProfit != null && takeProfitDistance != null) throw new AgentError('Give takeProfit or takeProfitDistance, not both.');
   if (!Number.isFinite(riskAmount) || riskAmount <= 0) throw new AgentError('riskAmount must be a positive number of USD.');
+
+  if (input.fill === 'next_open') {
+    s.pendingOrder = { type: 'market', direction, stopLoss, takeProfit, takeProfitDistance, riskAmount, placedAt: s.clock, features: normalizeFeatures(input.features) };
+    await saveSession(s);
+    return { pending: true, message: 'Order placed for the next candle open. Call step.', state: await stateOf(s) };
+  }
 
   const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
   if (!last) throw new AgentError('No candle has been revealed yet. Call step first.', 'NO_DATA');
@@ -599,8 +625,9 @@ async function openTrade(userId, sessionId, input = {}) {
   if (long ? stopLoss >= entry : stopLoss <= entry) throw new AgentError(`For a ${direction} the stop must be ${long ? 'below' : 'above'} the entry (${v.px(entry)}).`);
   if (takeProfit != null && (long ? takeProfit <= entry : takeProfit >= entry)) throw new AgentError(`For a ${direction} the target must be ${long ? 'above' : 'below'} the entry (${v.px(entry)}).`);
 
+  const target = takeProfit ?? (takeProfitDistance != null ? (long ? entry + takeProfitDistance : entry - takeProfitDistance) : null);
   const features = { ...(await autoFeatures(s, entry, stopLoss)), ...normalizeFeatures(input.features) };
-  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit, riskAmount, features };
+  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit: target, riskAmount, features };
   await saveSession(s);
   return { opened: v.trade(s.openTrade), state: await stateOf(s) };
 }
@@ -608,6 +635,11 @@ async function openTrade(userId, sessionId, input = {}) {
 async function closeTrade(userId, sessionId) {
   const s = await loadSession(userId, sessionId);
   const v = viewOf(s);
+  if (!s.openTrade && s.pendingOrder?.type === 'market') {
+    s.pendingOrder = null;
+    await saveSession(s);
+    return { cancelled: true, message: 'The pending next-open order was cancelled before it filled.' };
+  }
   if (!s.openTrade) throw new AgentError('There is no open trade to close.', 'NO_TRADE');
   const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
   const trade = plain(s.openTrade);

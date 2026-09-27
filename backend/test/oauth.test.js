@@ -105,3 +105,13 @@ test('journal access is opt-in on the consent page; deny sends access_denied bac
   assert.equal(denied.url.searchParams.get('error'), 'access_denied');
   assert.equal(denied.code, null);
 });
+
+test('plain access keys never store refreshHash (so the sparse unique index skips them)', () => {
+  // With `default: null` every key after the first collided on
+  // refreshHash: null in MongoDB (E11000) -- creating a second key failed.
+  const ApiKey = require('../models/ApiKey');
+  const a = new ApiKey({ user: H.newUserId(), name: 'a', keyHash: 'h1', prefix: 'tjk_a' }).toObject();
+  const b = new ApiKey({ user: H.newUserId(), name: 'b', keyHash: 'h2', prefix: 'tjk_b' }).toObject();
+  assert.equal('refreshHash' in a, false);
+  assert.equal('refreshHash' in b, false);
+});

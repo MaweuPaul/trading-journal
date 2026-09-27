@@ -131,6 +131,23 @@ test('MCP: a full backtest loop over HTTP', async () => {
   assert.equal(badSymbol.isError, true);
 });
 
+test('MCP: strategy names longer than tag limit remain queryable in metrics', async () => {
+  const { body: { key } } = await createKey();
+  const { rpc, call } = mcpClient(key);
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  const name = 'ORB NY Open exact strategy name over forty chars';
+  await call('create_strategy', { name, description: 'Regression for strategy/tag length mismatch.' });
+  const started = await call('start_session', { symbol: 'XAUUSD', interval: '15min', from: '2024-01-08T00:00Z', to: '2024-01-31T00:00Z', strategy: name, context: 5 });
+  const stepped = await call('step', { sessionId: started.data.sessionId, bars: 4 });
+  const entry = stepped.data.state.lastCandle.close;
+  await call('open_trade', { sessionId: started.data.sessionId, direction: 'long', stopLoss: entry - 3, takeProfit: entry + 6 });
+  await call('step', { sessionId: started.data.sessionId, bars: 2000 });
+  await call('log_trade', { sessionId: started.data.sessionId });
+  const metrics = await call('get_metrics', { strategy: name });
+  assert.equal(metrics.data.overall.trades, 1);
+  assert.equal([...H.models.Trade.store.values()].find(trade => trade.strategy === name)?.tags[0], name);
+});
+
 test('GET and DELETE on /mcp are not allowed (stateless server)', async () => {
   const { body: { key } } = await createKey();
   for (const method of ['GET', 'DELETE']) {

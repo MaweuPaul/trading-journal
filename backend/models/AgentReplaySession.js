@@ -26,11 +26,12 @@ const tradeSchema = new mongoose.Schema({
 // A limit/stop entry waiting to be filled. Fills are settled on 1-minute
 // candles as the replay steps.
 const orderSchema = new mongoose.Schema({
-  type: { type: String, enum: ['limit', 'stop'], required: true },
+  type: { type: String, enum: ['limit', 'stop', 'market'], required: true },
   direction: { type: String, enum: ['long', 'short'], required: true },
-  price: { type: Number, required: true },
+  price: { type: Number, required() { return this.type !== 'market'; } },
   stopLoss: { type: Number, required: true },
   takeProfit: { type: Number, default: null },
+  takeProfitDistance: { type: Number, default: null },
   riskAmount: { type: Number, default: 100 },
   placedAt: { type: Number, required: true },  // clock (unix s) when placed
   expiresAt: { type: Number, default: null },  // unix s; null = good till cancelled
@@ -50,6 +51,7 @@ const agentReplaySessionSchema = new mongoose.Schema({
   pendingOrder: { type: orderSchema, default: null },
   openTrade: { type: tradeSchema, default: null },
   closedTrade: { type: tradeSchema, default: null }, // resolved, waiting to be logged or discarded
+  gapFills: { type: Boolean, default: true },
   loggedTrades: { type: Number, default: 0 },
   status: { type: String, enum: ['active', 'ended'], default: 'active' },
   // Blind mode: the agent never learns where in history it is. The window is

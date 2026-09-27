@@ -566,6 +566,43 @@ export default function Workspace() {
     const manager = new DrawingManager();
     manager.attach(chart, series, el);
     managerRef.current = manager;
+
+    // Resizing drawings. The drawing library drags an anchor on mousedown, but
+    // doesn't stop the chart from panning at the same time (so the handle
+    // lands somewhere else), and a rectangle only has handles on the two
+    // corners it was drawn from. This runs first (capture phase) to fix both.
+    let draggingHandle = false;
+    const onHandleDown = (ev: MouseEvent) => {
+      const r = el.getBoundingClientRect();
+      const pt = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      const sel = manager.getSelectedDrawing();
+      if (sel && sel.type === 'rectangle' && sel.anchors.length === 2 && !sel.options.locked && manager.hitTestAnchor(pt) === null) {
+        // Grabbed one of the two undrawn corners? Swap the anchors' prices:
+        // same rectangle, but now a real handle sits under the cursor.
+        const [a, b] = sel.anchors;
+        const ax = chart.timeScale().timeToCoordinate(a.time), bx = chart.timeScale().timeToCoordinate(b.time);
+        const ay = series.priceToCoordinate(a.price), by = series.priceToCoordinate(b.price);
+        if (ax != null && bx != null && ay != null && by != null) {
+          const near = (x: number, y: number) => Math.hypot(pt.x - x, pt.y - y) <= 8;
+          if (near(ax, by) || near(bx, ay)) {
+            sel.updateAnchor(0, { time: a.time, price: b.price });
+            sel.updateAnchor(1, { time: b.time, price: a.price });
+            sel.requestUpdate();
+          }
+        }
+      }
+      if (manager.hitTestAnchor(pt) !== null) {
+        draggingHandle = true;
+        chart.applyOptions({ handleScroll: false, handleScale: false });
+      }
+    };
+    const onHandleUp = () => {
+      if (!draggingHandle) return;
+      draggingHandle = false;
+      chart.applyOptions({ handleScroll: true, handleScale: true });
+    };
+    el.addEventListener('mousedown', onHandleDown, true);
+    window.addEventListener('mouseup', onHandleUp);
     const restoring = pendingRestoreRef.current;
     if (restoring) {
       if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current), drawingFactory);
@@ -585,6 +622,12 @@ export default function Workspace() {
           }
         }
         recount();
+      }),
+      // A zone extends with the replay only until you resize or move it yourself
+      // (drawing:updated fires only on a user's handle drag); after that it
+      // stays exactly where you put it.
+      manager.on('drawing:updated', event => {
+        if (event.drawing?.type === 'rectangle' && event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: false });
       }),
       manager.on('drawing:removed', recount),
       manager.on('drawing:cleared', recount),
@@ -611,6 +654,8 @@ export default function Workspace() {
     return () => {
       unsubscribers.forEach(unsub => unsub());
       chart.unsubscribeCrosshairMove(onCrosshair);
+      el.removeEventListener('mousedown', onHandleDown, true);
+      window.removeEventListener('mouseup', onHandleUp);
       manager.detach();
       managerRef.current = null;
       ro.disconnect();
@@ -661,6 +706,12 @@ export default function Workspace() {
     const down = cssVar(root, '--bt-error', '#ffb4ab');
     const shown = candles.slice(0, replayIdx + 1);
     if (partial && partial.idx < shown.length) shown[partial.idx] = partial.candle;
+    // Each setData re-runs the chart's crosshair hit-test against every series.
+    // Mid-update the line/EMA series still hold the previous candle set, so
+    // when the set of times changes (stepping back, older history loading in
+    // on scroll) that test hits a missing bar and the library throws "Value is
+    // null". Drop the hover position first; the next mouse move restores it.
+    chartRef.current?.clearCrosshairPosition();
     // Context candles before "From" look like any other candle -- they're real history.
     series.setData(shown);
     lineRef.current?.setData(shown.map(c => ({ time: c.time, value: c.close })));

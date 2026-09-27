@@ -149,6 +149,7 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
       context: z.number().int().min(0).max(500).default(100).describe('Closed candles to return from before the start.'),
       blind: z.boolean().default(false),
       lengthDays: z.number().int().min(1).max(365).optional().describe('Blind sessions: how many days to replay (default 30).'),
+      gapFills: z.boolean().default(true).describe('Fill a stop/target at the candle open when price gaps through it.'),
     },
     args => replay.startSession(userId, apiKeyId, args));
 
@@ -189,12 +190,14 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     ({ sessionId: id }) => replay.getState(userId, id));
 
   tool('open_trade', 'Open trade',
-    'Enter at the close of the last revealed candle. The stop is required and must be on the losing side of entry; the target is optional. One trade at a time per session, and a closed trade must be logged or discarded first.',
+    'Enter at the close of the last revealed candle, or use fill: next_open for the next candle open. The stop is required and must be on the losing side of entry; the target is optional. One trade at a time per session, and a closed trade must be logged or discarded first.',
     {
       sessionId,
       direction: z.enum(['long', 'short']),
       stopLoss: z.number(),
       takeProfit: z.number().optional(),
+      takeProfitDistance: z.number().positive().optional(),
+      fill: z.enum(['close', 'next_open']).default('close'),
       riskAmount: z.number().positive().default(100).describe('USD risked; P&L is R multiple x this.'),
       features: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional().describe('Entry conditions to record with the trade, e.g. { "rangeWidth": 3.2, "minutesToBreakout": 4 }. atr14 and riskInAtr are added automatically.'),
     },

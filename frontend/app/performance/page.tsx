@@ -155,7 +155,7 @@ export default function PerformancePage() {
   const [stats, setStats] = useState<PerfStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady, setKnownAccounts] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
   const [mixedAccounts, setMixedAccounts] = useState(false);
 
@@ -164,7 +164,7 @@ export default function PerformancePage() {
     if (!token) return;
     fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
       .then(res => res.ok ? res.json() : Promise.reject(new Error('Could not load trading accounts')))
-      .then(body => setTradeAccounts(body.accounts || []))
+      .then(body => { setTradeAccounts(body.accounts || []); setKnownAccounts(body.accounts || [], Number(body.unassignedCount || 0)); })
       .catch(e => console.error(e));
   }, []);
 

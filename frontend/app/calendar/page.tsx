@@ -71,7 +71,7 @@ export default function CalendarPage() {
   const [filterSymbol, setFilterSymbol] = useState('');
   const [filterGrade, setFilterGrade] = useState('');
   const [symbols, setSymbols] = useState<string[]>([]);
-  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady, setKnownAccounts] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
   const [mixedAccounts, setMixedAccounts] = useState(false);
 
@@ -97,7 +97,7 @@ export default function CalendarPage() {
     if (!token) return;
     fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load trading accounts')))
-      .then(body => setTradeAccounts(body.accounts || []))
+      .then(body => { setTradeAccounts(body.accounts || []); setKnownAccounts(body.accounts || [], Number(body.unassignedCount || 0)); })
       .catch(console.error);
   }, []);
 

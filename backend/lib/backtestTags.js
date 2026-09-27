@@ -22,8 +22,11 @@ function normalizeTags(input) {
 function strategyAndTags(strategy, tags) {
   const normalized = normalizeTags(tags);
   const primary = String(strategy || '').trim().slice(0, 80);
-  if (!normalized.length && primary) normalized.push(primary);
-  return { strategy: normalized[0] || '', tags: normalized };
+  if (!primary) return { strategy: normalized[0] || '', tags: normalized };
+  // Strategy names may be longer than ordinary tags (the MCP accepts 60
+  // characters). Preserve that canonical name so get_metrics can query it.
+  const extras = normalized.filter(tag => tag.toLowerCase() !== primary.toLowerCase());
+  return { strategy: primary, tags: [primary, ...extras].slice(0, 10) };
 }
 
 module.exports = { normalizeTags, strategyAndTags };

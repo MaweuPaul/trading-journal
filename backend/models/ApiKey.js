@@ -19,7 +19,11 @@ const apiKeySchema = new mongoose.Schema({
   kind: { type: String, enum: ['key', 'oauth'], default: 'key' },
   clientId: { type: String, default: null },
   expiresAt: { type: Date, default: null },
-  refreshHash: { type: String, default: null, index: { unique: true, sparse: true } },
+  // No default: a sparse unique index skips documents where the field is
+  // MISSING, but indexes explicit nulls -- so `default: null` made every key
+  // after the first collide on refreshHash: null (E11000). Only OAuth
+  // connections ever set it.
+  refreshHash: { type: String, index: { unique: true, sparse: true } },
   refreshExpiresAt: { type: Date, default: null },
 }, { timestamps: true });
 

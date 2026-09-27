@@ -223,8 +223,8 @@ export default function ManualPage() {
               <li><b>Connect a broker account</b><span className="d">Open Accounts in the sidebar and either add an MT5 login (you&apos;ll need its investor/read-only password) or connect cTrader through the OAuth button.</span></li>
               <li><b>Start syncing</b><span className="d">For MT5: generate your personal sync key, install the Desktop Sync App, paste the key in, and click Start Sync. For cTrader: click Sync Now whenever you want fresh trades.</span></li>
               <li><b>Watch the Dashboard fill in</b><span className="d">Balance, win rate, and the equity curve populate automatically once trades arrive. Everything else — journaling, playbooks, analytics — builds on top of that history.</span></li>
-              <li><b>Use Export for AI when you want a coach fast</b><span className="d">On Trades, Export for AI creates one Markdown brief from your current filters. Copy or download it and paste it into any AI chat — no connector, key, or setup required.</span></li>
             </ol>
+            <Callout icon="Tip">Want a coach fast? On Trades, Export for AI turns your current filters into one Markdown brief. Copy or download it and paste it into any AI chat. No connector, key or setup needed.</Callout>
             <Callout icon="Good to know">Trades themselves are <b>read-only</b> everywhere in the app — TradeJournal never edits your price, lot size, or P&amp;L. What you add on top (notes, grades, playbook answers, screenshots, tags) is the &quot;journal&quot; part.</Callout>
           </Chapter>
 
@@ -411,13 +411,13 @@ export default function ManualPage() {
             <Callout icon="Note">Backtest trades never touch your real account balance or history — they&apos;re entirely separate from the synced trades everywhere else in the app.</Callout>
           </Chapter>
 
-          <Chapter id="ai-agents" num="11" route="/api/mcp" title="AI agent backtesting (experimental)" purpose="Connect Claude Code, Claude Desktop or your own AI agent so it can backtest a strategy for you: replaying cTrader history bar by bar with the future hidden, placing simulated trades, and logging them to your Backtest Log.">
+          <Chapter id="ai-agents" num="11" route="/api/mcp" title="AI agent backtesting (experimental)" purpose="Connect Claude (on the web, phone, desktop or Claude Code) or your own AI agent so it can backtest a strategy for you: replaying cTrader history bar by bar with the future hidden, placing simulated trades, and logging them to your Backtest Log.">
             <Callout icon="Experimental" warn>This is an <b>experimental feature</b>. It works, but it&apos;s new and may change: tool names, limits and behaviour can shift between updates, and you may hit rough edges. Treat agent results as a second opinion to check, not a verdict. They&apos;re kept out of your own stats for exactly that reason.</Callout>
             <div className="manual-sub">Before you start</div>
             <ul className="manual-feature-list">
               <li><b>cTrader connected</b> on the Accounts page. It supplies the historical candles; without it every session fails with &quot;cTrader is not connected&quot;.</li>
               <li><b>At least one strategy with a description</b> (Backtest → Strategies). The agent reads the description as the rules it must follow, so write it the way you&apos;d explain the setup to another trader: entry trigger, stop placement, target, and when not to trade.</li>
-              <li><b>This journal&apos;s MCP address</b> is <code>{mcpUrl}</code>. It&apos;s already filled into every example below, so you only need to swap in your key. (Claude runs on your own computer, so it has to be told where your journal lives; that&apos;s why the address appears in the setup at all.)</li>
+              <li><b>This journal&apos;s MCP address</b> is <code>{mcpUrl}</code>. It&apos;s already filled into every example below, so you only need to swap in your key. (Claude needs to be told where your journal lives, which is why the address appears in every setup.)</li>
             </ul>
 
             <div className="manual-sub">Easiest · claude.ai on web or phone (no key)</div>
@@ -466,7 +466,6 @@ export default function ManualPage() {
             <Code>{agentHeaders(mcpUrl)}</Code>
             <ul className="manual-feature-list">
               <li>The key is only accepted in the <code>Authorization</code> header, never in the address (addresses end up in server logs).</li>
-              <li>claude.ai web and mobile use the OAuth sign-in described above. If a connector fails with a redirect mismatch, check that the public app URL and OAuth redirect metadata on the deployed journal match the address you pasted.</li>
             </ul>
 
             <div className="manual-sub">Step 3 · Run your first backtest</div>
@@ -552,6 +551,9 @@ export default function ManualPage() {
 
             <div className="manual-sub">Troubleshooting</div>
             <ul className="manual-feature-list">
+              <li><b>claude.ai sign-in fails or shows an error</b>: remove the connector in Settings → Connectors, add it again with the exact address above, and sign in again. If it still fails, contact support.</li>
+              <li><b>Connector added but Claude doesn&apos;t use it</b>: connectors are turned on per chat. Open the tools menu in that chat and switch <b>tradejournal</b> on.</li>
+              <li><b>Claude can&apos;t see my real trades</b>: journal access is off. Turn it on under Accounts → AI agent access, or disconnect and reconnect, ticking <b>Read my trade journal</b> when you sign in.</li>
               <li><b>401 / &quot;invalid or has been revoked&quot;</b>: the key is wrong or revoked, or <code>Bearer </code> is missing in front of it. Create a new key and update your config.</li>
               <li><b>&quot;cTrader is not connected&quot;</b>: connect cTrader on the Accounts page. The agent can&apos;t fix this for you.</li>
               <li><b>Rate limit messages</b>: wait a minute. Tell the agent to step several bars at a time (or until a price) instead of one call per candle.</li>
@@ -583,7 +585,7 @@ export default function ManualPage() {
             </ul>
             <div className="manual-sub">AI agent access</div>
             <ul className="manual-feature-list">
-              <li>Create, list and revoke the access keys that let AI agents run backtests for you. Full connection steps are in <a href="#ai-agents">AI agent backtesting</a>.</li>
+              <li>See and manage everything connected to your journal: claude.ai connections and access keys. Switch journal access (read-only access to your real trades) on or off per connection, and disconnect or revoke any of them instantly. Full setup steps are in <a href="#ai-agents">AI agent backtesting</a>.</li>
             </ul>
           </Chapter>
 
@@ -630,10 +632,6 @@ export default function ManualPage() {
                   <tr><td className="term">Blind session</td><td>An agent backtest where dates are shifted and prices rescaled, so the agent can&apos;t recognise the period.</td></tr>
                   <tr><td className="term">R / Avg R</td><td>Result measured as a multiple of what you risked. A trade risking $100 that made $250 is &quot;2.5R.&quot;</td></tr>
                   <tr><td className="term">Setup vs. Ticket</td><td>A &quot;ticket&quot; is one broker execution; a &quot;setup&quot; groups a ticket with any of its re-entries.</td></tr>
-                  <tr><td className="term">PDH / PDL</td><td>Previous Day High / Previous Day Low.</td></tr>
-                  <tr><td className="term">PWH / PWL</td><td>Previous Week High / Previous Week Low.</td></tr>
-                  <tr><td className="term">Sweep</td><td>Price pushes briefly past a level to grab liquidity, then reverses.</td></tr>
-                  <tr><td className="term">Continuation</td><td>Price breaks a level and keeps going in that direction.</td></tr>
                   <tr><td className="term">Plan Adherence</td><td>% of your own execution checklist you actually followed on a trade.</td></tr>
                   <tr><td className="term">Analysis vs. Execution Grade</td><td>Two separate A–F scores — how good your read was, versus how well you carried it out.</td></tr>
                   <tr><td className="term">Sample tag</td><td>How many trades a number rests on, everywhere in the app: <b>too few to judge</b> (under 10), <b>early</b> (10–29), <b>developing</b> (30–99), <b>reliable</b> (100+). Rows with too few trades are dimmed.</td></tr>
@@ -643,7 +641,7 @@ export default function ManualPage() {
                 </tbody>
               </table>
             </div>
-            <p className="manual-end-note">TradeJournal · self-hosted trading journal for MT5 &amp; cTrader</p>
+            <p className="manual-end-note">TradeJournal · trading journal for MT5 &amp; cTrader</p>
           </section>
         </div>
       </div>

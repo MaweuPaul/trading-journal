@@ -176,7 +176,7 @@ export default function ManualPage() {
             <h1>Everything TradeJournal does, page by page.</h1>
             <p className="lede">TradeJournal syncs your closed trades from MT5 or cTrader, then helps you turn that history into an edge — through statistics, a chart-annotated pre-trade checklist, and a coach that looks for the psychological patterns behind your P&amp;L.</p>
             <div className="manual-intro-stack">
-              <div className="item"><b>13</b> sections</div>
+              <div className="item"><b>15</b> sections</div>
               <div className="item"><b>MT5 + cTrader</b> data sources</div>
               <div className="item"><b>Owner &amp; investor</b> access levels</div>
             </div>
@@ -186,7 +186,7 @@ export default function ManualPage() {
             <div className="manual-sub">The two ways trades get in</div>
             <ul className="manual-feature-list">
               <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>
-              <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader&apos;s own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader&apos;s API — no desktop app needed.</li>
+              <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader&apos;s own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader&apos;s API — no desktop app needed. Trade Replay, AI backtesting, and the Pre-Trade chart use cTrader candles, even when your trade history comes from MT5.</li>
             </ul>
             <div className="manual-sub">First-time setup</div>
             <ol className="manual-steps">
@@ -194,6 +194,7 @@ export default function ManualPage() {
               <li><b>Connect a broker account</b><span className="d">Open Accounts in the sidebar and either add an MT5 login (you&apos;ll need its investor/read-only password) or connect cTrader through the OAuth button.</span></li>
               <li><b>Start syncing</b><span className="d">For MT5: generate your personal sync key, install the Desktop Sync App, paste the key in, and click Start Sync. For cTrader: click Sync Now whenever you want fresh trades.</span></li>
               <li><b>Watch the Dashboard fill in</b><span className="d">Balance, win rate, and the equity curve populate automatically once trades arrive. Everything else — journaling, playbooks, analytics — builds on top of that history.</span></li>
+              <li><b>Use Export for AI when you want a coach fast</b><span className="d">On Trades, Export for AI creates one Markdown brief from your current filters. Copy or download it and paste it into any AI chat — no connector, key, or setup required.</span></li>
             </ol>
             <Callout icon="Good to know">Trades themselves are <b>read-only</b> everywhere in the app — TradeJournal never edits your price, lot size, or P&amp;L. What you add on top (notes, grades, playbook answers, screenshots, tags) is the &quot;journal&quot; part.</Callout>
           </Chapter>
@@ -224,7 +225,6 @@ export default function ManualPage() {
             <ul className="manual-feature-list">
               <li><b>Resync</b> <span className="muted">— requests a fresh pull from your broker (the Desktop Sync App or cTrader connection needs to be active).</span></li>
             </ul>
-            <p style={{ color: 'var(--text-muted)', fontSize: 12.5, marginTop: -4, marginBottom: 9 }}>Remove duplicates and Fix Balances still exist under the hood for recovery situations, just without buttons on screen — ask whoever runs your instance if you ever need one run.</p>
             <Callout icon="Tip">A warning banner appears whenever the numbers on screen are blending more than one broker account — balance and drawdown aren&apos;t meaningful mixed together, so switch to the account selector when you see it.</Callout>
           </Chapter>
 
@@ -246,7 +246,11 @@ export default function ManualPage() {
               <li><b>Re-entry linking</b> <span className="muted">— mark a trade as a re-entry, search for its parent by ticket number, and note why you re-entered.</span></li>
               <li><b>Trade Replay</b> <span className="muted">— opens a candlestick chart of exactly what happened, with Prev/Next buttons to step to the next trade without closing the modal.</span></li>
             </ul>
-            <Callout icon="Not here" warn>Synced trades still can&apos;t be edited, deleted, or bulk-actioned — a broker-synced fill&apos;s price, lot size, and P&amp;L are permanent facts. Manually-added trades are the one exception where you control those numbers, since you typed them in yourself. (Full exports live under Backup.)</Callout>
+            <div className="manual-sub">Export for AI</div>
+            <ul className="manual-feature-list">
+              <li><b>Export for AI</b> builds one Markdown document from the trades matching the filters on this page: a review brief, statistics with likely ranges, breakdowns, playbooks, and the newest trades with their journal fields. Copy it to clipboard or download it, then paste or upload it into ChatGPT, Claude, Gemini, or any other chat.</li>
+            </ul>
+            <Callout icon="Not here" warn>Synced trades can&apos;t be edited, deleted, or bulk-actioned — a broker-synced fill&apos;s price, lot size, and P&amp;L are permanent facts. Manually-added trades are the one exception where you control those numbers, since you typed them in yourself. Full exports live under Backup.</Callout>
           </Chapter>
 
           <Chapter id="calendar" num="03" route="/calendar" title="Calendar" purpose="A month grid of daily P&L, for spotting the days and weeks that actually make or break your month.">
@@ -411,7 +415,7 @@ export default function ManualPage() {
             </ol>
             <Code>{claudeCodeCmd(mcpUrl)}</Code>
             <ol className="manual-steps" start={3} style={{ counterReset: 'mstep 2' }}>
-              <li><b>Check the connection</b><span className="d">Start <code>claude</code> and type <code>/mcp</code>. <code>tradejournal</code> should be listed as connected, with 15 tools.</span></li>
+              <li><b>Check the connection</b><span className="d">Start <code>claude</code> and type <code>/mcp</code>. <code>tradejournal</code> should be listed as connected; the exact tool count can change as the journal adds capabilities.</span></li>
             </ol>
 
             <div className="manual-sub">Step 2b · Connect Claude Desktop</div>
@@ -433,7 +437,7 @@ export default function ManualPage() {
             <Code>{agentHeaders(mcpUrl)}</Code>
             <ul className="manual-feature-list">
               <li>The key is only accepted in the <code>Authorization</code> header, never in the address (addresses end up in server logs).</li>
-              <li>claude.ai in the browser can&apos;t connect yet: its custom connectors need an OAuth sign-in, which the journal doesn&apos;t offer.</li>
+              <li>claude.ai web and mobile use the OAuth sign-in described above. If a connector fails with a redirect mismatch, check that the public app URL and OAuth redirect metadata on the deployed journal match the address you pasted.</li>
             </ul>
 
             <div className="manual-sub">Step 3 · Run your first backtest</div>
@@ -498,7 +502,7 @@ export default function ManualPage() {
               <li><b>Results</b> come back with likely ranges and breakdowns (by setup tag, weekday, hour, exit reason or any entry condition), and can be logged to your Backtest Log as agent trades.</li>
             </ul>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Code up my ORB liquidity sweep on gold, 5-minute candles, and run it on the last year with a 0.3 spread. Break the results down by weekday.&quot;</i> or <i>&quot;Test a 55-day breakout trend-following system with a 3 ATR trailing stop on gold, US30 and EURUSD since 2012, adding up to 3 units.&quot;</i> Strategies that need judgement (reading structure, discretionary setups) still use the bar-by-bar replay.</p>
-            <Callout icon="No setup">Not using Claude Desktop or Claude Code? On the <b>Trades</b> page, <b>Export for AI</b> copies your filtered trades, statistics and playbooks as one document, with instructions for the AI already at the top. Paste it into ChatGPT, Claude, Gemini or any chat, on any device.</Callout>
+            <Callout icon="No setup">On the <b>Trades</b> page, <b>Export for AI</b> copies your filtered trades, statistics and playbooks as one document, with instructions for the AI already at the top. Paste it into ChatGPT, Claude, Gemini or any chat, on any device. Use this when you want a quick review without connecting an agent.</Callout>
             <div className="manual-sub">Reviewing your real trades</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>With <b>journal access</b> on, the agent can read your real trades the way a coach would, with your actual data in front of it. It is read-only: it can&apos;t edit, tag or delete anything.</p>
             <ul className="manual-feature-list">
@@ -538,7 +542,8 @@ export default function ManualPage() {
             <ul className="manual-feature-list">
               <li><b>Connect cTrader</b> redirects to cTrader&apos;s own OAuth approval page. On return, pick which of your cTrader accounts under that login to actually connect.</li>
               <li>Each connected account gets <b>Sync Now</b> and <b>Disconnect</b> (stops syncing; already-synced trades stay in your history).</li>
-              <li>cTrader is also what powers <b>Trade Replay&apos;s</b> candlestick charts and the Pre-Trade Analysis chart — it matters even if your trade history itself comes from MT5.</li>
+              <li>cTrader is also what powers <b>Trade Replay&apos;s</b> candlestick charts, AI agent backtests, and the Pre-Trade Analysis chart — it matters even if your trade history itself comes from MT5.</li>
+              <li>cTrader OAuth tokens are stored encrypted, the same way MT5 broker credentials are. TradeJournal never asks for a trading/master password and cannot place real trades.</li>
             </ul>
             <div className="manual-sub">Sharing investor access</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Per account, not global — expand the <b>Investor</b> panel on any account card.</p>
@@ -592,7 +597,7 @@ export default function ManualPage() {
                 <thead><tr><th>Term</th><th>What it means here</th></tr></thead>
                 <tbody>
                   <tr><td className="term">MCP</td><td>Model Context Protocol: the standard way AI apps like Claude connect to outside tools. The journal&apos;s MCP server lives at <code>/api/mcp</code>.</td></tr>
-                  <tr><td className="term">Access key</td><td>A <code>tjk_…</code> key that lets an AI agent use the backtest tools, and nothing else in the journal.</td></tr>
+                  <tr><td className="term">Access key</td><td>A <code>tjk_…</code> key for the MCP tools. It starts with backtesting access; if you turn on journal access, it can also read your real trades, notes, screenshots, playbooks, knowledge base, pre-trade plans and cash-flow events. Journal access is read-only and can be switched off any time.</td></tr>
                   <tr><td className="term">Blind session</td><td>An agent backtest where dates are shifted and prices rescaled, so the agent can&apos;t recognise the period.</td></tr>
                   <tr><td className="term">R / Avg R</td><td>Result measured as a multiple of what you risked. A trade risking $100 that made $250 is &quot;2.5R.&quot;</td></tr>
                   <tr><td className="term">Setup vs. Ticket</td><td>A &quot;ticket&quot; is one broker execution; a &quot;setup&quot; groups a ticket with any of its re-entries.</td></tr>

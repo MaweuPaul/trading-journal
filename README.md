@@ -3,6 +3,8 @@
 A self-hosted, offline-resilient, multi-user trading journal that syncs closed MetaTrader 5 trades, preserves an auditable record of strategy changes, and measures what actually contributes to performance. Anyone can register their own account on an installation — every user's trades, accounts, playbooks, and knowledge base are fully isolated from every other user's.
 
 > New installation? Follow the complete [Setup Guide](SETUP.md). Validating an installation? Use the [Feature Testing Guide](TESTING.md).
+>
+> Trade Replay, Pre-Trade charts, and AI backtesting use cTrader candle data. MT5-only users can still sync and review trades, but should connect at least a free cTrader demo account if they want charts, replay, or agent backtests. Trades → Export for AI works without any agent setup.
 
 ## Features
 
@@ -132,7 +134,7 @@ This is standard OAuth 2.1 with PKCE and dynamic client registration: the fronte
 
 On the **Accounts** page, under **AI agent access**, enter a name (e.g. "Claude Code laptop") and click **Create access key**. The key (`tjk_…`) is shown **once**, together with ready-to-copy connection settings for Claude Code and Claude Desktop, with the key filled in. Only a hash is stored, so a lost key can't be recovered: revoke it and create a new one.
 
-An access key only works on `/api/mcp`. Revoking it cuts access off on the very next request.
+An access key only works on `/api/mcp`. By default it can run backtests and read/write agent-owned backtest journal fields; if you enable journal access it can also read your real journal. Revoking it cuts access off on the very next request.
 
 **Journal access (optional).** Tick *Also let this key read my real trade journal* when creating a key, or the **Journal access** box next to an existing key, to let the agent review your real trading as well (see [Reviewing your real trades](#reviewing-your-real-trades)). It is read-only and off by default: without it, a key can't see your real trades at all.
 
@@ -194,7 +196,7 @@ Content-Type: application/json
 Accept: application/json, text/event-stream
 ```
 
-Call `initialize`, then `tools/list` and `tools/call`. Keys are only accepted in the `Authorization` header, never in the URL (URLs end up in server logs). `GET` and `DELETE` return 405. claude.ai custom connectors use the OAuth sign-in above.
+Call `initialize`, then `tools/list` and `tools/call`. Keys are only accepted in the `Authorization` header, never in the URL (URLs end up in server logs). `GET` and `DELETE` return 405. claude.ai custom connectors use the OAuth sign-in above. The exact tool count changes as capabilities are added, so trust `tools/list` rather than a fixed number in older notes.
 
 ### 3. Run a backtest
 

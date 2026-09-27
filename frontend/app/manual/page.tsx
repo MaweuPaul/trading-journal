@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
 import { BookMarked, Download } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 import type { ReactNode } from 'react';
 
 interface Section { id: string; num: string; route?: string; group?: string; title: string; }
@@ -58,6 +60,9 @@ function Code({ children }: { children: string }) {
 // The manual is served by the same site the MCP endpoint lives on, so the
 // snippets show this installation's real address.
 const noSubscribe = () => () => {};
+function useSignedIn() {
+  return useSyncExternalStore(noSubscribe, () => Boolean(localStorage.getItem('token')), () => true);
+}
 function useMcpUrl() {
   return useSyncExternalStore(noSubscribe, () => `${window.location.origin}/api/mcp`, () => 'https://YOUR-JOURNAL-ADDRESS/api/mcp');
 }
@@ -109,6 +114,7 @@ function Chapter({ id, num, route, title, purpose, children }: { id: string; num
 
 export default function ManualPage() {
   const mcpUrl = useMcpUrl();
+  const signedIn = useSignedIn();
   const [active, setActive] = useState('getting-started');
   const observerRef = useRef<IntersectionObserver | null>(null);
 
@@ -133,7 +139,14 @@ export default function ManualPage() {
   const groups = Array.from(new Set(SECTIONS.map(s => s.group).filter(Boolean))) as string[];
 
   return (
-    <main className="page-content">
+    <main className={`page-content manual-page${signedIn ? '' : ' public'}`}>
+      {!signedIn && (
+        <div className="manual-public-bar">
+          <span>You&apos;re reading the TradeJournal manual.</span>
+          <span className="links"><Link href="/login">Sign in</Link><span>·</span><Link href="/signup">Create an account</Link></span>
+          <ThemeToggle className="manual-public-theme" />
+        </div>
+      )}
       <header className="page-header">
         <div className="page-header-inner">
           <div>
@@ -183,6 +196,22 @@ export default function ManualPage() {
           </div>
 
           <Chapter id="getting-started" num="00" title="Getting started" purpose="The shortest path from a fresh account to seeing your first synced trade on the Dashboard.">
+            <aside className="manual-manifesto" aria-labelledby="you-vs-you">
+              <span className="manual-manifesto-eyebrow">Read this first</span>
+              <h3 id="you-vs-you">You vs. You</h3>
+              <p className="manual-manifesto-lead">This app won&apos;t make you profitable. Nothing will, except you.</p>
+              <p>Your broker already knows your trades. What it doesn&apos;t know is why you took them, why you closed early, or why you doubled your size after that loss. Only you know that. If you don&apos;t write it down, this journal is just an expensive P&amp;L statement.</p>
+              <p>Every blank field is a question you avoided. Skip the grades, the emotions, the exit reasons, and Edge Coach stays empty. Not because it&apos;s broken, but because you gave it nothing to work with.</p>
+              <p>Here&apos;s the uncomfortable part. The trades you least want to log are the ones that matter most: the revenge trade, the FOMO entry, the stop you moved &quot;just this once.&quot; If your journal only records your good days, you&apos;re not journaling. You&apos;re keeping a highlight reel, and it will lie to you exactly the way you want it to.</p>
+              <p>There&apos;s no leaderboard here. No one to beat, no one to impress. Just you this month against you last month. Either the same mistakes are shrinking, or they aren&apos;t. The numbers will tell you which, if you let them.</p>
+              <div className="manual-manifesto-sub">The minimum. Not optional.</div>
+              <ul className="manual-manifesto-list">
+                <li><b>Every trade:</b> analysis grade, execution grade, emotion, exit reason. Especially the losers.</li>
+                <li><b>Before every serious setup:</b> a Pre-Trade Analysis. If you can&apos;t be bothered to plan it, don&apos;t take it.</li>
+                <li><b>Every week:</b> open Edge Coach, find your worst habit, and fix that one thing.</li>
+              </ul>
+              <p className="manual-manifesto-close"><strong>Log it honestly. Anything less, and you&apos;re only fooling yourself.</strong></p>
+            </aside>
             <div className="manual-sub">The two ways trades get in</div>
             <ul className="manual-feature-list">
               <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>

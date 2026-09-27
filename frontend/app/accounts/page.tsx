@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 import AgentKeys from '@/components/AgentKeys';
+import ChangePassword from '@/components/ChangePassword';
 
 type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
 
@@ -671,6 +672,7 @@ export default function TradingAccountsPage() {
         </button>
       )}
 
+      <ChangePassword />
       <AgentKeys />
     </main>
   );

@@ -113,6 +113,19 @@ Share one account's performance with someone who has no login on this app — no
 
 Investor sessions are scoped by JWT to exactly three read-only endpoints (summary, trade list, and per-trade replay) and one account; they cannot reach any owner route, regardless of what the token contains.
 
+## Password reset by email
+
+**Forgot password?** on the sign-in page emails a one-time link (valid 1 hour) to choose a new password; **Accounts → Password** changes it while signed in. Either way, other devices are signed out. Reset emails need an SMTP provider (Gmail with an app password, Resend, Brevo, Mailgun, ...) set on the backend:
+
+| Variable | Example |
+|---|---|
+| `SMTP_URL` | `smtps://user:pass@smtp.resend.com:465` (or use the four below) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | `smtp.gmail.com`, `587`, `you@gmail.com`, app password |
+| `MAIL_FROM` | `TradeJournal <no-reply@your-domain.com>` |
+| `PUBLIC_APP_URL` | `https://your-journal.example.com` (the address reset links point at; required) |
+
+Without them the Forgot password page says reset by email isn't set up, and nothing pretends to send. Reset links only ever point at `PUBLIC_APP_URL` or an address in `ALLOWED_ORIGINS`, never at an address taken from the request.
+
 ## AI Agent Backtesting (MCP)
 
 The backend runs a [Model Context Protocol](https://modelcontextprotocol.io) server at `/api/mcp`, so an AI agent can backtest your strategies for you. It replays historical candles from your connected cTrader account one bar at a time, places simulated trades, and logs them to the Backtest Log.

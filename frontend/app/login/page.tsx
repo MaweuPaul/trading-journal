@@ -107,7 +107,13 @@ export default function LoginPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Password</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <label htmlFor="password">Password</label>
+              {/* Hidden until email sending is set up (then set NEXT_PUBLIC_PASSWORD_RESET=on). */}
+              {process.env.NEXT_PUBLIC_PASSWORD_RESET === 'on' && (
+                <Link href="/forgot-password" style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>Forgot password?</Link>
+              )}
+            </div>
             <div className="form-input-wrapper">
               <Lock size={16} />
               <input
@@ -144,6 +150,8 @@ export default function LoginPage() {
         </div>
         <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '6px' }}>
           <Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link>
+          <span style={{ color: 'var(--text-muted)' }}> · </span>
+          <Link href="/manual" style={{ color: 'var(--text-muted)' }}>Read the manual</Link>
         </div>
       </div>
       </div>

@@ -27,6 +27,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     select: false,
   },
+  // Password reset (routes/auth.js): SHA-256 of the one-time link token, and when it stops working.
+  resetTokenHash: { type: String, select: false, default: null },
+  resetTokenExpires: { type: Date, select: false, default: null },
+  // Login tokens issued before this are no longer accepted (middleware/auth.js).
+  passwordChangedAt: { type: Date, default: null },
   tradingRules: [{
     ruleId: { type: String, required: true },
     label: { type: String, required: true, trim: true, maxlength: 160 },

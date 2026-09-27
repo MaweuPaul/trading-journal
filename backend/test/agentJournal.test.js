@@ -50,6 +50,23 @@ test('list_trades filters, sorts and pages; costs decide the outcome', async () 
   assert.equal(first.notes, undefined, 'notes only on get_trade');
 });
 
+test('an account renamed after sync stays one account; lot sizes lose float noise', async () => {
+  const user = H.newUserId();
+  const trade = (i, accountName, lotSize) => H.models.JournalTrade.create({
+    user, dealId: `n${i}`, symbol: 'NAS100', direction: 'SELL', entryPrice: 20000, exitPrice: 19990, lotSize, pnlUSD: 10,
+    openTime: new Date(Date.UTC(2024, 0, 8 + i, 14)), closeTime: new Date(Date.UTC(2024, 0, 8 + i, 14, 30)),
+    durationMinutes: 30, accountKey: 'ctrader:7', accountName, accountType: 'live',
+  });
+  await trade(0, 'cTrader Live', 0.30000000000000004);
+  await trade(1, 'cTrader Live (tradinghive)', 0.09999999999999999);
+  await H.models.TradingAccount.create({ user, provider: 'ctrader', accountKey: 'ctrader:7', label: 'cTrader Live (tradinghive)' });
+  const metrics = await journal.getMetrics(user, { groupBy: 'account' });
+  assert.deepEqual(metrics.breakdowns.account.map(g => [g.account, g.trades]), [['cTrader Live (tradinghive)', 2]]);
+  const { trades } = await journal.listTrades(user, { sort: 'oldest' });
+  assert.deepEqual(trades.map(t => t.account), ['cTrader Live (tradinghive)', 'cTrader Live (tradinghive)']);
+  assert.deepEqual(trades.map(t => t.lots), [0.3, 0.1]);
+});
+
 test('get_trade: full journal, playbook answers, never another user\'s trade', async () => {
   const user = H.newUserId();
   const ids = await seed(user);

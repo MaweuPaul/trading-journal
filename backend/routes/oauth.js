@@ -68,10 +68,28 @@ router.post('/oauth/register', limiter, async (req, res) => {
   });
 });
 
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+/**
+ * Exact match, except for loopback redirects: desktop and CLI apps (Codex,
+ * Claude Desktop) listen on whatever port is free when the sign-in starts, so
+ * any port -- and any loopback spelling -- is accepted there (RFC 8252 §7.3).
+ */
+function redirectMatches(registered, requested) {
+  if (registered === requested) return true;
+  try {
+    const a = new URL(registered), b = new URL(requested);
+    return a.protocol === 'http:' && b.protocol === 'http:'
+      && LOOPBACK_HOSTS.includes(a.hostname) && LOOPBACK_HOSTS.includes(b.hostname)
+      && a.pathname === b.pathname && a.search === b.search && !b.hash;
+  } catch {
+    return false;
+  }
+}
+
 async function checkClient(clientId, redirectUri) {
   const client = clientId && await OAuthClient.findOne({ clientId: String(clientId) }).lean();
   if (!client) return { error: 'This app is not registered with the journal. Remove the connector and add it again.' };
-  if (!client.redirectUris.includes(String(redirectUri))) return { error: 'The redirect address does not match what this app registered.' };
+  if (!client.redirectUris.some(uri => redirectMatches(uri, String(redirectUri)))) return { error: 'The redirect address does not match what this app registered.' };
   return { client };
 }
 

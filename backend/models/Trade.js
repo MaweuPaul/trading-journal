@@ -7,7 +7,9 @@ const tradeSchema = new mongoose.Schema({
   direction: { type: String, enum: ['BUY', 'SELL'], required: true },
   entryPrice: { type: Number, required: true },
   exitPrice: { type: Number, required: true },
-  lotSize: { type: Number, required: true },
+  // volume / unitsPerLot leaves float noise (0.09999999999999999); 6 decimals
+  // keeps micro crypto lots exact while making 0.1 compare equal to 0.1.
+  lotSize: { type: Number, required: true, set: v => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 1e6) / 1e6 : v) },
   pnlUSD: { type: Number, required: true },         // profit in USD
   pnlPct: { type: Number, default: 0 },             // P&L as % of balance at close
   commission: { type: Number, default: 0 },

@@ -80,6 +80,12 @@ async function findTrades(userId, input = {}) {
     if (input.journaled === false && (t.notes || '').trim()) return false;
     return true;
   });
+  // A trade keeps the account name it was synced with, and account labels
+  // change (cTrader gained the broker name later): show the current label so
+  // one account doesn't split into two in breakdowns.
+  const labels = new Map((await TradingAccount.find({ user: userId }).select('accountKey label').lean())
+    .filter(a => a.label).map(a => [a.accountKey, a.label]));
+  for (const t of trades) if (labels.has(t.accountKey)) t.accountName = labels.get(t.accountKey);
   trades.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
   trades.truncated = truncated;
   return trades;
@@ -95,7 +101,7 @@ function publicTrade(t, { full = false } = {}) {
     openTime: iso(t.openTime), closeTime: iso(t.closeTime), durationMinutes: round(t.durationMinutes, 1),
     entryPrice: t.entryPrice, exitPrice: t.exitPrice,
     stopLoss: t.stopLoss ?? null, takeProfit: t.takeProfit ?? null,
-    lots: t.lotSize,
+    lots: typeof t.lotSize === 'number' ? Math.round(t.lotSize * 1e6) / 1e6 : t.lotSize, // older trades were stored with float noise
     netUSD: round(netTradeAmount(t)), pnlUSD: round(t.pnlUSD), commission: round(t.commission), swap: round(t.swap),
     outcome: outcomeOf(t),
     r: round(r), riskUSD: round(t.riskUSD), riskPercent: round(t.riskPercent), plannedRR: t.plannedRR ?? null,

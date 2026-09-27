@@ -44,6 +44,26 @@ test('market entries: every exit matches the 1-minute truth', async () => {
   assert.deepEqual(byTag, ['even', 'odd']);
 });
 
+test('daily strategies settle on 1-hour candles, never fetching 1-minute data', async () => {
+  const user = H.newUserId();
+  // Stop and target close to the entry, so most days touch both.
+  const code = `
+    function onBar(ctx) {
+      if (ctx.position) return;
+      const c = ctx.bar.close;
+      ctx.buy({ stop: c - 3, target: c + 3 });
+    }`;
+  const before = H.fetchLog.length;
+  const res = await run(user, code, { timeframe: '1day', from: '2024-01-15', to: '2024-03-25', warmupBars: 5 });
+  assert.equal(res.status, 'done', JSON.stringify(res.error));
+  const trades = await all(user, res);
+  assert.ok(trades.length > 10, `${trades.length} trades`);
+  const fetched = new Set(H.fetchLog.slice(before).map(([tf]) => tf));
+  for (const fine of ['1min', '5min', '15min']) assert.equal(fetched.has(fine), false, `fetched ${fine}`);
+  assert.ok(fetched.has('1h'), 'settled on 1h candles');
+  for (const t of trades.filter(t => t.exitReason !== 'end')) assert.ok(['stop', 'target'].includes(t.exitReason));
+});
+
 test('the code never sees a candle that has not closed, on any timeframe', async () => {
   const user = H.newUserId();
   const code = `

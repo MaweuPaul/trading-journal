@@ -58,8 +58,8 @@ so get_strategy_run / get_metrics can split results by them (groupBy "feature:<n
 ## How orders are settled (by the server, not your code)
 Market entries fill at the candle close (plus spread if costs.spread is set). Limit/stop orders fill on
 1-minute candles: a gap through the price fills at the minute's open; in the fill minute only the stop counts.
-Stops and targets are checked on every candle; when one candle reaches both, 1-minute candles decide, and
-if even they can't, the stop is assumed. R is always measured from the original stop. Commission (USD per
+Stops and targets are checked on every candle; when one candle reaches both, 1-minute candles decide
+(1-hour candles on 4h and daily strategies), and if even they can't, the stop is assumed. R is always measured from the original stop. Commission (USD per
 trade) is taken off each trade's result. A position still open at the end is closed at the last close.
 
 ## Example: 20/50 EMA cross, 1.5 ATR stop, 2R target, New York hours only

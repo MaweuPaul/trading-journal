@@ -208,9 +208,13 @@ async function executeSymbol(runId, userId, code, s, budget, progress) {
     const reject = (bar, reason) => { rejected.count++; if (rejected.first.length < 20) rejected.first.push(`${s.symbols.length > 1 ? `${s.symbol} ` : ''}${iso(bar.time)}: ${reason}`); pendingEvents.push({ type: 'rejected', reason }); };
     let positions = [], orders = [], seq = 0, approxFills = 0;
     let wins = 0, losses = 0, totalR = 0;
+    // Daily and 4h strategies settle stop-vs-target on 1h candles: a trade can be
+    // open for weeks, and pulling 1-minute data for each ambiguous candle floods
+    // cTrader with requests until it rate-limits the run.
+    const settleFloor = sec >= 4 * 3600 ? '1h' : null;
     const fetched1m = [];
     const ensure1m = async (t) => {
-      if (sec <= 60 || fetched1m.some(([a, b]) => t >= a && t < b)) return;
+      if (sec <= 60 || settleFloor || fetched1m.some(([a, b]) => t >= a && t < b)) return;
       const end = Math.min(t + PREFETCH_1M_SEC, s.to + DAY);
       await replay.candlesIn(ctx, '1min', t, end);
       fetched1m.push([t, end]);
@@ -255,7 +259,7 @@ async function executeSymbol(runId, userId, code, s, budget, progress) {
         const h = replay.levelsHit(c, p);
         if (!h.sl && !h.tp) continue;
         let which = !(h.sl && h.tp) ? (h.sl ? 'sl' : 'tp') : null;
-        if (!which) { await ensure1m(T); which = await replay.firstHit(ctx, s.timeframe, T, TE, p) || 'sl'; }
+        if (!which) { await ensure1m(T); which = await replay.firstHit(ctx, s.timeframe, T, TE, p, settleFloor) || 'sl'; }
         finish(p, T, which === 'sl' ? p.stopLoss : p.takeProfit, which === 'sl' ? 'stop' : 'target');
       }
       for (const o of [...orders]) {
@@ -280,7 +284,7 @@ async function executeSymbol(runId, userId, code, s, budget, progress) {
             if (res.closed) finish(p, res.closed.time, res.closed.price ?? (res.closed.which === 'sl' ? p.stopLoss : p.takeProfit), res.closed.which === 'sl' ? 'stop' : 'target');
             else if (segEnd < TE) {
               await ensure1m(segEnd);
-              const which = await replay.firstHit(ctx, s.timeframe, segEnd, TE, p);
+              const which = await replay.firstHit(ctx, s.timeframe, segEnd, TE, p, settleFloor);
               if (which) finish(p, T, which === 'sl' ? p.stopLoss : p.takeProfit, which === 'sl' ? 'stop' : 'target');
             }
             continue;

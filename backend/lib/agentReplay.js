@@ -216,7 +216,9 @@ function levelsHit(c, t) {
  * outside the window. null when neither was reached. If even 1-minute candles
  * can't separate the two, the stop is assumed (the conservative reading).
  */
-async function firstHit(ctx, tf, start, end, t) {
+// `floor` stops the descent at that timeframe (the strategy runner settles
+// daily/4h strategies on 1h candles instead of pulling weeks of 1-minute data).
+async function firstHit(ctx, tf, start, end, t, floor = null) {
   const sec = TF_SEC[tf];
   const parts = await candlesIn(ctx, tf, start - sec + 1, end);
   for (const p of parts) {
@@ -226,14 +228,14 @@ async function firstHit(ctx, tf, start, end, t) {
     if (!h.sl && !h.tp) continue;
     const straddles = p.time < start || pEnd > end;
     if (!straddles && !(h.sl && h.tp)) return h.sl ? 'sl' : 'tp';
-    const finer = FINER[tf];
+    const finer = tf === floor ? null : FINER[tf];
     if (finer) {
-      const which = await firstHit(ctx, finer, Math.max(start, p.time), Math.min(end, pEnd), t);
+      const which = await firstHit(ctx, finer, Math.max(start, p.time), Math.min(end, pEnd), t, floor);
       if (which) return which;
       if (straddles) continue; // the hit was outside the window
       return 'sl';            // no finer data to separate them
     }
-    return h.sl ? 'sl' : 'tp';
+    return h.sl ? 'sl' : 'tp'; // at the finest level, both touched counts as the stop
   }
   return null;
 }

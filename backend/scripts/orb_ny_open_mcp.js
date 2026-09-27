@@ -13,6 +13,9 @@
 //   --max-hold-bars 4320 force-close after this many M1 bars
 //   --risk 100           USD risked per trade
 //   --no-log             don't write trades to the Backtest Log
+//   --breakout-tf 5min   confirm the breakout on a 5-minute close (default 1min)
+//   --retest             enter on a retest of the broken edge (limit order) instead of at the breakout close
+//   --retest-expiry-min 60  cancel the retest order if not filled within this many minutes
 // Node 18+; no dependencies.
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
@@ -34,11 +37,21 @@ const cfg = {
   risk: Number(args.risk || 100),
   log: !args['no-log'],
   strategy: args.strategy || 'ORB NY Open',
+  // Breakout confirmation timeframe: the first 1min (default) or 5min close beyond the range.
+  breakoutTf: args['breakout-tf'] === '5min' ? '5min' : '1min',
+  // Retest mode: after the breakout, wait for price to come back to the broken
+  // edge and buy/sell it there with a limit order (risk = range width, so a
+  // 1x-width target pays 1R), cancelled if not filled within retestExpiryMin.
+  retest: Boolean(args.retest),
+  retestExpiryMin: Number(args['retest-expiry-min'] || 60),
 };
+const TF_SEC = { '1min': 60, '5min': 300 };
 const STRATEGY_RULES = `ORB New York Open (smc-strategy-lab). Mark the high/low of the M1 candles from ${9}:${30 - cfg.candleMinutes}-9:30 America/New_York (DST-aware). `
-  + `After 9:30, take the first M1 close beyond the range within ${cfg.monitorHours}h: above = long, below = short. `
+  + `After 9:30, take the first ${cfg.breakoutTf === '5min' ? 'M5' : 'M1'} close beyond the range within ${cfg.monitorHours}h: above = long, below = short. `
   + `${cfg.bias ? "Daily bias: only longs if today's range midpoint is above yesterday's, only shorts if below. " : ''}`
-  + `Enter at the next bar's open (the breakout close). Stop at the opposite side of the range; target ${cfg.targetMult}x the range width from entry. `
+  + (cfg.retest
+    ? `Then wait up to ${cfg.retestExpiryMin} min for a retest: limit order at the broken edge (range high for longs, low for shorts). Stop at the opposite side of the range; target ${cfg.targetMult}x the range width from the edge (${cfg.targetMult}R). `
+    : `Enter at the next bar's open (the breakout close). Stop at the opposite side of the range; target ${cfg.targetMult}x the range width from entry. `)
   + `One trade per day; force-close after ${cfg.maxHoldBars} M1 bars.`;
 
 // ── MCP client (stateless Streamable HTTP, JSON responses) ─────────────────
@@ -111,7 +124,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
   const tools = (await rpc('tools/list', {})).tools;
   const fastBreakout = Boolean(tools.find(t => t.name === 'step')?.inputSchema?.properties?.untilCloseAbove);
   if (!fastBreakout) console.log('(This server has no untilCloseAbove/untilCloseBelow on step yet: watching bar by bar, which is much slower.)');
-  console.log(`ORB NY Open on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ candleMinutes: cfg.candleMinutes, monitorHours: cfg.monitorHours, targetMult: cfg.targetMult, bias: cfg.bias }));
+  console.log(`ORB NY Open on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ candleMinutes: cfg.candleMinutes, monitorHours: cfg.monitorHours, targetMult: cfg.targetMult, bias: cfg.bias, breakoutTf: cfg.breakoutTf, retest: cfg.retest ? `${cfg.retestExpiryMin} min` : false }));
   if (cfg.log) await call('create_strategy', { name: cfg.strategy, description: STRATEGY_RULES });
 
   const session = await call('start_session', { symbol: cfg.symbol, interval: '1min', from: cfg.from, to: cfg.to, strategy: cfg.log ? cfg.strategy : undefined, context: 0 });
@@ -119,7 +132,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
   let clock = toSec(session.clock);
   const results = [];
   let prevMid = null;
-  const stats = { days: 0, noData: 0, noBreakout: 0, skippedBusy: 0, filtered: 0 };
+  const stats = { days: 0, noData: 0, noBreakout: 0, noRetest: 0, skippedBusy: 0, filtered: 0 };
 
   try {
     const start = new Date(cfg.from + 'T00:00:00Z'), end = new Date(cfg.to + 'T00:00:00Z');
@@ -150,6 +163,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
       // 2. Watch M1 closes after the open for the first allowed close beyond the range.
       const deadline = open + cfg.monitorHours * 3600;
       let breakout = null;
+      if (cfg.breakoutTf !== '1min') await call('set_timeframe', { sessionId: sid, timeframe: cfg.breakoutTf });
       if (fastBreakout) {
         const s = await call('step', {
           sessionId: sid, maxBars: 5000, untilTime: isoMin(deadline),
@@ -169,6 +183,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
         if (allowLong && c.close > high) breakout = { direction: 'long', candle: c };
         else if (allowShort && c.close < low) breakout = { direction: 'short', candle: c };
       }
+      if (cfg.breakoutTf !== '1min') await call('set_timeframe', { sessionId: sid, timeframe: '1min' });
       if (!breakout) { stats.noBreakout++; continue; }
 
       // 3. Enter; stop at the opposite side, measured-move target.
@@ -178,18 +193,38 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
       const features = {
         rangeWidth: +width.toFixed(5),
         rangeWidthPct: +(width / entry * 100).toFixed(4),
-        minutesToBreakout: Math.round((toSec(breakout.candle.time) + 60 - open) / 60),
+        minutesToBreakout: Math.round((toSec(breakout.candle.time) + TF_SEC[cfg.breakoutTf] - open) / 60),
+        breakoutTf: cfg.breakoutTf,
+        entryMode: cfg.retest ? 'retest' : 'breakout close',
         breakoutBeyondRange: +((long ? entry - high : low - entry) / width).toFixed(3), // how far the close went past the range, in range widths
         ...(prevMidForFeature != null ? { biasGapInRanges: +((mid - prevMidForFeature) / width).toFixed(3) } : {}),
         weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()],
       };
-      const opened = await call('open_trade', {
-        sessionId: sid, direction: breakout.direction, riskAmount: cfg.risk, features,
-        stopLoss: long ? low : high,
-        takeProfit: long ? entry + cfg.targetMult * width : entry - cfg.targetMult * width,
-      });
-      const run = await call('step', { sessionId: sid, bars: cfg.maxHoldBars });
-      clock = toSec(run.state.clock);
+      let opened, run;
+      if (cfg.retest) {
+        // Limit order back at the broken edge; stop at the opposite side, target 1x width from the edge.
+        const edge = long ? high : low;
+        const placed = await call('place_order', {
+          sessionId: sid, type: 'limit', direction: breakout.direction, price: edge, riskAmount: cfg.risk, features,
+          stopLoss: long ? low : high,
+          takeProfit: long ? edge + cfg.targetMult * width : edge - cfg.targetMult * width,
+          expiresAt: isoMin(clock + cfg.retestExpiryMin * 60),
+        });
+        opened = { opened: { entryPrice: placed.placed.price } };
+        run = await call('step', { sessionId: sid, bars: cfg.maxHoldBars });
+        clock = toSec(run.state.clock);
+        if (run.events.some(e => e.type === 'order_expired')) { stats.noRetest++; continue; }
+        const fill = run.events.find(e => e.type === 'order_filled');
+        if (fill) opened.opened.entryPrice = fill.trade.entryPrice;
+      } else {
+        opened = await call('open_trade', {
+          sessionId: sid, direction: breakout.direction, riskAmount: cfg.risk, features,
+          stopLoss: long ? low : high,
+          takeProfit: long ? entry + cfg.targetMult * width : entry - cfg.targetMult * width,
+        });
+        run = await call('step', { sessionId: sid, bars: cfg.maxHoldBars });
+        clock = toSec(run.state.clock);
+      }
       let closed = run.events.find(e => e.type === 'trade_closed')?.trade;
       if (!closed) closed = (await call('close_trade', { sessionId: sid })).closed; // max hold reached
       results.push({ day: d.toISOString().slice(0, 10), ...closed, rangeWidth: width });
@@ -200,7 +235,9 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
           sessionId: sid,
           name: `ORB NY ${d.toISOString().slice(0, 10)} ${cfg.symbol} ${long ? 'Long' : 'Short'}`,
           notes: `Marking range ${cfg.candleMinutes}m before 9:30 NY: high ${high}, low ${low} (width ${width.toFixed(3)}). ${cfg.bias ? `Bias: ${biasText}. ` : ''}`
-            + `First M1 close beyond the range at ${breakout.candle.time} (close ${entry}). Stop at the opposite side, target ${cfg.targetMult}x range width.`,
+            + `First ${cfg.breakoutTf === '5min' ? 'M5' : 'M1'} close beyond the range at ${breakout.candle.time} (close ${entry}). `
+            + `${cfg.retest ? `Entered on the retest of the broken edge (limit ${opened.opened.entryPrice}, ${cfg.retestExpiryMin} min to fill). ` : ''}`
+            + `Stop at the opposite side, target ${cfg.targetMult}x range width${cfg.retest ? ' from the edge' : ''}.`,
           planFollowed: true,
         });
       } else {

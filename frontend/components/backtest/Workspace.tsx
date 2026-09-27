@@ -992,6 +992,9 @@ export default function Workspace() {
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple: unrealizedR, pnlUSD: unrealizedR * openTrade.riskAmount });
     setShowCloseout(true);
   };
+  const removePosition = () => {
+    if (window.confirm('Remove this simulated position? Nothing is logged.')) resetTrade();
+  };
   const resetTrade = () => {
     setOpenTrade(null); setClosedTrade(null); setShowCloseout(false);
     setNotes(''); setJournal(EMPTY_JOURNAL); setBacktestName(''); setTags(currentStrategy ? [currentStrategy] : []); setTagDraft(null); setSaveError('');
@@ -1266,6 +1269,8 @@ export default function Workspace() {
       }
       if (typing || !candles) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) { e.preventDefault(); deleteSelectedDrawing(); }
+      // No drawing selected: Delete removes the simulated position (it isn't a drawing, so it can't be selected).
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && openTrade && !closedTrade) { e.preventDefault(); removePosition(); }
       else if (e.key === ' ') { e.preventDefault(); setPlaying(p => !p); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); jumpToReplayIndex(replayIdx + 1); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); jumpToReplayIndex(replayIdx - 1); }
@@ -1849,6 +1854,16 @@ export default function Workspace() {
                 <button type="button" role="menuitem" onClick={() => { fitAllCandles(); setChartMenu(null); }} className={menuItem}>
                   <Icon name="fit_screen" className="tw:text-[16px] tw:text-on-surface-variant" />Fit all candles
                 </button>
+                {openTrade && !closedTrade && (
+                  <button type="button" role="menuitem" onClick={() => { setChartMenu(null); removePosition(); }} className={`${menuItem} tw:text-error`}>
+                    <Icon name="delete" className="tw:text-[16px]" />Remove position
+                  </button>
+                )}
+                {selectedDrawingId && (
+                  <button type="button" role="menuitem" onClick={() => { setChartMenu(null); deleteSelectedDrawing(); }} className={`${menuItem} tw:text-error`}>
+                    <Icon name="delete" className="tw:text-[16px]" />Delete drawing
+                  </button>
+                )}
               </div>
             </>
           )}

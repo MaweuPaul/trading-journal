@@ -32,7 +32,12 @@ function Consent() {
     }
     const clientId = params.get('client_id') || '', redirectUri = params.get('redirect_uri') || '';
     if (!clientId || !redirectUri) return; // shown as `incomplete` below
-    fetch(`/api/oauth/authorize-info?${new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope: params.get('scope') || '' })}`, { headers: authHeaders() })
+    // Never spin forever: a sleeping server (free hosting) can take a minute
+    // to wake, and a request that never answers should say so.
+    const controller = new AbortController();
+    let timedOut = false, cancelled = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 45_000);
+    fetch(`/api/oauth/authorize-info?${new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope: params.get('scope') || '' })}`, { headers: authHeaders(), signal: controller.signal })
       .then(async res => {
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) { localStorage.removeItem('token'); window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`); return; }
@@ -40,7 +45,14 @@ function Consent() {
         setInfo(data);
         if (data.requestedScopes?.includes('journal')) setJournal(true);
       })
-      .catch(err => setError(err instanceof Error ? err.message : 'This app could not be verified.'));
+      .catch(err => {
+        if (cancelled) return; // the page re-rendered; a newer request is in flight
+        setError(timedOut
+          ? 'The journal server did not answer (it may be waking up). Reload this page to try again.'
+          : err instanceof Error ? err.message : 'This app could not be verified.');
+      })
+      .finally(() => clearTimeout(timer));
+    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
   }, [params]);
 
   async function decide(approve: boolean) {

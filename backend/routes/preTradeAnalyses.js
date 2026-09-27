@@ -12,7 +12,8 @@ function ownerOnly(req, res, next) {
   next();
 }
 
-const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
+const INTERVAL_MINUTES = { '1min': 1, '5min': 5, '15min': 15, '1h': 60, '4h': 240, '1day': 1440 };
+const CHART_INTERVALS = new Set(Object.keys(INTERVAL_MINUTES));
 
 // GET /pre-trade-analyses/chart  candles for an arbitrary symbol -- no Trade
 // required, unlike Trade Replay's /trades/:id/replay. The user marks levels
@@ -26,7 +27,10 @@ router.get('/pre-trade-analyses/chart', auth, ownerOnly, async (req, res) => {
     const toMs = Date.now();
     const fromMs = toMs - days * 24 * 60 * 60 * 1000;
 
-    const candleData = await getTrendbars({ userId: req.user.userId, symbol, periodLabel: interval, fromMs, toMs });
+    // Short intervals over several days exceed cTrader's 1500-bar page, so page
+    // back far enough to cover the window (getTrendbars caps the page count).
+    const maxPages = Math.ceil((toMs - fromMs) / 60000 / INTERVAL_MINUTES[interval] / 1500) + 1;
+    const candleData = await getTrendbars({ userId: req.user.userId, symbol, periodLabel: interval, fromMs, toMs, maxPages });
     if (!candleData.candles.length) {
       return res.status(422).json({ error: `cTrader returned no candles for ${symbol} (${interval}).` });
     }

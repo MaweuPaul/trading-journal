@@ -50,6 +50,23 @@ test('list_trades filters, sorts and pages; costs decide the outcome', async () 
   assert.equal(first.notes, undefined, 'notes only on get_trade');
 });
 
+test('an account renamed after sync stays one account; lot sizes lose float noise', async () => {
+  const user = H.newUserId();
+  const trade = (i, accountName, lotSize) => H.models.JournalTrade.create({
+    user, dealId: `n${i}`, symbol: 'NAS100', direction: 'SELL', entryPrice: 20000, exitPrice: 19990, lotSize, pnlUSD: 10,
+    openTime: new Date(Date.UTC(2024, 0, 8 + i, 14)), closeTime: new Date(Date.UTC(2024, 0, 8 + i, 14, 30)),
+    durationMinutes: 30, accountKey: 'ctrader:7', accountName, accountType: 'live',
+  });
+  await trade(0, 'cTrader Live', 0.30000000000000004);
+  await trade(1, 'cTrader Live (tradinghive)', 0.09999999999999999);
+  await H.models.TradingAccount.create({ user, provider: 'ctrader', accountKey: 'ctrader:7', label: 'cTrader Live (tradinghive)' });
+  const metrics = await journal.getMetrics(user, { groupBy: 'account' });
+  assert.deepEqual(metrics.breakdowns.account.map(g => [g.account, g.trades]), [['cTrader Live (tradinghive)', 2]]);
+  const { trades } = await journal.listTrades(user, { sort: 'oldest' });
+  assert.deepEqual(trades.map(t => t.account), ['cTrader Live (tradinghive)', 'cTrader Live (tradinghive)']);
+  assert.deepEqual(trades.map(t => t.lots), [0.3, 0.1]);
+});
+
 test('get_trade: full journal, playbook answers, never another user\'s trade', async () => {
   const user = H.newUserId();
   const ids = await seed(user);
@@ -112,6 +129,19 @@ test('accounts, playbooks and candles around a trade', async () => {
   assert.equal(times.filter(t => t < '2024-01-08T14:05Z').length, 20, '20 bars before the entry candle');
   assert.equal(times.filter(t => t > '2024-01-08T15:00Z').length, 5, '5 bars after the exit candle');
   assert.ok(c.candles.length <= 600);
+
+  // A 2-minute trade gets 1-minute candles over a window of several thousand
+  // bars, more than one 1500-bar cTrader page: the bars before entry must still be there.
+  const quick = String((await H.models.JournalTrade.create({
+    user, dealId: 'q1', symbol: 'XAUUSD', direction: 'SELL', entryPrice: 2000, exitPrice: 1999, lotSize: 1, pnlUSD: 10,
+    openTime: new Date(Date.UTC(2024, 0, 10, 14, 1)), closeTime: new Date(Date.UTC(2024, 0, 10, 14, 3)),
+    durationMinutes: 2, accountKey: 'ctrader:1', accountName: 'Main', accountType: 'live',
+  }))._id);
+  const q = await journal.getTradeCandles(user, quick, { barsBefore: 100, barsAfter: 30 });
+  assert.equal(q.interval, '1min');
+  const qt = q.candles.map(k => k[0]);
+  assert.equal(qt.filter(t => t < '2024-01-10T14:01Z').length, 100, '100 bars before a short trade\'s entry');
+  assert.equal(qt[100], '2024-01-10T14:01Z', 'the entry candle follows them');
 });
 
 // ── Over MCP: journal tools need the opt-in scope ──────────────────────────

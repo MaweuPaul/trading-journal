@@ -319,6 +319,34 @@ const TRENDBARS_PER_REQUEST = 1500;
 // the cTrader connection.
 const MAX_TRENDBAR_PAGES = 14;
 
+// cTrader allows about 5 historical-data requests a second per connection and
+// answers faster bursts with "You are being rate limited" -- which used to fail
+// a whole strategy run while its candles loaded page after page. Requests on
+// one account are spaced out, and a rate-limit answer is waited out and retried.
+const TRENDBAR_MIN_GAP_MS = 250;
+const TRENDBAR_RETRIES = 5;
+const trendbarPace = new Map(); // ctidTraderAccountId -> promise of the last request's slot
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function isRateLimited(err) {
+  return ['REQUEST_FREQUENCY_EXCEEDED', 'BLOCKED_PAYLOAD_TYPE'].includes(err?.errorCode) || /rate limit/i.test(err?.message || '');
+}
+
+async function pacedTrendbarRequest(client, accountId, fields) {
+  for (let attempt = 0; ; attempt++) {
+    const key = String(accountId);
+    const slot = (trendbarPace.get(key) || Promise.resolve()).then(() => sleep(TRENDBAR_MIN_GAP_MS));
+    trendbarPace.set(key, slot);
+    await slot;
+    try {
+      return await client.request(PAYLOAD_TYPE.GET_TRENDBARS_REQ, fields);
+    } catch (err) {
+      if (!isRateLimited(err) || attempt >= TRENDBAR_RETRIES) throw err;
+      await sleep(Number(err.retryAfter) > 0 ? Number(err.retryAfter) * 1000 : 1000 * 2 ** attempt);
+    }
+  }
+}
+
 // The core Replay data call: historical candles for one symbol/window from
 // the owner's connected cTrader account.
 // `maxPages` > 1 opts into paging past the 1500-bar-per-request limit
@@ -327,15 +355,32 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
   const period = PERIOD_BY_LABEL[periodLabel];
   if (!period) throw new Error(`Unsupported replay interval: ${periodLabel}`);
 
-  const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
+  let connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
   if (!connectionInfo) {
     const err = new Error('cTrader is not connected. Connect it on the Accounts page to use Trade Replay.');
     err.code = 'NOT_CONNECTED';
     throw err;
   }
 
-  const client = await getAuthenticatedClient(connectionInfo);
-  const symbolId = await resolveSymbolId(client, connectionInfo.ctidTraderAccountId, symbol);
+  let client = await getAuthenticatedClient(connectionInfo);
+  let symbolId = await resolveSymbolId(client, connectionInfo.ctidTraderAccountId, symbol);
+  // The default (oldest) connection may not list a symbol another of the
+  // owner's accounts has -- list_symbols reads the newest one, so a symbol it
+  // offered could then fail here. Without a specific account asked for, try
+  // the other connections, newest first.
+  if (symbolId == null && !preferredCtidTraderAccountId) {
+    for (const connection of [...await listConnections(userId)].reverse()) {
+      if (String(connection.ctidTraderAccountId) === String(connectionInfo.ctidTraderAccountId)) continue;
+      try {
+        const info = await refreshConnectionIfNeeded(connection, userId);
+        const otherClient = await getAuthenticatedClient(info);
+        const id = await resolveSymbolId(otherClient, info.ctidTraderAccountId, symbol);
+        if (id != null) { connectionInfo = info; client = otherClient; symbolId = id; break; }
+      } catch {
+        // A connection cTrader no longer accepts: try the next one.
+      }
+    }
+  }
   if (symbolId == null) {
     const err = new Error(`cTrader does not have a symbol matching "${symbol}" on this account.`);
     err.code = 'SYMBOL_NOT_FOUND';
@@ -351,7 +396,7 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
   let cursorMs = Math.floor(toMs);
   const pages = Math.max(1, Math.min(MAX_TRENDBAR_PAGES, Math.floor(maxPages)));
   for (let page = 0; page < pages; page++) {
-    const res = await client.request(PAYLOAD_TYPE.GET_TRENDBARS_REQ, {
+    const res = await pacedTrendbarRequest(client, connectionInfo.ctidTraderAccountId, {
       ctidTraderAccountId: Number(connectionInfo.ctidTraderAccountId),
       fromTimestamp: Math.floor(fromMs),
       toTimestamp: cursorMs,
@@ -443,4 +488,4 @@ async function getSymbolSpec({ userId, symbol, preferredCtidTraderAccountId }) {
   };
 }
 
-module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols, getSymbolSpec };
+module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols, getSymbolSpec, pacedTrendbarRequest };

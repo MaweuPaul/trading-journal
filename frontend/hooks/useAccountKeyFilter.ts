@@ -34,5 +34,21 @@ export function useAccountKeyFilter(urlValue?: string) {
     else window.localStorage.removeItem(STORAGE_KEY);
   };
 
-  return [accountKeyFilter, setAccountKeyFilter, ready] as const;
+  // A remembered account can go stale (another login, a disconnected account,
+  // the test database): the dropdown then shows "All trading accounts" while
+  // the page still filters by the missing key and shows nothing. Once the page
+  // knows the real accounts, drop a filter that matches none of them.
+  const [known, setKnown] = useState<{ keys: string[]; unassigned: boolean } | null>(null);
+  const setKnownAccounts = (accounts: { accountKey: string }[], unassignedCount = 0) =>
+    setKnown({ keys: accounts.map(a => a.accountKey), unassigned: unassignedCount > 0 });
+  useEffect(() => {
+    if (!known || !accountKeyFilter) return;
+    const valid = accountKeyFilter === '__unassigned__' ? known.unassigned : known.keys.includes(accountKeyFilter);
+    if (valid) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reconcile a stale remembered filter
+    setAccountKeyFilterState('');
+    window.localStorage.removeItem(STORAGE_KEY);
+  }, [known, accountKeyFilter]);
+
+  return [accountKeyFilter, setAccountKeyFilter, ready, setKnownAccounts] as const;
 }

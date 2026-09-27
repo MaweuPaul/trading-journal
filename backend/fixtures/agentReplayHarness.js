@@ -35,14 +35,16 @@ const fetchLog = [];
 require.cache[require.resolve('../lib/ctraderReplay')] = {
   id: require.resolve('../lib/ctraderReplay'), loaded: true,
   exports: {
-    getTrendbars: async ({ symbol, periodLabel, fromMs, toMs }) => {
+    getTrendbars: async ({ symbol, periodLabel, fromMs, toMs, maxPages = 1 }) => {
       if (!['XAUUSD', 'XAUEUR'].includes(symbol)) { // XAUEUR: the same feed, for multi-symbol runs
         const err = new Error(`cTrader does not have a symbol matching "${symbol}" on this account.`);
         err.code = 'SYMBOL_NOT_FOUND';
         throw err;
       }
       fetchLog.push([periodLabel, fromMs, toMs]);
-      return { candles: series[periodLabel].filter(c => c.time >= fromMs / 1000 && c.time <= toMs / 1000).map(c => ({ ...c })) };
+      // Like cTrader: 1500 bars per page, newest first, `maxPages` pages at most.
+      const inWindow = series[periodLabel].filter(c => c.time >= fromMs / 1000 && c.time <= toMs / 1000);
+      return { candles: inWindow.slice(-1500 * Math.max(1, Math.min(14, Math.floor(maxPages)))).map(c => ({ ...c })) };
     },
     listAccountSymbols: async () => ['EURUSD', 'GBPUSD', 'XAUUSD'],
   },

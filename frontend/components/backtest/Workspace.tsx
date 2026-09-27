@@ -61,6 +61,16 @@ const PREFETCH_BARS = 300;
 const SWITCH_BACK_BARS = 300;
 const SWITCH_AHEAD_BARS = 400;
 const barMsOf = (tf: string) => (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * DAY;
+// Empty time slots after the latest candle, so drawings can extend to the
+// right: at least FUTURE_SLOTS, more to reach the furthest drawing (a zone
+// drawn weeks ahead on the daily is thousands of 15m slots), up to MAX_FUTURE_SLOTS.
+const FUTURE_SLOTS = 500;
+const MAX_FUTURE_SLOTS = 20_000;
+// Bars of breathing room right of the latest candle when the view is fitted.
+const RIGHT_PAD_BARS = 2;
+// A timeframe switch loads history back to the earliest drawing, up to this
+// many bars, so drawings keep their start (e.g. a daily zone viewed on 15m).
+const MAX_DRAWING_BACKFILL_BARS = 20_000;
 
 /** Did this candle trade through the trade's stop / target? */
 function levelsHit(c: Candle, t: OpenTrade) {
@@ -117,19 +127,28 @@ function drawingFactory(type: string, data: SerializedDrawing) {
 }
 /**
  * Move each anchor onto a candle of the chart it's imported into: the last
- * candle opening at or before it. Anchors from another timeframe (e.g. 05:25
- * on a 15m chart) otherwise match no bar, and the chart can't place the drawing.
+ * revealed candle opening at or before it, or for points in the future, onto
+ * the empty slots after it (latest + k bars). Anchors from another timeframe
+ * (e.g. 05:25 on a 15m chart) otherwise match no bar, and the chart can't place the drawing.
  */
-function snapDrawings(drawings: SerializedDrawing[], candles: { time: unknown }[] | null): SerializedDrawing[] {
+function snapDrawings(drawings: SerializedDrawing[], candles: { time: unknown }[] | null, lastShown: number, bar: number): SerializedDrawing[] {
   if (!candles || !candles.length) return drawings;
-  const times = candles.map(c => Number(c.time));
+  const times = candles.slice(0, lastShown + 1).map(c => Number(c.time));
+  if (!times.length) return drawings;
+  const last = times[times.length - 1];
   const snap = (t: number) => {
-    let lo = 0, hi = times.length - 1;
-    if (t <= times[0]) return times[0];
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (times[mid] <= t) lo = mid; else hi = mid - 1; }
-    return times[lo];
+    // Past the latest candle: onto the chart's empty future slots (latest + k bars).
+    if (t > last && bar > 0) return last + Math.min(MAX_FUTURE_SLOTS, Math.max(1, Math.round((t - last) / bar))) * bar;
+    return lastAtOrBefore(times, t);
   };
   return drawings.map(d => ({ ...d, anchors: d.anchors.map(a => ({ ...a, time: snap(Number(a.time)) as Anchor['time'] })) }));
+}
+/** The last of the sorted `times` at or before t (the first one if t is earlier). */
+function lastAtOrBefore(times: number[], t: number) {
+  if (t <= times[0]) return times[0];
+  let lo = 0, hi = times.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (times[mid] <= t) lo = mid; else hi = mid - 1; }
+  return times[lo];
 }
 function cssVar(el: Element | null, name: string, fallback: string) {
   const v = el ? getComputedStyle(el).getPropertyValue(name).trim() : '';
@@ -185,6 +204,16 @@ export default function Workspace() {
   const chartEpochRef = useRef(0);
   useEffect(() => { chartEpochRef.current = chartEpoch; }, [chartEpoch]);
   const candlesRef = useRef<Candle[] | null>(null);
+  // How many real candles the chart shows (it also holds FUTURE_SLOTS empty ones).
+  const revealedCountRef = useRef(0);
+  const futureSlotsRef = useRef(0);
+  // Drawing id -> replay time (candle open, unix s) it was made at.
+  const drawingMadeAtRef = useRef(new Map<string, number>());
+  /** Fit the view to the revealed candles, ignoring the empty future slots. */
+  const fitRevealed = () => {
+    const ts = chartRef.current?.timeScale(); if (!ts || !revealedCountRef.current) return;
+    ts.setVisibleLogicalRange({ from: 0, to: revealedCountRef.current - 1 + RIGHT_PAD_BARS });
+  };
   useEffect(() => { candlesRef.current = candles; }, [candles]);
   // What the loaded candles belong to, and how far ahead they reach.
   const sessionRef = useRef<{ symbol: string; interval: string; fromMs: number; toMs: number; loadedFromMs: number; loadedToMs: number; olderDone?: boolean } | null>(null);
@@ -468,13 +497,18 @@ export default function Workspace() {
     const clock = Number(seen[seen.length - 1].time) + oldSec; // close time of the current candle
     const sessionFromMs = new Date(fromDate).getTime();
     const sessionToMs = new Date(toDate).getTime() + DAY;
-    // Window: 300 candles of context before the clock and a page ahead; more
-    // streams in as the replay advances.
-    const fetchFromMs = clock * 1000 - SWITCH_BACK_BARS * newSec * 1000;
+    const drawings = managerRef.current?.exportDrawings() ?? [];
+    // Window: 300 candles of context before the clock -- or back to the
+    // earliest drawing, so a zone drawn on the daily keeps its start on 15m
+    // (capped; older history still streams in on scroll).
+    const earliestDrawingMs = Math.min(...drawings.flatMap(d => d.anchors.map(a => Number(a.time) * 1000)));
+    const fetchFromMs = Math.max(
+      clock * 1000 - MAX_DRAWING_BACKFILL_BARS * newSec * 1000,
+      Math.min(clock * 1000 - SWITCH_BACK_BARS * newSec * 1000, earliestDrawingMs - 20 * newSec * 1000),
+    );
     // Only what's needed to show the chart now; the candles ahead stream in
     // through auto-load (usually straight from the prefetch cache).
     const fetchToMs = Math.min(sessionToMs, clock * 1000 + 2 * newSec * 1000);
-    const drawings = managerRef.current?.exportDrawings() ?? [];
     const sym = symbol.trim().toUpperCase();
     setLoading(true); setPlaying(false); setPlacingDirection(null); setMeasureRange(null);
     getCandles(sym, tf, fetchFromMs, fetchToMs, authHeaders())
@@ -570,9 +604,46 @@ export default function Workspace() {
     const manager = new DrawingManager();
     manager.attach(chart, series, el);
     managerRef.current = manager;
+
+    // Resizing drawings. The drawing library drags an anchor on mousedown, but
+    // doesn't stop the chart from panning at the same time (so the handle
+    // lands somewhere else), and a rectangle only has handles on the two
+    // corners it was drawn from. This runs first (capture phase) to fix both.
+    let draggingHandle = false;
+    const onHandleDown = (ev: MouseEvent) => {
+      const r = el.getBoundingClientRect();
+      const pt = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      const sel = manager.getSelectedDrawing();
+      if (sel && sel.type === 'rectangle' && sel.anchors.length === 2 && !sel.options.locked && manager.hitTestAnchor(pt) === null) {
+        // Grabbed one of the two undrawn corners? Swap the anchors' prices:
+        // same rectangle, but now a real handle sits under the cursor.
+        const [a, b] = sel.anchors;
+        const ax = chart.timeScale().timeToCoordinate(a.time), bx = chart.timeScale().timeToCoordinate(b.time);
+        const ay = series.priceToCoordinate(a.price), by = series.priceToCoordinate(b.price);
+        if (ax != null && bx != null && ay != null && by != null) {
+          const near = (x: number, y: number) => Math.hypot(pt.x - x, pt.y - y) <= 8;
+          if (near(ax, by) || near(bx, ay)) {
+            sel.updateAnchor(0, { time: a.time, price: b.price });
+            sel.updateAnchor(1, { time: b.time, price: a.price });
+            sel.requestUpdate();
+          }
+        }
+      }
+      if (manager.hitTestAnchor(pt) !== null) {
+        draggingHandle = true;
+        chart.applyOptions({ handleScroll: false, handleScale: false });
+      }
+    };
+    const onHandleUp = () => {
+      if (!draggingHandle) return;
+      draggingHandle = false;
+      chart.applyOptions({ handleScroll: true, handleScale: true });
+    };
+    el.addEventListener('mousedown', onHandleDown, true);
+    window.addEventListener('mouseup', onHandleUp);
     const restoring = pendingRestoreRef.current;
     if (restoring) {
-      if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current), drawingFactory);
+      if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current, replayIdx, barMsOf(interval) / 1000), drawingFactory);
       pendingRestoreRef.current = null;
     }
     const recount = () => setDrawingCount(manager.getAllDrawings().length);
@@ -589,6 +660,12 @@ export default function Workspace() {
           }
         }
         recount();
+      }),
+      // A zone extends with the replay only until you resize or move it yourself
+      // (drawing:updated fires only on a user's handle drag); after that it
+      // stays exactly where you put it.
+      manager.on('drawing:updated', event => {
+        if (event.drawing?.type === 'rectangle' && event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: false });
       }),
       manager.on('drawing:removed', recount),
       manager.on('drawing:cleared', recount),
@@ -615,6 +692,8 @@ export default function Workspace() {
     return () => {
       unsubscribers.forEach(unsub => unsub());
       chart.unsubscribeCrosshairMove(onCrosshair);
+      el.removeEventListener('mousedown', onHandleDown, true);
+      window.removeEventListener('mouseup', onHandleUp);
       manager.detach();
       managerRef.current = null;
       ro.disconnect();
@@ -622,6 +701,7 @@ export default function Workspace() {
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt per chartEpoch; replayIdx/interval are read as of that rebuild
   }, [chartEpoch, resolvedTheme]);
 
   // ── Indicator values (computed once per load, sliced per replay step) ──────
@@ -665,8 +745,30 @@ export default function Workspace() {
     const down = cssVar(root, '--bt-error', '#ffb4ab');
     const shown = candles.slice(0, replayIdx + 1);
     if (partial && partial.idx < shown.length) shown[partial.idx] = partial.candle;
+    // Each setData re-runs the chart's crosshair hit-test against every series.
+    // Mid-update the line/EMA series still hold the previous candle set, so
+    // when the set of times changes (stepping back, older history loading in
+    // on scroll) that test hits a missing bar and the library throws "Value is
+    // null". Drop the hover position first; the next mouse move restores it.
+    chartRef.current?.clearCrosshairPosition();
     // Context candles before "From" look like any other candle -- they're real history.
-    series.setData(shown);
+    // Empty time slots after the latest candle (no prices, so nothing is revealed)
+    // give the space to the right real times, so drawings can reach into it.
+    const barSec = barMsOf(interval) / 1000;
+    const lastTime = Number(shown[shown.length - 1]?.time);
+    const furthest = Math.max(0, ...(managerRef.current?.getAllDrawings() ?? []).flatMap(d => d.anchors.map(a => Number(a.time))));
+    const slots = Math.min(MAX_FUTURE_SLOTS, Math.max(FUTURE_SLOTS, Math.ceil((furthest - lastTime) / barSec) + 50));
+    const future = Number.isFinite(lastTime)
+      ? Array.from({ length: slots }, (_, k) => ({ time: (lastTime + (k + 1) * barSec) as Candle['time'] }))
+      : [];
+    revealedCountRef.current = shown.length;
+    // The chart keeps its view anchored to the last slot, so a change in the
+    // number of empty slots would slide the view; keep it where it was.
+    const slotsChanged = futureSlotsRef.current !== future.length;
+    const viewBefore = slotsChanged ? chartRef.current?.timeScale().getVisibleLogicalRange() : null;
+    futureSlotsRef.current = future.length;
+    series.setData([...shown, ...future]);
+    if (viewBefore) chartRef.current?.timeScale().setVisibleLogicalRange(viewBefore);
     lineRef.current?.setData(shown.map(c => ({ time: c.time, value: c.close })));
     volumeRef.current?.setData(shown.map(c => ({ time: c.time, value: c.volume ?? 0, color: hexAlpha(c.close >= c.open ? up : down, 0.35) })));
     emaRefs.current.forEach((s, k) => s.setData(shown.flatMap((c, i) => {
@@ -687,20 +789,24 @@ export default function Workspace() {
     // view anchored to the latest candle when data changes.)
     if (ts && range && range.from < 0) {
       const span = range.to - range.from;
-      if (shown.length <= span) ts.fitContent();
+      if (shown.length <= span) fitRevealed();
       else ts.setVisibleLogicalRange({ from: 0, to: span });
     }
-  }, [candles, replayIdx, partial, indicatorData, resolvedTheme, indicators.rsi]);
+  }, [candles, replayIdx, partial, indicatorData, resolvedTheme, indicators.rsi, interval, drawingCount]);
 
   // Right-click menu on the chart.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
   /** Back to the default zoom, scrolled to the current candle, with price auto-scaling. */
   const resetChartView = () => {
     const chart = chartRef.current; if (!chart) return;
-    chart.timeScale().resetTimeScale();
+    const ts = chart.timeScale();
+    ts.resetTimeScale();
+    // resetTimeScale scrolls to the very last slot -- the empty future ones -- so
+    // bring the current candle back to the right edge.
+    ts.scrollToPosition(RIGHT_PAD_BARS - futureSlotsRef.current, false);
     chart.priceScale('right').applyOptions({ autoScale: true });
   };
-  const fitAllCandles = () => chartRef.current?.timeScale().fitContent();
+  const fitAllCandles = () => fitRevealed();
   const menuItem = 'tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left';
 
   // ── Older history on demand: prepend the page before what's loaded ────────
@@ -733,23 +839,44 @@ export default function Workspace() {
   // so the chart ends on the current candle with nothing hanging off the right.
   useEffect(() => {
     if (!candlesRef.current || !chartRef.current) return;
-    chartRef.current.timeScale().fitContent();
+    fitRevealed();
   }, [chartEpoch]);
 
-  // Hide drawings anchored past the revealed candle -- no peeking at your own future analysis.
-  // Extending zones instead grow their right edge to the latest revealed candle.
+  // A drawing made at replay time T stays hidden while the replay is before T
+  // -- no peeking at your own future analysis. Its points may reach into the
+  // empty space right of the latest candle (projected levels); that's fine.
+  // Extending zones grow their right edge to the latest revealed candle.
   useEffect(() => {
     const manager = managerRef.current; if (!manager || !candles) return;
     const revealedTime = Number(candles[replayIdx]?.time ?? Number.POSITIVE_INFINITY);
+    const shownTimes = candles.slice(0, replayIdx + 1).map(c => Number(c.time));
+    const revealedTimes = new Set(shownTimes);
+    const firstTime = shownTimes[0];
     for (const d of manager.getAllDrawings()) {
       const extending = d.type === 'rectangle' && d.options.extendRight === true && d.anchors.length === 2;
-      if (extending && Number.isFinite(revealedTime)) {
+      // Not while it's still being drawn: both corners then sit on the first
+      // click, and moving one would lose where the user started.
+      const placing = pendingDrawingRef.current?.drawing.id === d.id;
+      if (extending && !placing && Number.isFinite(revealedTime)) {
         const right = Number(d.anchors[0].time) >= Number(d.anchors[1].time) ? 0 : 1;
         if (Number(d.anchors[right].time) < revealedTime) { d.updateAnchor(right, { ...d.anchors[right], time: revealedTime as Anchor['time'] }); d.requestUpdate(); }
       }
+      // A point placed in the empty future slots can land on a time that turns
+      // out to have no candle (a weekend). Once the replay passes it, move it
+      // onto the candle before, or the chart can't place it.
+      d.anchors.forEach((a, k) => {
+        const t = Number(a.time);
+        if (t > revealedTime || t < firstTime || revealedTimes.has(t)) return;
+        d.updateAnchor(k, { ...a, time: lastAtOrBefore(shownTimes, t) as Anchor['time'] }); d.requestUpdate();
+      });
+      // First seen here: made now (a new drawing) or, if restored, no later
+      // than its last point on the chart.
       const times = d.anchors.map(a => Number(a.time));
-      const maxAnchorTime = !times.length ? 0 : extending ? Math.min(...times) : Math.max(...times);
-      const shouldShow = maxAnchorTime <= revealedTime;
+      if (!drawingMadeAtRef.current.has(d.id)) {
+        const lastPoint = !times.length ? 0 : extending ? Math.min(...times) : Math.max(...times);
+        drawingMadeAtRef.current.set(d.id, Math.min(lastPoint, revealedTime));
+      }
+      const shouldShow = (drawingMadeAtRef.current.get(d.id) ?? 0) <= revealedTime;
       if ((d.options.visible !== false) !== shouldShow) { d.updateOptions({ visible: shouldShow }); d.requestUpdate(); }
     }
   }, [candles, replayIdx, drawingCount]);

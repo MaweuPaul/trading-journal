@@ -80,6 +80,12 @@ async function findTrades(userId, input = {}) {
     if (input.journaled === false && (t.notes || '').trim()) return false;
     return true;
   });
+  // A trade keeps the account name it was synced with, and account labels
+  // change (cTrader gained the broker name later): show the current label so
+  // one account doesn't split into two in breakdowns.
+  const labels = new Map((await TradingAccount.find({ user: userId }).select('accountKey label').lean())
+    .filter(a => a.label).map(a => [a.accountKey, a.label]));
+  for (const t of trades) if (labels.has(t.accountKey)) t.accountName = labels.get(t.accountKey);
   trades.sort((a, b) => new Date(a.closeTime) - new Date(b.closeTime));
   trades.truncated = truncated;
   return trades;
@@ -95,7 +101,7 @@ function publicTrade(t, { full = false } = {}) {
     openTime: iso(t.openTime), closeTime: iso(t.closeTime), durationMinutes: round(t.durationMinutes, 1),
     entryPrice: t.entryPrice, exitPrice: t.exitPrice,
     stopLoss: t.stopLoss ?? null, takeProfit: t.takeProfit ?? null,
-    lots: t.lotSize,
+    lots: typeof t.lotSize === 'number' ? Math.round(t.lotSize * 1e6) / 1e6 : t.lotSize, // older trades were stored with float noise
     netUSD: round(netTradeAmount(t)), pnlUSD: round(t.pnlUSD), commission: round(t.commission), swap: round(t.swap),
     outcome: outcomeOf(t),
     r: round(r), riskUSD: round(t.riskUSD), riskPercent: round(t.riskPercent), plannedRR: t.plannedRR ?? null,
@@ -362,11 +368,18 @@ async function getTradeCandles(userId, id, { interval, barsBefore = 100, barsAft
   // Weekends and closed hours have no bars, so ask for extra time and trim by count.
   const fromMs = (openSec - before * sec * 3 - 3 * 86400) * 1000;
   const toMs = Math.min(Date.now(), (closeSec + after * sec * 3 + 3 * 86400) * 1000);
+  // The padded window can hold several thousand bars on short intervals, past
+  // cTrader's 1500-bar page, so page back far enough to reach the entry.
+  const maxPages = Math.ceil((toMs - fromMs) / 1000 / sec / 1500) + 1;
   const data = await throttledFetch(userId, () => getTrendbars({
-    userId, symbol: trade.symbol, periodLabel: tf, fromMs, toMs,
+    userId, symbol: trade.symbol, periodLabel: tf, fromMs, toMs, maxPages,
     preferredCtidTraderAccountId: String(trade.accountKey || '').startsWith('ctrader:') ? trade.accountKey.slice('ctrader:'.length) : undefined,
   }));
   const all = (data.candles || []).sort((a, b) => a.time - b.time);
+  // Never pass off candles from after the trade as the ones around it.
+  if (!all.length || all[0].time > openSec) {
+    throw new AgentError(`cTrader returned no ${tf} candles reaching back to this trade's entry; try a higher interval.`, 'NO_DATA');
+  }
   const entryIdx = all.findIndex(c => c.time + sec > openSec);
   const exitIdx = all.findIndex(c => c.time + sec > closeSec);
   const start = Math.max(0, (entryIdx < 0 ? all.length : entryIdx) - before);

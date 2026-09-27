@@ -122,7 +122,7 @@ export default function StatsPage() {
   const [range, setRange] = useState('all');
   const [hasToken, setHasToken] = useState(false);
   const [groupBySetup, setGroupBySetup] = useState(false);
-  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady] = useAccountKeyFilter();
+  const [accountKeyFilter, setAccountKeyFilter, accountFilterReady, setKnownAccounts] = useAccountKeyFilter();
   const [tradeAccounts, setTradeAccounts] = useState<TradeAccountOption[]>([]);
 
   useEffect(() => {
@@ -130,7 +130,7 @@ export default function StatsPage() {
     if (!token) return;
     fetch(`${API}/trade-accounts`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('Could not load trading accounts')))
-      .then(body => setTradeAccounts(body.accounts || []))
+      .then(body => { setTradeAccounts(body.accounts || []); setKnownAccounts(body.accounts || [], Number(body.unassignedCount || 0)); })
       .catch(console.error);
   }, []);
 

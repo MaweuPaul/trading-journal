@@ -202,7 +202,9 @@ class CTraderClient {
     if (envelope.payloadType === PAYLOAD_TYPE.ERROR_RES || envelope.payloadType === PAYLOAD_TYPE.ERROR_RES_OA) {
       const ErrorType = this.root.lookupType(RESPONSE_MESSAGE_TYPE[envelope.payloadType]);
       const decoded = ErrorType.decode(envelope.payload);
-      waiter.reject(new CTraderApiError(decoded.errorCode, decoded.description));
+      const apiError = new CTraderApiError(decoded.errorCode, decoded.description);
+      if (decoded.retryAfter) apiError.retryAfter = Number(decoded.retryAfter); // seconds, sent with rate limits
+      waiter.reject(apiError);
       return;
     }
 

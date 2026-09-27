@@ -105,3 +105,27 @@ test('journal access is opt-in on the consent page; deny sends access_denied bac
   assert.equal(denied.url.searchParams.get('error'), 'access_denied');
   assert.equal(denied.code, null);
 });
+
+test('plain access keys never store refreshHash (so the sparse unique index skips them)', () => {
+  // With `default: null` every key after the first collided on
+  // refreshHash: null in MongoDB (E11000) -- creating a second key failed.
+  const ApiKey = require('../models/ApiKey');
+  const a = new ApiKey({ user: H.newUserId(), name: 'a', keyHash: 'h1', prefix: 'tjk_a' }).toObject();
+  const b = new ApiKey({ user: H.newUserId(), name: 'b', keyHash: 'h2', prefix: 'tjk_b' }).toObject();
+  assert.equal('refreshHash' in a, false);
+  assert.equal('refreshHash' in b, false);
+});
+
+test('loopback redirects accept any port (RFC 8252); other redirects must match exactly', async () => {
+  const res = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Codex', redirect_uris: ['http://127.0.0.1:8765/callback'] }) });
+  const { client_id: clientId } = await res.json();
+  const info = uri => owner(`/oauth/authorize-info?client_id=${clientId}&redirect_uri=${encodeURIComponent(uri)}`);
+  assert.equal((await info('http://127.0.0.1:8765/callback')).status, 200);
+  assert.equal((await info('http://127.0.0.1:51234/callback')).status, 200, 'another port');
+  assert.equal((await info('http://localhost:51234/callback')).status, 200, 'localhost spelling');
+  assert.equal((await info('http://127.0.0.1:8765/other')).status, 400, 'a different path');
+  assert.equal((await info('http://evil.example:8765/callback')).status, 400, 'not loopback');
+  // An https redirect stays exact.
+  const https = await register();
+  assert.equal((await owner(`/oauth/authorize-info?client_id=${https}&redirect_uri=${encodeURIComponent(REDIRECT.replace('claude.ai', 'claude.ai:8443'))}`)).status, 400);
+});

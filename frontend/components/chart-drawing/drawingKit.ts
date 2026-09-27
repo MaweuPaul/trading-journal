@@ -235,3 +235,33 @@ export function snapToCandles(drawings: SerializedDrawing[], candleTimes: number
   };
   return drawings.map(d => ({ ...d, anchors: d.anchors.map(a => ({ ...a, time: snap(Number(a.time)) as SerializedDrawing['anchors'][number]['time'] })) }));
 }
+
+// ── Room to draw past the last candle ────────────────────────────────────────
+// The chart only has times where it has data, so drawings stop at the last
+// candle. Empty time slots after it (no prices) give the space on the right
+// real times, like Backtest does.
+export const FUTURE_SLOTS = 500;
+const MAX_FUTURE_SLOTS = 20_000;
+
+/** Typical bar length in seconds (smallest gap among the last candles). */
+export function barSeconds(times: number[]) {
+  let best = Infinity;
+  for (let i = Math.max(1, times.length - 20); i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (gap > 0 && gap < best) best = gap;
+  }
+  return Number.isFinite(best) ? best : 60;
+}
+
+/**
+ * Times for the empty slots after `lastTime`: the known upcoming times first
+ * (Replay's unrevealed candles), then evenly spaced ones, at least `min` in all
+ * and enough to reach the furthest drawing.
+ */
+export function futureSlotTimes(lastTime: number, bar: number, drawings: SerializedDrawing[], upcoming: number[] = [], min = FUTURE_SLOTS) {
+  const furthest = Math.max(0, ...drawings.flatMap(d => d.anchors.map(a => Number(a.time))));
+  const out = upcoming.slice(0, MAX_FUTURE_SLOTS);
+  let t = out.length ? out[out.length - 1] : lastTime;
+  while (out.length < MAX_FUTURE_SLOTS && (out.length < min || t < furthest + 50 * bar)) { t += bar; out.push(t); }
+  return out;
+}

@@ -37,7 +37,7 @@ export interface ChartDrawings {
   exportDrawings: () => SerializedDrawing[];
   /** Drawings as shown right now (hidden ones marked not visible), for overlays. */
   shownDrawings: () => SerializedDrawing[];
-  /** Hide drawings that reach past this time (Replay: nothing from candles not yet revealed); null shows all. */
+  /** Hide drawings that start after this time (Replay: nothing from candles not yet revealed); null shows all. */
   setRevealLimit: (time: number | null) => void;
   replaceDrawings: (drawings: SerializedDrawing[]) => void;
   revision: number;
@@ -93,7 +93,8 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     const m = managerRef.current; if (!m) return;
     const limit = revealLimitRef.current, hidden = revealHiddenRef.current;
     for (const d of m.getAllDrawings()) {
-      const hide = limit != null && d.anchors.some(a => Number(a.time) > limit);
+      // Hidden while its first point is still in the future (a line may extend past it).
+      const hide = limit != null && d.anchors.length > 0 && Math.min(...d.anchors.map(a => Number(a.time))) > limit;
       if (hide && !hidden.has(d.id) && d.options.visible !== false) { hidden.add(d.id); d.updateOptions({ visible: false }); d.requestUpdate(); }
       else if (!hide && hidden.has(d.id)) { hidden.delete(d.id); d.updateOptions({ visible: true }); d.requestUpdate(); }
     }

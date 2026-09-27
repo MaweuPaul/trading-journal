@@ -13,7 +13,7 @@ import { useTheme } from './ThemeProvider';
 import { useChartDrawings } from './chart-drawing/useChartDrawings';
 import ChartDrawingToolbar from './chart-drawing/ChartDrawingToolbar';
 import ChartDrawingLayer from './chart-drawing/ChartDrawingLayer';
-import { snapToCandles, splitAnnotations, toDrawingEntries } from './chart-drawing/drawingKit';
+import { barSeconds, futureSlotTimes, snapToCandles, splitAnnotations, toDrawingEntries } from './chart-drawing/drawingKit';
 
 const API = '/api';
 
@@ -119,6 +119,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [replayIdx, setReplayIdx] = useState(0);
+  const replayIdxRef = useRef(0);
+  useEffect(() => { replayIdxRef.current = replayIdx; }, [replayIdx]);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [autoPauseMarkers, setAutoPauseMarkers] = useState(true);
@@ -130,6 +132,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const drawingsRef = useRef<SerializedDrawing[]>([]);
   const [drawings, setDrawings] = useState<SerializedDrawing[]>([]);
   const candlesRef = useRef<Candle[] | null>(null);
+  // Empty time slots after the revealed candle (so drawings can reach past it); -1 = new chart.
+  const futureSlotsRef = useRef(-1);
   const [annotationSaveState, setAnnotationSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
   const [annotationSaveError, setAnnotationSaveError] = useState('');
   const [loadedAnnotationKey, setLoadedAnnotationKey] = useState('');
@@ -188,7 +192,8 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
   const engine = useChartDrawings({
     onChange: next => { drawingsRef.current = next; setDrawings(next); },
-    getCandles: () => candlesRef.current,
+    // The magnet only snaps to candles already revealed.
+    getCandles: () => candlesRef.current?.slice(0, replayIdxRef.current + 1),
   });
   const { attach, replaceDrawings, setRevealLimit, activateTool } = engine;
 
@@ -420,6 +425,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       rightPriceScale: { borderColor: chartTheme.grid },
     });
     chartRef.current = chart;
+    futureSlotsRef.current = -1;
     const series = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
       wickUpColor: '#10b981', wickDownColor: '#ef4444',
@@ -458,7 +464,19 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
 
   useEffect(() => {
     if (!replayData || !seriesRef.current || !markersRef.current) return;
-    seriesRef.current.setData(replayData.candles.slice(0, replayIdx + 1));
+    // Revealed candles, then empty slots: the upcoming candles' real times (no
+    // prices, so nothing is revealed), then evenly spaced ones past the end.
+    const times = replayData.candles.map(c => Number(c.time));
+    const slots = futureSlotTimes(times[replayIdx], barSeconds(times), drawingsRef.current, times.slice(replayIdx + 1));
+    const chart = chartRef.current;
+    const firstData = futureSlotsRef.current < 0;
+    // The chart keeps its view anchored to the last slot, so a change in the
+    // number of slots would slide it; keep the view where it was.
+    const viewBefore = !firstData && futureSlotsRef.current !== slots.length ? chart?.timeScale().getVisibleLogicalRange() : null;
+    futureSlotsRef.current = slots.length;
+    seriesRef.current.setData([...replayData.candles.slice(0, replayIdx + 1), ...slots.map(t => ({ time: t as UTCTimestamp }))]);
+    if (viewBefore) chart?.timeScale().setVisibleLogicalRange(viewBefore);
+    else if (firstData) chart?.timeScale().setVisibleLogicalRange({ from: Math.max(0, replayIdx - 110), to: replayIdx + 6 });
     const markers: SeriesMarker<Time>[] = [];
     if (replayIdx >= replayData.entryIndex) {
       markers.push({ time: replayData.candles[replayData.entryIndex].time as UTCTimestamp,

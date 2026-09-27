@@ -8,7 +8,7 @@ import { useTheme } from './ThemeProvider';
 import { useChartDrawings } from './chart-drawing/useChartDrawings';
 import ChartDrawingToolbar from './chart-drawing/ChartDrawingToolbar';
 import ChartDrawingLayer from './chart-drawing/ChartDrawingLayer';
-import { snapToCandles, splitAnnotations, toDrawingEntries } from './chart-drawing/drawingKit';
+import { barSeconds, futureSlotTimes, snapToCandles, splitAnnotations, toDrawingEntries } from './chart-drawing/drawingKit';
 
 const API = '/api';
 
@@ -114,8 +114,11 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
       wickUpColor: '#10b981', wickDownColor: '#ef4444',
     });
     seriesRef.current = series;
-    series.setData(candles);
-    chart.timeScale().fitContent();
+    const times = candles.map(c => Number(c.time));
+    const slots = futureSlotTimes(times[times.length - 1], barSeconds(times), drawingsRef.current);
+    series.setData([...candles, ...slots.map(t => ({ time: t as UTCTimestamp }))]);
+    // Fit the candles, not the empty slots after them.
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: candles.length + 4 });
     const detach = attach(chart, series, el, snapToCandles(drawingsRef.current, candles.map(c => Number(c.time))));
     const syncCanvas = () => { if (canvasRef.current) { canvasRef.current.width = el.clientWidth; canvasRef.current.height = el.clientHeight; } };
     syncCanvas();

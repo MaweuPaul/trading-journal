@@ -25,6 +25,8 @@ import {
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
+import DrawingTextEditor from '../backtest-tools/DrawingTextEditor';
+import DrawingTextOverlay from '../backtest-tools/DrawingTextOverlay';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
 // `type` is the lightweight-charts-drawing registry key.
@@ -121,6 +123,28 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
+interface DrawingTextEdit { drawingId: string; drawingName: string; initialValue: string; isNew: boolean }
+type DrawingWithText = IDrawing & {
+  style: IDrawing['style'] & { drawingText?: string };
+  getText?: () => string;
+  setText?: (text: string) => void;
+};
+
+function getDrawingText(drawing: IDrawing) {
+  const withText = drawing as DrawingWithText;
+  return (withText.getText?.() ?? withText.style.drawingText ?? '').trim();
+}
+
+function setDrawingText(drawing: IDrawing, text: string) {
+  const withText = drawing as DrawingWithText;
+  if (drawing.type === 'text-annotation' && withText.setText) withText.setText(text);
+  else drawing.updateStyle({ drawingText: text } as DrawingWithText['style']);
+  drawing.requestUpdate();
+}
+
+function drawingDisplayName(type: string) {
+  return WORKSPACE_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
+}
 
 function drawingFactory(type: string, data: SerializedDrawing) {
   return getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, data.options);
@@ -241,6 +265,8 @@ export default function Workspace() {
   useEffect(() => { drawColorRef.current = drawColor; }, [drawColor]);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingCount, setDrawingCount] = useState(0);
+  const [drawingRevision, setDrawingRevision] = useState(0);
+  const [drawingTextEdit, setDrawingTextEdit] = useState<DrawingTextEdit | null>(null);
   const drawingHistoryRef = useRef<SerializedDrawing[][]>([]);
   const [historyDepth, setHistoryDepth] = useState(0);
   const pendingDrawingRef = useRef<PendingDrawing | null>(null);
@@ -338,7 +364,7 @@ export default function Workspace() {
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount]);
+  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision]);
 
   // Re-suggest the timeframe when the range changes (cTrader caps a request
   // at 1500 bars) unless the trader picked one explicitly.
@@ -422,7 +448,12 @@ export default function Workspace() {
     const manager = managerRef.current;
     if (manager && selectedDrawingId) {
       const d = manager.getDrawing(selectedDrawingId);
-      if (d) { pushHistorySnapshot(); d.updateStyle({ lineColor: color }); d.requestUpdate(); }
+      if (d) {
+        pushHistorySnapshot();
+        d.updateStyle({ lineColor: color });
+        d.requestUpdate();
+        setDrawingRevision(revision => revision + 1);
+      }
     }
   };
 
@@ -431,6 +462,41 @@ export default function Workspace() {
   // instead of reading them off state -- state set just before this is
   // called (setSymbol etc.) hasn't committed yet, so this closure would
   // otherwise still see the *previous* render's values.
+  const editSelectedDrawingText = () => {
+    const drawing = selectedDrawingId ? managerRef.current?.getDrawing(selectedDrawingId) : null;
+    if (!drawing) return;
+    setDrawingTextEdit({
+      drawingId: drawing.id,
+      drawingName: drawingDisplayName(drawing.type),
+      initialValue: getDrawingText(drawing),
+      isNew: false,
+    });
+  };
+  const cancelDrawingText = () => {
+    const edit = drawingTextEdit;
+    setDrawingTextEdit(null);
+    if (!edit?.isNew) return;
+    managerRef.current?.removeDrawing(edit.drawingId);
+    setSelectedDrawingId(null);
+  };
+  const saveDrawingText = (value: string) => {
+    const edit = drawingTextEdit;
+    const manager = managerRef.current;
+    const drawing = edit ? manager?.getDrawing(edit.drawingId) : null;
+    setDrawingTextEdit(null);
+    if (!edit || !manager || !drawing) return;
+    if (!edit.isNew) pushHistorySnapshot();
+    if (!value && drawing.type === 'text-annotation') {
+      manager.removeDrawing(drawing.id);
+      setSelectedDrawingId(null);
+      return;
+    }
+    setDrawingText(drawing, value);
+    manager.selectDrawing(drawing.id);
+    setSelectedDrawingId(drawing.id);
+    setDrawingRevision(revision => revision + 1);
+  };
+
   const loadChartWithInterval = useCallback((overrideInterval: string, overrides?: { symbol?: string; fromDate?: string; toDate?: string }) => {
     const trimmed = (overrides?.symbol ?? symbol).trim().toUpperCase();
     if (!trimmed) { setCandles(null); setError(''); return; }
@@ -605,16 +671,28 @@ export default function Workspace() {
     manager.attach(chart, series, el);
     managerRef.current = manager;
 
-    // Resizing drawings. The drawing library drags an anchor on mousedown, but
-    // doesn't stop the chart from panning at the same time (so the handle
-    // lands somewhere else), and a rectangle only has handles on the two
-    // corners it was drawn from. This runs first (capture phase) to fix both.
+    // The package handles individual anchors. Capture selected drawing bodies
+    // here as well so traders can translate an entire shape in one drag.
+    let labelFrame = 0;
+    const refreshDrawingOverlay = () => {
+      cancelAnimationFrame(labelFrame);
+      labelFrame = requestAnimationFrame(() => setDrawingRevision(revision => revision + 1));
+    };
     let draggingHandle = false;
+    let draggingDrawing: {
+      drawing: IDrawing;
+      startX: number;
+      startY: number;
+      anchors: Anchor[];
+      moved: boolean;
+      historyCaptured: boolean;
+    } | null = null;
     const onHandleDown = (ev: MouseEvent) => {
       const r = el.getBoundingClientRect();
       const pt = { x: ev.clientX - r.left, y: ev.clientY - r.top };
       const sel = manager.getSelectedDrawing();
-      if (sel && sel.type === 'rectangle' && sel.anchors.length === 2 && !sel.options.locked && manager.hitTestAnchor(pt) === null) {
+      const initialAnchorHit = manager.hitTestAnchor(pt);
+      if (sel && sel.type === 'rectangle' && sel.anchors.length === 2 && !sel.options.locked && initialAnchorHit === null) {
         // Grabbed one of the two undrawn corners? Swap the anchors' prices:
         // same rectangle, but now a real handle sits under the cursor.
         const [a, b] = sel.anchors;
@@ -629,24 +707,98 @@ export default function Workspace() {
           }
         }
       }
-      if (manager.hitTestAnchor(pt) !== null) {
+      const anchorHit = manager.hitTestAnchor(pt);
+      if (anchorHit !== null) {
         draggingHandle = true;
         chart.applyOptions({ handleScroll: false, handleScale: false });
+        return;
       }
+      const viewport = sel?.getViewport();
+      if (!sel || sel.options.locked || !viewport || !sel.testHit(pt, viewport)) return;
+      draggingDrawing = {
+        drawing: sel,
+        startX: ev.clientX,
+        startY: ev.clientY,
+        anchors: sel.anchors.map(anchor => ({ ...anchor })),
+        moved: false,
+        historyCaptured: false,
+      };
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      el.style.cursor = 'move';
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
     };
-    const onHandleUp = () => {
-      if (!draggingHandle) return;
+    const onDrawingMove = (ev: MouseEvent) => {
+      const drag = draggingDrawing;
+      if (!drag) return;
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      if (!drag.historyCaptured) {
+        pushHistorySnapshot();
+        drag.historyCaptured = true;
+      }
+      const translated: Anchor[] = [];
+      for (const anchor of drag.anchors) {
+        const anchorX = chart.timeScale().timeToCoordinate(anchor.time);
+        const anchorY = series.priceToCoordinate(anchor.price);
+        if (anchorX == null || anchorY == null) return;
+        const time = chart.timeScale().coordinateToTime(anchorX + dx);
+        const price = series.coordinateToPrice(anchorY + dy);
+        if (time == null || price == null) return;
+        translated.push({ time, price });
+      }
+      if (drag.drawing.type === 'rectangle' && drag.drawing.options.extendRight) {
+        drag.drawing.updateOptions({ extendRight: false });
+      }
+      drag.drawing.setAnchors(translated);
+      drag.drawing.requestUpdate();
+      drag.moved = true;
+      refreshDrawingOverlay();
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    };
+    const onInteractionUp = () => {
+      if (!draggingHandle && !draggingDrawing) return;
+      const movedDrawing = draggingDrawing?.drawing ?? null;
       draggingHandle = false;
+      draggingDrawing = null;
       chart.applyOptions({ handleScroll: true, handleScale: true });
+      el.style.cursor = '';
+      if (movedDrawing) {
+        manager.selectDrawing(movedDrawing.id);
+        setSelectedDrawingId(movedDrawing.id);
+      }
+      refreshDrawingOverlay();
+    };
+    const onDrawingDoubleClick = (ev: MouseEvent) => {
+      const r = el.getBoundingClientRect();
+      const drawing = manager.hitTest({ x: ev.clientX - r.left, y: ev.clientY - r.top });
+      if (!drawing) return;
+      manager.selectDrawing(drawing.id);
+      setDrawingTextEdit({
+        drawingId: drawing.id,
+        drawingName: drawingDisplayName(drawing.type),
+        initialValue: getDrawingText(drawing),
+        isNew: false,
+      });
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
     };
     el.addEventListener('mousedown', onHandleDown, true);
-    window.addEventListener('mouseup', onHandleUp);
+    el.addEventListener('dblclick', onDrawingDoubleClick, true);
+    window.addEventListener('mousemove', onDrawingMove, true);
+    window.addEventListener('mouseup', onInteractionUp, true);
     const restoring = pendingRestoreRef.current;
     if (restoring) {
       if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current, replayIdx, barMsOf(interval) / 1000), drawingFactory);
       pendingRestoreRef.current = null;
+      refreshDrawingOverlay();
     }
-    const recount = () => setDrawingCount(manager.getAllDrawings().length);
+    const recount = () => {
+      setDrawingCount(manager.getAllDrawings().length);
+      refreshDrawingOverlay();
+    };
     const unsubscribers = [
       manager.on('drawing:added', event => {
         if (event.drawing) {
@@ -654,9 +806,12 @@ export default function Workspace() {
           // Zones extend with the replay: the right edge follows the latest candle (see the reveal effect).
           if (event.drawing.type === 'rectangle' && !event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: true });
           if (event.drawing.type === 'text-annotation') {
-            const note = (window.prompt('Text for this note:', '') || '').trim().slice(0, 80);
-            if (note) { (event.drawing as unknown as { setText: (t: string) => void }).setText(note); event.drawing.requestUpdate(); }
-            else manager.removeDrawing(event.drawing.id);
+            setDrawingTextEdit({
+              drawingId: event.drawing.id,
+              drawingName: drawingDisplayName(event.drawing.type),
+              initialValue: getDrawingText(event.drawing),
+              isNew: true,
+            });
           }
         }
         recount();
@@ -666,6 +821,7 @@ export default function Workspace() {
       // stays exactly where you put it.
       manager.on('drawing:updated', event => {
         if (event.drawing?.type === 'rectangle' && event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: false });
+        refreshDrawingOverlay();
       }),
       manager.on('drawing:removed', recount),
       manager.on('drawing:cleared', recount),
@@ -674,6 +830,7 @@ export default function Workspace() {
     ];
 
     const onCrosshair = (p: MouseEventParams<Time>) => {
+      refreshDrawingOverlay();
       if (p.time == null) { setHoverIdx(null); return; }
       const all = candlesRef.current;
       setHoverIdx(all ? nearestCandleIndex(all, Number(p.time)) : null);
@@ -683,17 +840,20 @@ export default function Workspace() {
     const syncCanvas = () => { if (canvasRef.current) { canvasRef.current.width = el.clientWidth; canvasRef.current.height = el.clientHeight; } };
     syncCanvas();
     const redraw = () => requestAnimationFrame(() => redrawCanvasRef.current());
-    const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); syncCanvas(); redraw(); });
+    const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); syncCanvas(); redraw(); refreshDrawingOverlay(); });
     ro.observe(el);
     // Scrolling near the left edge pulls in older history (the past is open;
     // only the future is hidden).
-    const onRange = (r: { from: number; to: number } | null) => { redraw(); if (r && r.from < 30) loadOlderRef.current(); };
+    const onRange = (r: { from: number; to: number } | null) => { redraw(); refreshDrawingOverlay(); if (r && r.from < 30) loadOlderRef.current(); };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
     return () => {
       unsubscribers.forEach(unsub => unsub());
       chart.unsubscribeCrosshairMove(onCrosshair);
       el.removeEventListener('mousedown', onHandleDown, true);
-      window.removeEventListener('mouseup', onHandleUp);
+      el.removeEventListener('dblclick', onDrawingDoubleClick, true);
+      window.removeEventListener('mousemove', onDrawingMove, true);
+      window.removeEventListener('mouseup', onInteractionUp, true);
+      cancelAnimationFrame(labelFrame);
       manager.detach();
       managerRef.current = null;
       ro.disconnect();
@@ -1811,10 +1971,16 @@ export default function Workspace() {
             <Icon name="all_inclusive" className="tw:text-[20px]" />
           </button>
           {selectedDrawingId && (
-            <button type="button" onClick={deleteSelectedDrawing} title="Delete selected drawing" aria-label="Delete selected drawing"
-              className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error">
-              <Icon name="delete" className="tw:text-[20px]" />
-            </button>
+            <>
+              <button type="button" onClick={editSelectedDrawingText} title="Add or edit drawing text" aria-label="Add or edit drawing text"
+                className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-primary/15 tw:hover:text-primary">
+                <Icon name="edit_note" className="tw:text-[20px]" />
+              </button>
+              <button type="button" onClick={deleteSelectedDrawing} title="Delete selected drawing" aria-label="Delete selected drawing"
+                className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error">
+                <Icon name="delete" className="tw:text-[20px]" />
+              </button>
+            </>
           )}
           <button type="button" onClick={undoDrawing} disabled={!historyDepth} title="Undo" aria-label="Undo drawing"
             className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface tw:disabled:opacity-40">
@@ -1843,6 +2009,22 @@ export default function Workspace() {
               setChartMenu({ x: e.clientX - r.left, y: e.clientY - r.top });
             }}>
           <div ref={chartContainerRef} className="tw:absolute tw:inset-0" />
+          <DrawingTextOverlay
+            chart={chartRef.current}
+            series={seriesRef.current}
+            drawings={managerRef.current?.exportDrawings() ?? []}
+            revision={drawingRevision}
+          />
+          {drawingTextEdit && (
+            <DrawingTextEditor
+              key={drawingTextEdit.drawingId}
+              drawingName={drawingTextEdit.drawingName}
+              initialValue={drawingTextEdit.initialValue}
+              isNew={drawingTextEdit.isNew}
+              onSave={saveDrawingText}
+              onCancel={cancelDrawingText}
+            />
+          )}
           {chartMenu && (
             <>
               <div className="tw:fixed tw:inset-0 tw:z-40" onMouseDown={() => setChartMenu(null)} onContextMenu={e => { e.preventDefault(); setChartMenu(null); }} />

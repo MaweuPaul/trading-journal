@@ -126,7 +126,9 @@ Requirements: cTrader connected on the Accounts page (it supplies the candles), 
 
 On the **Accounts** page, under **AI agent access**, enter a name (e.g. "Claude Code laptop") and click **Create access key**. The key (`tjk_…`) is shown **once**, together with ready-to-copy connection settings for Claude Code and Claude Desktop, with the key filled in. Only a hash is stored, so a lost key can't be recovered: revoke it and create a new one.
 
-An access key only works on `/api/mcp`. It can't read or change anything else in the journal, and revoking it cuts access off on the very next request.
+An access key only works on `/api/mcp`. Revoking it cuts access off on the very next request.
+
+**Journal access (optional).** Tick *Also let this key read my real trade journal* when creating a key, or the **Journal access** box next to an existing key, to let the agent review your real trading as well (see [Reviewing your real trades](#reviewing-your-real-trades)). It is read-only and off by default: without it, a key can't see your real trades at all.
 
 The MCP URL is your **frontend** address plus `/api/mcp`, e.g. `https://your-journal.example.com/api/mcp`, or `http://localhost:3000/api/mcp` locally. The frontend forwards it to the backend like every other `/api` route.
 
@@ -226,6 +228,21 @@ Agents can refine a strategy from its backtest results without fooling themselve
 Ask your agent, e.g.: *"Research my ORB NY Open strategy: hold out from 2026-03-01, find what separates its winners from its losers before that date, propose one rule change, and test it on the held-out period."*
 
 `backend/scripts/orb_ny_open_mcp.js` is a worked example client that runs the ORB New York Open strategy through these tools and records its entry conditions (`TJ_MCP_URL=… TJ_KEY=… node backend/scripts/orb_ny_open_mcp.js --symbol XAUUSD --from 2025-06-02 --to 2025-09-01`).
+
+### Reviewing your real trades
+
+A key with **journal access** also gets read-only tools over your real (synced or manually entered) trades, so an agent can act as a trading coach with your actual data in front of it:
+
+| Tool | What it does |
+|------|--------------|
+| `list_journal_accounts` | Your accounts with trade counts, net P&L and date range |
+| `list_trades` | Real trades with results net of commission and swap, R from the broker's stop, setup, tags, emotion, grades and exit reasons; filter by account, symbol, direction, date, outcome, setup, tag, emotion, exit reason or whether you journaled it |
+| `get_trade` | One trade in full: notes, checklists (which rules you broke), playbook answers, re-entry reason, replay review, and optionally up to 4 screenshots as images |
+| `get_journal_metrics` | Win rate, net P&L, average win/loss, profit factor, drawdown, loss streak and R, each with a sample-size level and 95% ranges; broken down by symbol, direction, account, setup, confirmation, tag, emotion, exit reason/trigger, grades, confidence rating, playbook, rules followed, re-entry, manual intervention, weekday, hour, session, month, hold time or outcome |
+| `get_playbooks` | Your written playbooks (latest version), to hold trades against |
+| `get_trade_candles` | Candles from cTrader before, during and after a trade, with its entry, exit, stop and target |
+
+Nothing in the journal can be changed through these tools. Ask, e.g.: *"Review my live trades from the last 3 months: where am I losing money, and is it the setup or my execution? Show me examples."*
 
 ### Troubleshooting
 
@@ -472,7 +489,7 @@ All routes below require a JWT except where noted. `accountKey` filters (`mt5:<i
 | `/api/investor/login` | POST *(public, rate-limited)* | Exchange an investor account number + password for a scoped read-only token |
 | `/api/investor/summary` / `/api/investor/trades` | GET *(investor token)* | Balance, headline stats, equity curve, and a financial-fields-only trade list |
 | `/api/api-keys` | GET / POST | List the caller's AI agent access keys, or create one (the plaintext key is returned once) |
-| `/api/api-keys/:id` | DELETE | Revoke an access key |
+| `/api/api-keys/:id` | PATCH / DELETE | Turn journal access on or off (`{ "journal": true }`); revoke an access key |
 | `/api/mcp` | POST *(access key)* | MCP server for AI agent backtesting (stateless Streamable HTTP); see [AI Agent Backtesting](#ai-agent-backtesting-mcp) |
 | `/api/investor/trades/:id/replay` | GET *(investor token)* | The same historical candles as owner Replay, sanitized to chart-only fields (no notes/emotion/grade) |
 

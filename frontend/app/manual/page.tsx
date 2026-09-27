@@ -391,9 +391,10 @@ export default function ManualPage() {
             <ol className="manual-steps">
               <li><b>Open Accounts</b><span className="d">Scroll to the bottom, to the <b>AI agent access</b> card.</span></li>
               <li><b>Name the key</b><span className="d">Use the device or agent it&apos;s for, e.g. &quot;Claude Desktop laptop&quot;. One key per device makes it easy to revoke just one later.</span></li>
+              <li><b>Journal access (optional)</b><span className="d">Tick <b>Also let this key read my real trade journal</b> if you want the agent to review your real trades too (see <b>Reviewing your real trades</b> below). You can switch it on or off later with the <b>Journal access</b> box next to the key.</span></li>
               <li><b>Click Create access key</b><span className="d">The key (it starts with <code>tjk_</code>) appears <b>once</b>, together with a ready-to-copy Claude Code command and Claude Desktop config with the key already filled in. Copy what you need before clicking <b>I&apos;ve saved it</b>.</span></li>
             </ol>
-            <Callout icon="Security" warn>Treat the key like a password. It can only reach the backtest tools (it can&apos;t read or change your trades, accounts or anything else), but anyone holding it can run backtests as you. Only a fingerprint is stored, so a lost key can&apos;t be shown again: revoke it and create a new one.</Callout>
+            <Callout icon="Security" warn>Treat the key like a password. Without journal access it can only reach the backtest tools (it can&apos;t see your real trades, accounts or anything else); with journal access it can also read, but never change, your real trades. Anyone holding it can do the same. Only a fingerprint is stored, so a lost key can&apos;t be shown again: revoke it and create a new one.</Callout>
 
             <div className="manual-sub">Step 2a · Connect Claude Code</div>
             <ol className="manual-steps">
@@ -469,7 +470,7 @@ export default function ManualPage() {
               </table>
             </div>
 
-            <Callout icon="Access">An agent can <b>read</b> your whole Backtest Log and <b>add to or edit</b> journal fields on your backtests (it&apos;s told to add notes rather than overwrite yours), but it <b>can&apos;t delete</b> your backtests or change their prices and results. It can&apos;t reach anything outside Backtest: no real trades, accounts or settings.</Callout>
+            <Callout icon="Access">An agent can <b>read</b> your whole Backtest Log and <b>add to or edit</b> journal fields on your backtests (it&apos;s told to add notes rather than overwrite yours), but it <b>can&apos;t delete</b> your backtests or change their prices and results. Without journal access it can&apos;t reach anything outside Backtest: no real trades, accounts or settings.</Callout>
             <div className="manual-sub">Letting the agent improve a strategy</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>The agent can learn from its own results, as long as it doesn&apos;t judge a change on the same data it tuned it on. Ask it to follow this loop:</p>
             <ol className="manual-steps">
@@ -479,6 +480,15 @@ export default function ManualPage() {
               <li><b>Test it once on the held-out data</b><span className="d">Keep the change only if it holds up there. Every look at held-out results is counted, and versions made after peeking are flagged.</span></li>
             </ol>
             <Callout icon="Note">This doesn&apos;t retrain the AI model itself. It gives the agent a disciplined, recorded way to learn from your data, and keeps you from trusting an improvement that only exists in the data it was fitted to.</Callout>
+            <div className="manual-sub">Reviewing your real trades</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>With <b>journal access</b> on, the agent can read your real trades the way a coach would, with your actual data in front of it. It is read-only: it can&apos;t edit, tag or delete anything.</p>
+            <ul className="manual-feature-list">
+              <li><b>Trades</b>: list and filter them (account, symbol, date, win/loss, setup, tag, emotion, exit reason), and open one in full with your notes, checklists, playbook answers, replay review and screenshots.</li>
+              <li><b>Statistics</b>: the same numbers as your Stats pages, net of commission and swap, with likely ranges, split by setup, session, emotion, grades, rules followed, hold time and more.</li>
+              <li><b>Price action</b>: candles from cTrader around any trade, with its entry, exit, stop and target, so it can see what the market did.</li>
+              <li><b>Your playbooks</b>: the rules you wrote, to hold each trade against.</li>
+            </ul>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Review my live trades from the last 3 months. Where am I losing money, is it the setup or my execution? Show me the trades that prove it.&quot;</i></p>
             <div className="manual-sub">Limits</div>
             <KvGrid items={[
               { label: 'Active sessions', value: '10 per user' },

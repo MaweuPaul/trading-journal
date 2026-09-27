@@ -995,7 +995,7 @@ module.exports = {
   startSession, getCandles, step, openTrade, closeTrade, discardTrade, logTrade,
   setTimeframe, getState, listSessions, endSession,
   placeOrder, cancelOrder, modifyTrade, getIndicators,
-  listStrategies, createStrategy, listSymbols,
+  listStrategies, createStrategy, listSymbols, throttledFetch,
   // exported for tests
   normalizeFeatures,
   _internal: { missingRanges, addRange, mergeCandles, firstHit, levelsHit, cache, viewOf, round, plain },

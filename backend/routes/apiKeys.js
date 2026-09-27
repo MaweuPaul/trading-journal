@@ -20,7 +20,7 @@ function offlineResponse(res) {
 
 const MAX_KEYS = 20;
 const publicKey = k => ({
-  _id: k._id, name: k.name, prefix: k.prefix, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: Boolean(k.revokedAt), revokedAt: k.revokedAt,
+  _id: k._id, name: k.name, prefix: k.prefix, journal: (k.scopes || []).includes('journal'), createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: Boolean(k.revokedAt), revokedAt: k.revokedAt,
 });
 
 router.get('/api-keys', auth, ownerOnly, async (req, res) => {
@@ -46,11 +46,31 @@ router.post('/api-keys', auth, ownerOnly, async (req, res) => {
       name,
       keyHash: crypto.createHash('sha256').update(key).digest('hex'),
       prefix: key.slice(0, 10),
+      // Reading the real trade journal is opt-in per key.
+      scopes: req.body.journal === true ? ['backtest', 'journal'] : ['backtest'],
     });
     // The plaintext is returned this once and never stored.
     res.status(201).json({ ...publicKey(doc), key });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Could not create access key' });
+  }
+});
+
+// Turn journal (real trades, read-only) access on or off for a key.
+router.patch('/api-keys/:id', auth, ownerOnly, async (req, res) => {
+  if (isOffline(req)) return offlineResponse(res);
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Access key not found' });
+    if (typeof req.body.journal !== 'boolean') return res.status(400).json({ error: 'Send { "journal": true } or { "journal": false }.' });
+    const doc = await ApiKey.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.userId, revokedAt: null },
+      { $set: { scopes: req.body.journal ? ['backtest', 'journal'] : ['backtest'] } },
+      { new: true },
+    );
+    if (!doc) return res.status(404).json({ error: 'Access key not found or revoked' });
+    res.json(publicKey(doc));
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Could not update access key' });
   }
 });
 

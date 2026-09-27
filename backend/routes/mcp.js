@@ -9,6 +9,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const ApiKey = require('../models/ApiKey');
 const replay = require('../lib/agentReplay');
 const backtestLog = require('../lib/agentBacktestLog');
+const journal = require('../lib/agentJournal');
 
 // POST /api/mcp -- a Model Context Protocol server (stateless Streamable HTTP)
 // that lets AI agents backtest on the owner's behalf: replay history bar by
@@ -88,7 +89,8 @@ const timeframe = z.enum(['1min', '5min', '15min', '1h', '4h', '1day']);
 const sessionId = z.string().describe('Session id from start_session or list_sessions.');
 const timeInput = z.union([z.string(), z.number()]);
 
-function buildServer(userId, apiKeyId) {
+function buildServer(userId, apiKeyId, scopes = ['backtest']) {
+  const journalAccess = scopes.includes('journal');
   const server = new McpServer(
     { name: 'tradejournal-backtest', version: '1.0.0' },
     {
@@ -101,6 +103,7 @@ function buildServer(userId, apiKeyId) {
         'Prefer step with bars/untilPrice/untilCloseAbove/untilCloseBelow/untilTime over one call per candle: it is much faster.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
         'Trades you log are marked as agent runs and kept apart from the owner\'s own backtest statistics.',
+        ...(journalAccess ? [JOURNAL_INSTRUCTIONS] : []),
       ].join(' '),
     },
   );
@@ -344,11 +347,73 @@ function buildServer(userId, apiKeyId) {
     },
     args => backtestLog.getMetrics(userId, args));
 
+  if (journalAccess) registerJournalTools(tool, userId);
   return server;
 }
 
+// ── The owner's real trade journal (read-only; keys with the "journal" scope) ──
+const JOURNAL_INSTRUCTIONS = 'This key can also read the owner\'s real trade journal (read-only): list_journal_accounts, list_trades, get_trade (notes, grades, checklists, playbook answers, screenshots), get_journal_metrics (breakdowns with 95% ranges), get_playbooks and get_trade_candles (price action around a trade). '
+  + 'To review the owner\'s trading: start with get_journal_metrics overall and a few breakdowns (setup, session, emotion, rulesFollowed, exitReason, holdTime), look for groups that clearly differ (ranges that do not overlap, enough trades), then open example trades with get_trade and get_trade_candles to find out why. Say how many trades a finding rests on, and do not present a difference between small or overlapping groups as fact.';
+
+function registerJournalTools(tool, userId) {
+  const tradeFilters = {
+    account: z.string().optional().describe('Account id from list_journal_accounts, or "(unassigned)".'),
+    accountType: z.enum(['live', 'demo']).optional(),
+    symbol: z.string().optional(),
+    direction: z.enum(['long', 'short']).optional(),
+    from: timeInput.optional().describe('Close time on or after (ISO date or unix seconds).'),
+    to: timeInput.optional().describe('Close time on or before.'),
+    outcome: z.enum(['win', 'loss', 'breakeven']).optional().describe('Net of commission and swap.'),
+    setup: z.string().optional().describe('Primary setup, e.g. "ORB".'),
+    tag: z.string().optional(),
+    emotion: z.string().optional(),
+    exitReason: z.string().optional().describe('The owner\'s stated exit reason: TP, SL, Fear, Revenge, News, ManualClose, FOMO, PartialClose, Other.'),
+    journaled: z.boolean().optional().describe('true: only trades with notes; false: only trades without.'),
+  };
+  const tradeId = z.string().describe('Trade id from list_trades.');
+
+  tool('list_journal_accounts', 'List journal accounts', 'The owner\'s trading accounts in the journal with trade counts, net P&L and date range.',
+    {},
+    () => journal.listAccounts(userId));
+
+  tool('list_trades', 'List journal trades',
+    'The owner\'s real trades (read-only), with results net of costs, R from the real stop, setup, tags, emotion, grades and exit reasons. Up to 100 per call; page with offset.',
+    {
+      ...tradeFilters,
+      sort: z.enum(['newest', 'oldest', 'best', 'worst']).default('newest'),
+      limit: z.number().int().min(1).max(100).default(50),
+      offset: z.number().int().min(0).default(0),
+    },
+    args => journal.listTrades(userId, args));
+
+  tool('get_trade', 'Get journal trade',
+    'One real trade in full: notes, checklists, playbook answers, re-entry reason, replay review and screenshot links. includeScreenshots attaches up to 4 screenshots as images.',
+    { id: tradeId, includeScreenshots: z.boolean().default(false) },
+    ({ id, includeScreenshots }) => journal.getTrade(userId, id, { includeScreenshots }));
+
+  tool('get_journal_metrics', 'Get journal metrics',
+    'Statistics for the owner\'s real trades: win rate, net P&L, average win/loss, profit factor, drawdown, loss streak and R where the broker recorded the stop, each with a sample-size level and 95% ranges. '
+    + `Filter like list_trades; break down by any of ${journal.GROUPS.join(', ')} (weekday, hour and session use the UTC open time).`,
+    { ...tradeFilters, groupBy: z.array(z.enum(journal.GROUPS)).max(4).default([]) },
+    args => journal.getMetrics(userId, args));
+
+  tool('get_playbooks', 'Get playbooks', 'The owner\'s written trading playbooks (latest version of each): the rules to hold trades against.',
+    {},
+    () => journal.getPlaybooks(userId));
+
+  tool('get_trade_candles', 'Get candles around a trade',
+    'Candles from the owner\'s cTrader account before, during and after a real trade, with its entry, exit, stop and target. The interval follows how long the trade was open unless you pick one. At most 600 candles.',
+    {
+      id: tradeId,
+      interval: timeframe.optional(),
+      barsBefore: z.number().int().min(0).max(400).default(100),
+      barsAfter: z.number().int().min(0).max(200).default(30),
+    },
+    ({ id, ...opts }) => journal.getTradeCandles(userId, id, opts));
+}
+
 router.post('/mcp', agentAuth, limiter, async (req, res) => {
-  const server = buildServer(req.user.userId, req.apiKey._id);
+  const server = buildServer(req.user.userId, req.apiKey._id, req.apiKey.scopes || ['backtest']);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on('close', () => { transport.close(); server.close(); });
   try {

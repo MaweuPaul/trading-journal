@@ -10,6 +10,7 @@ interface AccessKey {
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
+  journal: boolean;
 }
 
 function authHeaders(): Record<string, string> {
@@ -34,13 +35,14 @@ const small: React.CSSProperties = { fontSize: 11, padding: '4px 9px' };
 
 /**
  * Access keys that let AI agents (Claude Code, Claude Desktop, custom agents)
- * run backtests through the journal's MCP endpoint. A key only works there --
- * it can't read or change anything else in the journal.
+ * run backtests through the journal's MCP endpoint. A key only works there.
+ * Journal access (reading real trades, never changing them) is opt-in per key.
  */
 export default function AgentKeys() {
   const [keys, setKeys] = useState<AccessKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
+  const [journal, setJournal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
@@ -72,11 +74,12 @@ export default function AgentKeys() {
     e.preventDefault();
     setBusy(true); setError('');
     try {
-      const res = await fetch('/api/api-keys', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ name }) });
+      const res = await fetch('/api/api-keys', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ name, journal }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not create the key');
       setCreated({ name: data.name, key: data.key });
       setName('');
+      setJournal(false);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the key');
@@ -91,6 +94,15 @@ export default function AgentKeys() {
     const res = await fetch(`/api/api-keys/${key._id}`, { method: 'DELETE', headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) setError(data.error || 'Could not revoke the key');
+    await load();
+  }
+
+  async function setJournalAccess(key: AccessKey, on: boolean) {
+    if (on && !window.confirm(`Let agents using "${key.name}" read your real trades, notes and screenshots? They can't change anything.`)) return;
+    setError('');
+    const res = await fetch(`/api/api-keys/${key._id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ journal: on }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) setError(data.error || 'Could not change journal access');
     await load();
   }
 
@@ -111,7 +123,8 @@ export default function AgentKeys() {
       <section className="account-list-head" style={{ marginTop: 32 }}>
         <div>
           <div className="account-title-line"><Bot size={22} /><h2>AI agent access</h2></div>
-          <p>Let an AI agent backtest your strategies on cTrader history, bar by bar with the future hidden. Its trades land in the Backtest Log marked AGENT and stay out of your own stats.</p>
+          <p>Let an AI agent backtest your strategies on cTrader history, bar by bar with the future hidden. Its trades land in the Backtest Log marked AGENT and stay out of your own stats.
+            Turn on journal access for a key to also let the agent read your real trades (notes, grades, checklists, screenshots, candles around each trade) and review your trading. Read-only: it can&apos;t change anything.</p>
         </div>
       </section>
 
@@ -159,6 +172,10 @@ export default function AgentKeys() {
         <button className="btn-primary" disabled={busy || !name.trim()}>
           {busy ? <Loader2 size={16} className="spin" /> : <Plus size={16} />} Create access key
         </button>
+        <label style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={journal} onChange={e => setJournal(e.target.checked)} />
+          Also let this key read my real trade journal (read-only)
+        </label>
       </form>
 
       {loading ? null : active.length === 0 ? (
@@ -174,6 +191,10 @@ export default function AgentKeys() {
                   <code>{k.prefix}…</code> · created {when(k.createdAt)} · last used {when(k.lastUsedAt)}
                 </span>
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: k.journal ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={k.journal} onChange={e => setJournalAccess(k, e.target.checked)} aria-label={`Journal access for ${k.name}`} />
+                Journal access
+              </label>
               <button className="btn-ghost" style={{ fontSize: 12, color: 'var(--red)' }} onClick={() => revoke(k)} aria-label={`Revoke ${k.name}`}><Trash2 size={14} /> Revoke</button>
             </div>
           ))}

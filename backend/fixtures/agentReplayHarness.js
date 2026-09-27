@@ -57,6 +57,10 @@ function memoryModel(Model) {
     if (want && typeof want === 'object' && !(want instanceof mongoose.Types.ObjectId)) {
       if ('$in' in want) return want.$in.some(x => (x === null ? val == null : String(val) === String(x)));
       if ('$ne' in want) return String(val) !== String(want.$ne);
+      if ('$gte' in want || '$lte' in want) {
+        const v = new Date(val).getTime();
+        return (!('$gte' in want) || v >= new Date(want.$gte).getTime()) && (!('$lte' in want) || v <= new Date(want.$lte).getTime());
+      }
     }
     if (want === null) return val == null;
     if (Array.isArray(val)) return val.map(String).includes(String(want));
@@ -111,6 +115,11 @@ const models = {
   Trade: memoryModel(require('../models/BacktestTrade')),
   Strategy: memoryModel(require('../models/BacktestStrategy')),
   ApiKey: memoryModel(require('../models/ApiKey')),
+  // The real trade journal (lib/agentJournal).
+  JournalTrade: memoryModel(require('../models/Trade')),
+  ReplayJournal: memoryModel(require('../models/ReplayJournal')),
+  TradingAccount: memoryModel(require('../models/TradingAccount')),
+  User: memoryModel(require('../models/User')),
 };
 // Only after the models are compiled: routes check this before touching the DB.
 Object.defineProperty(mongoose.connection, 'readyState', { get: () => 1 });

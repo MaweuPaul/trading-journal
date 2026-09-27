@@ -2,8 +2,9 @@ const mongoose = require('mongoose');
 
 // Personal access keys for AI agents (the MCP endpoint). Only a SHA-256 hash
 // of the key is stored; the plaintext is shown once, at creation. A key can
-// reach the backtest MCP tools and nothing else -- it is not a JWT, so the
-// normal `auth` middleware rejects it on every other route.
+// reach the MCP tools and nothing else -- it is not a JWT, so the normal
+// `auth` middleware rejects it on every other route. Scopes: 'backtest'
+// (always) and 'journal' (opt-in: read-only access to the real trades).
 const apiKeySchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   name: { type: String, required: true, trim: true, maxlength: 60 },

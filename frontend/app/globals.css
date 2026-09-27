@@ -3603,8 +3603,9 @@ table.manual-ref td:not(.term) { color: var(--text-secondary); }
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg-base);
-  box-shadow: var(--shadow-lg);
 }
+/* Kept flat: no shadows on the sign-in / create-account pages. */
+.auth-split .login-card { box-shadow: none; animation: none; }
 .auth-ill-grid { stroke: var(--border); stroke-width: 1; }
 .auth-ill-up { fill: var(--green, #16a34a); stroke: var(--green, #16a34a); }
 .auth-ill-down { fill: var(--red, #dc2626); stroke: var(--red, #dc2626); }

@@ -39,6 +39,7 @@ const backtestTradeSchema = new mongoose.Schema({
 
   outcome: { type: String, enum: ['win', 'loss', 'breakeven'], required: true },
   riskAmount: { type: Number, default: 0 },
+  lots: { type: Number, default: null }, // position size from the symbol's contract size (null if unknown)
   pnlUSD: { type: Number, default: 0 },
   rMultiple: { type: Number, default: 0 },
 

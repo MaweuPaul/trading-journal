@@ -2,13 +2,37 @@
 // risk/reward box with draggable SL/TP/Entry lines, hit-testing those
 // handles, and the pure price math for placing/dragging a hypothetical trade.
 import type { IChartApi, ISeriesApi, Logical, UTCTimestamp } from 'lightweight-charts';
-import { ClosedTrade, OpenTrade, TradeHandle, fmtPrice } from './types';
+import { ClosedTrade, OpenTrade, SizingMode, SymbolSpec, TradeHandle, fmtPrice } from './types';
 
 export function placeTradeAt(direction: 'long' | 'short', time: number, price: number, riskAmount: number): OpenTrade {
   const riskDistance = Math.max(price * 0.005, 1e-6);
   const stopLoss = direction === 'long' ? price - riskDistance : price + riskDistance;
   const takeProfit = direction === 'long' ? price + riskDistance * 2 : price - riskDistance * 2;
   return { direction, entryTime: time, entryPrice: price, stopLoss, takeProfit, riskAmount };
+}
+
+/** Round down to the broker's lot step (with a little tolerance for float noise). */
+function toStep(lots: number, step: number) {
+  if (!(step > 0)) return lots;
+  return Math.floor(lots / step + 1e-9) * step;
+}
+const clean = (v: number) => Number(v.toFixed(8));
+
+/**
+ * Size a position the way a broker would.
+ * - 'risk': lots = risk $ / (stop distance x USD per point per lot), rounded down to the
+ *   lot step (never below the minimum lot); the dollar risk is what those lots really risk.
+ * - 'lots': the lots stay fixed, so moving the stop changes the dollar risk.
+ * Without a spec (or a USD conversion) the risk stays the typed amount and lots are unknown.
+ */
+export function sizeTrade(trade: OpenTrade, spec: SymbolSpec | null, mode: SizingMode, riskInput: number, lotsInput: number): OpenTrade {
+  const perLot = spec?.usdPerPointPerLot ? Math.abs(trade.entryPrice - trade.stopLoss) * spec.usdPerPointPerLot : 0;
+  if (!spec || !(perLot > 0)) return { ...trade, riskAmount: riskInput, lots: null };
+  let lots = mode === 'lots' ? toStep(lotsInput, spec.lotStep) : toStep(riskInput / perLot, spec.lotStep);
+  lots = Math.max(spec.minLots, lots);
+  if (spec.maxLots) lots = Math.min(spec.maxLots, lots);
+  lots = clean(lots);
+  return { ...trade, lots, riskAmount: clean(lots * perLot) };
 }
 
 export function updateHandlePrice(trade: OpenTrade, handle: TradeHandle, price: number): OpenTrade {
@@ -133,8 +157,8 @@ export function drawTradeOverlay(params: {
     const tag = `TP: ${fmtPrice(trade.takeProfit)} (+${rewardR.toFixed(2)}R${riskUSD > 0 ? ` / ${signUSD(riskUSD * rewardR)}` : ''})`;
     drawTag(ctx, tag, labelX, tpY + (tpY < entryY ? 12 : -12), palette.win, palette.labelBg, right);
   }
-  drawTag(ctx, `Entry: ${fmtPrice(trade.entryPrice)} (${trade.direction === 'long' ? 'Long' : 'Short'})`, labelX, entryY, palette.accent, palette.labelBg, right);
-  drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (-1.00R${riskUSD > 0 ? ` / -$${riskUSD.toFixed(0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
+  drawTag(ctx, `Entry: ${fmtPrice(trade.entryPrice)} (${trade.direction === 'long' ? 'Long' : 'Short'}${trade.lots != null ? ` · ${trade.lots} lots` : ''})`, labelX, entryY, palette.accent, palette.labelBg, right);
+  drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (-1.00R${riskUSD > 0 ? ` / -$${riskUSD.toFixed(riskUSD < 1000 ? 2 : 0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
 
   if (closedTrade && exitX != null) {
     const exitY = series.priceToCoordinate(closedTrade.exitPrice);

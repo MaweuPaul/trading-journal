@@ -199,12 +199,14 @@ async function getSymbolCache(client, ctidTraderAccountId) {
     });
     const bySymbolName = new Map();
     const strippedIndex = new Map(); // alnum-only, uppercased -> symbolId
+    const lightById = new Map();     // symbolId -> { name, baseAssetId, quoteAssetId }
     for (const symbol of res.symbol || []) {
       const name = String(symbol.symbolName || '').toUpperCase();
       bySymbolName.set(name, symbol.symbolId);
       strippedIndex.set(name.replace(/[^A-Z0-9]/g, ''), symbol.symbolId);
+      lightById.set(String(symbol.symbolId), { name, baseAssetId: String(symbol.baseAssetId ?? ''), quoteAssetId: String(symbol.quoteAssetId ?? '') });
     }
-    cache = { fetchedAt: Date.now(), bySymbolName, strippedIndex };
+    cache = { fetchedAt: Date.now(), bySymbolName, strippedIndex, lightById };
     symbolCache.set(ctidTraderAccountId, cache);
   }
   return cache;
@@ -391,4 +393,54 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
   return { candles, source: 'ctrader', sourceLabel: 'cTrader', brokerSymbol: symbol };
 }
 
-module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols };
+// ── Symbol specifications (position sizing) ─────────────────────────────────
+const assetCache = new Map(); // ctidTraderAccountId -> { fetchedAt, byId: Map(assetId -> name) }
+async function assetNames(client, ctidTraderAccountId) {
+  let entry = assetCache.get(String(ctidTraderAccountId));
+  if (!entry || Date.now() - entry.fetchedAt > SYMBOL_CACHE_TTL_MS) {
+    const res = await client.request(PAYLOAD_TYPE.ASSET_LIST_REQ, { ctidTraderAccountId: Number(ctidTraderAccountId) });
+    entry = { fetchedAt: Date.now(), byId: new Map((res.asset || []).map(a => [String(a.assetId), String(a.name || '').toUpperCase()])) };
+    assetCache.set(String(ctidTraderAccountId), entry);
+  }
+  return entry.byId;
+}
+
+/**
+ * Contract size, volume limits and quote currency of a symbol on the owner's
+ * cTrader account: what's needed to turn a stop distance into lots and USD.
+ * Volumes come from cTrader in cents of units (lotSize 10000000 = 100,000 units).
+ */
+async function getSymbolSpec({ userId, symbol, preferredCtidTraderAccountId }) {
+  const connectionInfo = await loadConnection(userId, preferredCtidTraderAccountId);
+  if (!connectionInfo) {
+    const err = new Error('cTrader is not connected. Connect it on the Accounts page.');
+    err.code = 'NOT_CONNECTED';
+    throw err;
+  }
+  const client = await getAuthenticatedClient(connectionInfo);
+  const account = connectionInfo.ctidTraderAccountId;
+  const symbolId = await resolveSymbolId(client, account, symbol);
+  const cache = await getSymbolCache(client, account);
+  const light = cache.lightById?.get(String(symbolId)) || {};
+  const [res, assets] = await Promise.all([
+    client.request(PAYLOAD_TYPE.SYMBOL_BY_ID_REQ, { ctidTraderAccountId: Number(account), symbolId: [Number(symbolId)] }),
+    assetNames(client, account),
+  ]);
+  const s = (res.symbol || [])[0];
+  if (!s) throw Object.assign(new Error(`cTrader returned no details for ${symbol}.`), { code: 'SYMBOL_NOT_FOUND' });
+  const units = v => (v == null ? null : Number(v) / 100);
+  const contractSize = units(s.lotSize) || 100000;
+  return {
+    symbol: light.name || String(symbol).toUpperCase(),
+    contractSize,                                   // units per 1.00 lot
+    digits: Number(s.digits ?? 5),
+    pipPosition: Number(s.pipPosition ?? 4),
+    minLots: s.minVolume != null ? units(s.minVolume) / contractSize : 0.01,
+    maxLots: s.maxVolume != null ? units(s.maxVolume) / contractSize : null,
+    lotStep: s.stepVolume != null ? units(s.stepVolume) / contractSize : 0.01,
+    baseCurrency: assets.get(light.baseAssetId) || null,
+    quoteCurrency: assets.get(light.quoteAssetId) || null,
+  };
+}
+
+module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols, getSymbolSpec };

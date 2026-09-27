@@ -47,7 +47,13 @@ A summary of everything added in this round, in plain terms. Technical details a
 - **Rectangles / zones now extend**: the right edge follows the latest candle as the replay moves forward.
 - **Initial balance**: a **Balance $** box next to **Risk $** shows your risk as a % of the account. It's remembered in your browser.
 
-## 6. Labels and requirements
+## 6. Real position sizing (contract sizes per symbol)
+- The Backtest position tool now uses each symbol's **contract size, minimum lot and lot step from your cTrader broker**, plus a USD conversion for non-USD quotes (e.g. JPY, EUR indices).
+- **Size by Risk $:** type the dollars you want to risk. Moving the stop re-sizes the position in lots, rounded down to the broker's lot step, and the $ shown is what those lots really risk (e.g. $100 on gold gives 0.10 lots and $95.51).
+- **Size by Lots:** type the lots. Moving the stop changes the dollar risk, as it would in a real account.
+- The entry label shows the lots, and the lot size is saved with each backtest in the Backtest Log.
+
+## 7. Labels and requirements
 - **AI agent access** is marked **Experimental**.
 - **Bar replay and backtesting need cTrader**: connect at least a free cTrader **demo** account on the Accounts page. Journal review and Export for AI work without it.
 

@@ -16,11 +16,11 @@ import { WorkspaceDraft, readDraft, writeDraft, clearDraft, sessionIdFor } from 
 import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
-  Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle,
+  Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle, SymbolSpec, SizingMode,
   CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
 } from '../backtest-tools/types';
 import {
-  placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure,
+  placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, sizeTrade,
   findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
@@ -200,6 +200,8 @@ export default function Workspace() {
 
   // ── Replay ─────────────────────────────────────────────────────────────────
   const [replayIdx, setReplayIdx] = useState(0);
+  const replayIdxRef = useRef(0);
+  useEffect(() => { replayIdxRef.current = replayIdx; }, [replayIdx]);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
 
@@ -238,8 +240,10 @@ export default function Workspace() {
     } catch { /* storage blocked */ }
   }, []);
   const changeBalance = (v: string) => { setBalanceInput(v); try { localStorage.setItem('backtest-initial-balance', v); } catch { /* storage blocked */ } };
-  const riskPct = Number(balanceInput) > 0 && Number(riskAmountInput) > 0 ? (Number(riskAmountInput) / Number(balanceInput)) * 100 : null;
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
+  // Against the trade's real (sized) risk once one is open.
+  const riskForPct = openTrade ? openTrade.riskAmount : Number(riskAmountInput);
+  const riskPct = Number(balanceInput) > 0 && riskForPct > 0 ? (riskForPct / Number(balanceInput)) * 100 : null;
   const draggingHandleRef = useRef<TradeHandle | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
@@ -872,14 +876,37 @@ export default function Workspace() {
     setBacktestName(`${d.toLocaleDateString(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' })} ${symbol.trim().toUpperCase()} ${closedTrade.direction === 'long' ? 'Long' : 'Short'}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closedTrade]);
+  // ── Position sizing from the broker's contract specs ──────────────────────
+  // Risk $ mode: moving the stop re-sizes the lots (rounded to the lot step),
+  // so the dollar risk is what those lots really risk. Lots mode: the lots
+  // stay fixed and moving the stop changes the dollar risk.
+  const [spec, setSpec] = useState<SymbolSpec | null>(null);
+  const [specNote, setSpecNote] = useState('');
+  const [sizingMode, setSizingMode] = useState<SizingMode>('risk');
+  const [lotsInput, setLotsInput] = useState('1');
+  useEffect(() => {
+    const s = sessionRef.current; const all = candlesRef.current;
+    if (!s || !all || !all.length) return;
+    const at = Number(all[Math.min(replayIdxRef.current, all.length - 1)]?.time ?? all[all.length - 1].time) * 1000;
+    let cancelled = false;
+    fetch(`/api/backtest-trades/symbol-spec?symbol=${encodeURIComponent(s.symbol)}&at=${Math.floor(at)}`, { headers: authHeaders() })
+      .then(async r => {
+        const d = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!r.ok) { setSpec(null); setSpecNote(d.error ? `Lot sizing unavailable: ${d.error}` : 'Lot sizing unavailable'); return; }
+        setSpec(d as SymbolSpec);
+        setSpecNote(d.usdPerPointPerLot ? '' : `No ${d.quoteCurrency}/USD rate on your account, so lots can't be converted to USD.`);
+      })
+      .catch(() => { if (!cancelled) { setSpec(null); setSpecNote('Lot sizing unavailable'); } });
+    return () => { cancelled = true; };
+  }, [chartEpoch]);
   useEffect(() => {
     if (!openTrade || closedTrade) return;
-    const amount = Number(riskAmountInput) || 0;
-    if (amount === openTrade.riskAmount) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- keep the open trade's risk in sync with the input
-    setOpenTrade(cur => (cur ? { ...cur, riskAmount: amount } : cur));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riskAmountInput]);
+    const sized = sizeTrade(openTrade, spec, sizingMode, Number(riskAmountInput) || 0, Number(lotsInput) || 0);
+    if (sized.riskAmount === openTrade.riskAmount && (sized.lots ?? null) === (openTrade.lots ?? null)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- keep the open trade's size in sync with the stop, inputs and specs
+    setOpenTrade(sized);
+  }, [openTrade, closedTrade, spec, sizingMode, riskAmountInput, lotsInput]);
 
   const placeTradeAt = (direction: 'long' | 'short', time: number, price: number) => {
     setOpenTrade(placeTradeAtPure(direction, time, price, Number(riskAmountInput) || 0));
@@ -931,7 +958,7 @@ export default function Workspace() {
           entryTime: closedTrade.entryTime, entryPrice: closedTrade.entryPrice,
           exitTime: closedTrade.exitTime, exitPrice: closedTrade.exitPrice,
           stopLoss: closedTrade.stopLoss, takeProfit: closedTrade.takeProfit,
-          outcome: closedTrade.outcome, riskAmount: closedTrade.riskAmount,
+          outcome: closedTrade.outcome, riskAmount: closedTrade.riskAmount, lots: closedTrade.lots ?? null,
           pnlUSD: closedTrade.pnlUSD, rMultiple: closedTrade.rMultiple,
           notes, chartAnnotations: managerRef.current?.exportDrawings() ?? [], snapshot,
           ...journal,
@@ -1325,10 +1352,24 @@ export default function Workspace() {
             className={`tw:flex tw:items-center tw:gap-1 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:bg-tertiary tw:text-on-tertiary tw:ring-2 tw:ring-tertiary/40' : 'tw:bg-tertiary tw:hover:opacity-90 tw:text-on-tertiary'}`}>
             <Icon name="south_east" className="tw:text-[15px]" /><span>- Simulate Short</span>
           </button>
-          <label className="tw:flex tw:items-center tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-1.5 tw:py-0.5 tw:gap-1 tw:font-mono-metric-md">
-            <span className="tw:text-on-surface-variant tw:text-[10px]">Risk $:</span>
-            <input aria-label="Risk amount in dollars" type="number" min="0" step="any" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} disabled={Boolean(closedTrade)}
-              className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
+          <label className="tw:flex tw:items-center tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-1.5 tw:py-0.5 tw:gap-1 tw:font-mono-metric-md"
+            title={spec ? `${spec.symbol}: 1 lot = ${spec.contractSize.toLocaleString()} units · min ${spec.minLots} · step ${spec.lotStep}${spec.quoteCurrency ? ` · quoted in ${spec.quoteCurrency}` : ''}` : specNote || 'Loading contract specs…'}>
+            <select aria-label="Size by" value={sizingMode} onChange={e => setSizingMode(e.target.value as SizingMode)} disabled={Boolean(closedTrade)}
+              className="tw:bg-transparent tw:text-on-surface-variant tw:text-[10px] tw:focus:outline-none">
+              <option value="risk">Risk $</option>
+              <option value="lots" disabled={!spec?.usdPerPointPerLot}>Lots</option>
+            </select>
+            {sizingMode === 'risk'
+              ? <input aria-label="Risk amount in dollars" type="number" min="0" step="any" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} disabled={Boolean(closedTrade)}
+                  className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
+              : <input aria-label="Position size in lots" type="number" min="0" step={spec?.lotStep ?? 0.01} value={lotsInput} onChange={e => setLotsInput(e.target.value)} disabled={Boolean(closedTrade)}
+                  className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />}
+            {openTrade && openTrade.lots != null && (
+              <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">
+                {sizingMode === 'risk' ? `= ${openTrade.lots} lots · $${openTrade.riskAmount.toFixed(2)}` : `= $${openTrade.riskAmount.toFixed(2)} risk`}
+              </span>
+            )}
+            {!spec && specNote && <span className="tw:text-error tw:text-[10px]" title={specNote}>!</span>}
           </label>
           <label className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5" title="Initial balance of the simulated account; the risk is shown as a % of it">
             <span className="tw:text-on-surface-variant tw:text-[10px]">Balance $:</span>

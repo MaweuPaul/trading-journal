@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Mail, Lock, Loader2, AlertCircle } from 'lucide-react';
 import LogoMark from '@/components/LogoMark';
+import AuthShowcase from '@/components/AuthShowcase';
 
 const API = '/api';
 
@@ -69,12 +70,15 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="login-container">
+    <div className="login-container auth-split">
+      <AuthShowcase />
+      <div className="auth-form-side">
+      <p className="auth-mobile-tagline">Sync your trades, journal them against your playbook, and see what&apos;s really working.</p>
       <div className="login-card">
         <div className="login-header">
           <div className="login-logo-mark"><LogoMark size={52} /></div>
-          <h2>TradeJournal</h2>
-          <p>Sign in to access your personal MT5 trade analytics</p>
+          <h2>Welcome back</h2>
+          <p>Sign in to your trading journal.</p>
         </div>
 
         {error && (
@@ -136,11 +140,12 @@ export default function LoginPage() {
         )}
 
         <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
-          🔒 Secure Private Session
+          🔒 Your journal is private to you.
         </div>
         <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '6px' }}>
           <Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link>
         </div>
+      </div>
       </div>
     </div>
   );

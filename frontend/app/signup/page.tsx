@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, Loader2, Lock, Mail, TrendingUp, UserRound } from 'lucide-react';
+import { AlertCircle, Loader2, Lock, Mail, UserRound } from 'lucide-react';
+import LogoMark from '@/components/LogoMark';
+import AuthShowcase from '@/components/AuthShowcase';
 
 const API = '/api';
 
@@ -51,12 +53,15 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="login-container">
+    <div className="login-container auth-split">
+      <AuthShowcase />
+      <div className="auth-form-side">
+      <p className="auth-mobile-tagline">Sync your trades, journal them against your playbook, and see what&apos;s really working.</p>
       <div className="login-card">
         <div className="login-header">
-          <div className="login-logo"><TrendingUp size={24} /></div>
+          <div className="login-logo-mark"><LogoMark size={52} /></div>
           <h2>Create your journal</h2>
-          <p>Set up your own private trading journal.</p>
+          <p>Your own private trading journal: connect MT5 or cTrader after signing up and your trades sync in.</p>
         </div>
 
         {error && <div className="login-error" role="alert"><AlertCircle size={16} /><span>{error}</span></div>}
@@ -89,6 +94,7 @@ export default function SignupPage() {
 
         <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12 }}><Link href="/login" style={{ color: 'var(--accent)', fontWeight: 700 }}>Already have an account? Sign in</Link></div>
         <div style={{ textAlign: 'center', marginTop: 8, fontSize: 11 }}><Link href="/privacy" style={{ color: 'var(--text-muted)' }}>Privacy &amp; data use</Link></div>
+      </div>
       </div>
     </div>
   );

@@ -53,7 +53,7 @@ export default function PrivacyPage() {
         <Sub>What we don&apos;t do</Sub>
         <ul className="manual-feature-list">
           <li>Every broker connection is <b>read-only</b> — TradeJournal cannot place, modify, or close a real trade for you, on MT5 or cTrader.</li>
-          <li>No advertising trackers, analytics pixels, or third-party scripts run in the app. The only outside services involved are your broker (to read your trades and price charts), Cloudinary (only the screenshots you choose to upload), and any AI service <i>you</i> choose to connect.</li>
+          <li>No advertising trackers, analytics pixels, or third-party scripts run in the app. The only outside services involved are your broker (to read your trades and price charts), Cloudinary (only the screenshots you choose to upload), an email service (only to send password-reset links, if it&apos;s set up), and any AI service <i>you</i> choose to connect.</li>
           <li>Your data isn&apos;t sold, rented, or shared with anyone outside your own account.</li>
           <li>If this instance has more than one person signed up, accounts are fully isolated — nobody can see another user&apos;s trades, notes, or broker connections. There&apos;s no admin view into another user&apos;s journal.</li>
         </ul>

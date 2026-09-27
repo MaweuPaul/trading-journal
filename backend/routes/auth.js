@@ -7,6 +7,8 @@ const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { safeSecretEqual } = require('../lib/credentialEncryption');
+const { mailConfigured, sendMail } = require('../lib/mailer');
+const { forgetPasswordChange } = require('../middleware/auth');
 
 function randomSyncSecret() {
   return crypto.randomBytes(24).toString('hex'); // 48 hex chars, shown once
@@ -21,7 +23,7 @@ const router = express.Router();
 // not stop a same-origin script from looping, so cap attempts per IP.
 const credentialLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: Number(process.env.AUTH_RATE_LIMIT) || 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait 15 minutes and try again.' },
@@ -206,6 +208,92 @@ router.get('/me', auth, async (req, res) => {
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Passwords: change (signed in), forgot (email link), reset ──────────────
+const RESET_TTL_MS = 60 * 60 * 1000;
+const sha256 = v => crypto.createHash('sha256').update(String(v)).digest('hex');
+
+// The address reset links point at. Never taken from a request header alone:
+// a forged header would send the owner a link to someone else's site.
+function appOrigin(req) {
+  const allowed = [process.env.PUBLIC_APP_URL, ...String(process.env.ALLOWED_ORIGINS || '').split(',')]
+    .map(o => String(o || '').trim().replace(/\/$/, '')).filter(Boolean);
+  const claimed = String(req.headers['x-tj-public-origin'] || '').replace(/\/$/, '');
+  if (claimed && allowed.includes(claimed)) return claimed;
+  return allowed[0] || null;
+}
+function validNewPassword(password) {
+  return typeof password === 'string' && password.length >= 8 && password.length <= 200;
+}
+async function setPassword(user, password) {
+  const now = new Date();
+  await User.updateOne({ _id: user._id }, { $set: { password: await bcrypt.hash(password, 12), passwordChangedAt: now, resetTokenHash: null, resetTokenExpires: null } });
+  forgetPasswordChange(String(user._id));
+  // Tokens are compared in whole seconds; sign the new one after the change time.
+  return { ...user, passwordChangedAt: now };
+}
+
+router.get('/password-reset-status', (_req, res) => {
+  res.json({ emailEnabled: mailConfigured() });
+});
+
+router.post('/forgot-password', credentialLimiter, async (req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The journal is offline right now. Try again shortly.' });
+  if (!mailConfigured()) return res.status(503).json({ error: 'Password reset by email isn\'t set up on this journal. Ask whoever runs it to reset your password.', code: 'MAIL_NOT_CONFIGURED' });
+  const origin = appOrigin(req);
+  if (!origin) return res.status(503).json({ error: 'Password reset isn\'t fully set up on this journal (its public address is missing).', code: 'NO_PUBLIC_URL' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const generic = { message: 'If an account uses that email, a reset link is on its way. It works for 1 hour.' };
+  try {
+    const user = email && await User.findOne({ email }).lean();
+    // Same answer either way, so the form can't be used to find out who has an account.
+    if (!user) return res.json(generic);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await User.updateOne({ _id: user._id }, { $set: { resetTokenHash: sha256(token), resetTokenExpires: new Date(Date.now() + RESET_TTL_MS) } });
+    const link = `${origin}/reset-password?token=${encodeURIComponent(token)}`;
+    await sendMail({
+      to: user.email,
+      subject: 'Reset your TradeJournal password',
+      text: `Hi ${user.name || ''},\n\nSomeone (hopefully you) asked to reset the password for your TradeJournal account.\n\nChoose a new password here (the link works for 1 hour, once):\n${link}\n\nIf this wasn't you, ignore this email: your password stays the same.\n`,
+      html: `<p>Hi ${String(user.name || '').replace(/[<>&]/g, '')},</p><p>Someone (hopefully you) asked to reset the password for your TradeJournal account.</p><p><a href="${link}">Choose a new password</a> (the link works for 1 hour, once).</p><p>If this wasn't you, ignore this email: your password stays the same.</p>`,
+    });
+    res.json(generic);
+  } catch (err) {
+    console.error('Password reset email failed:', err.message);
+    res.status(502).json({ error: 'The reset email could not be sent. Try again in a few minutes.' });
+  }
+});
+
+router.post('/reset-password', credentialLimiter, async (req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The journal is offline right now. Try again shortly.' });
+  const { token, password } = req.body || {};
+  if (!validNewPassword(password)) return res.status(400).json({ error: 'Choose a password of at least 8 characters.' });
+  try {
+    const user = token && await User.findOne({ resetTokenHash: sha256(token) }).select('+resetTokenExpires').lean();
+    if (!user || !user.resetTokenExpires || new Date(user.resetTokenExpires).getTime() < Date.now()) {
+      return res.status(400).json({ error: 'This reset link is invalid or has expired. Ask for a new one.' });
+    }
+    const updated = await setPassword(user, password);
+    res.json({ token: signToken(updated), user: publicUser(updated) });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not reset the password. Try again.' });
+  }
+});
+
+router.post('/change-password', auth, credentialLimiter, async (req, res) => {
+  if (req.user.role === 'sync_agent' || req.user.role === 'investor') return res.status(403).json({ error: 'Owner session required.' });
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: 'The journal is offline right now. Try again shortly.' });
+  const { currentPassword, newPassword } = req.body || {};
+  if (!validNewPassword(newPassword)) return res.status(400).json({ error: 'Choose a new password of at least 8 characters.' });
+  try {
+    const user = await User.findOne({ _id: req.user.userId }).lean();
+    if (!user || !(await bcrypt.compare(String(currentPassword || ''), user.password))) return res.status(400).json({ error: 'Your current password is not right.' });
+    const updated = await setPassword(user, newPassword);
+    res.json({ token: signToken(updated), user: publicUser(updated), message: 'Password changed. Other devices have been signed out.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not change the password. Try again.' });
   }
 });
 

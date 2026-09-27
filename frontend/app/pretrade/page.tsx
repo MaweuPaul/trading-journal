@@ -164,6 +164,7 @@ function PreTradeAnalysisContent() {
       </div>
 
       <PreTradeChart
+        key={analysis._id}
         analysisId={analysis._id}
         symbol={symbol}
         initialInterval={analysis.chartInterval}

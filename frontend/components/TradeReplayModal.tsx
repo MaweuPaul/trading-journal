@@ -2,13 +2,18 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   X, Play, Pause, SkipBack, SkipForward,
-  Square, Type as TypeIcon, Loader2, AlertTriangle, ExternalLink,
-  BookOpenText, Tags, BarChart3, CheckCircle2, Undo2, Trash2, MapPin,
-  MousePointer2, ArrowUpRight, ImagePlus, MoveHorizontal, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronDown, ChevronLeft, ChevronRight, GripVertical,
+  Loader2, AlertTriangle, ExternalLink,
+  BookOpenText, Tags, BarChart3, CheckCircle2, Trash2, MapPin,
+  ImagePlus, Flag, LogIn, LogOut, Keyboard, PauseCircle, ChevronLeft, ChevronRight, GripVertical,
 } from 'lucide-react';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineStyle, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
+import type { SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from './ThemeProvider';
+import { useChartDrawings } from './chart-drawing/useChartDrawings';
+import ChartDrawingToolbar from './chart-drawing/ChartDrawingToolbar';
+import ChartDrawingLayer from './chart-drawing/ChartDrawingLayer';
+import { snapToCandles, splitAnnotations, toDrawingEntries } from './chart-drawing/drawingKit';
 
 const API = '/api';
 
@@ -29,20 +34,11 @@ interface ReplayData {
   playbookSnapshot?: ReplayPlaybookSnapshot | null; playbookResponses?: Record<string, unknown>;
 }
 interface ReplayError { setup?: boolean; error?: string; code?: string; }
-type AnnotationLineStyle = 'solid' | 'dashed';
-interface DrawnRect { id: string; time1: number; time2: number; price1: number; price2: number; color: string; }
-interface DrawnLine { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
-interface DrawnText { id: string; time: number; price: number; text: string; color: string; }
-interface DrawnHorizontal { id: string; time: number; price: number; color: string; lineStyle?: AnnotationLineStyle; }
-interface DrawnArrow { id: string; time1: number; time2: number; price1: number; price2: number; color: string; lineStyle?: AnnotationLineStyle; }
 interface DrawnImage { id: string; time: number; price: number; url: string; caption: string; screenshotId: string; color: string; }
-type ReplayAnnotation =
-  | (DrawnRect & { type: 'rect' }) | (DrawnLine & { type: 'line' })
-  | (DrawnHorizontal & { type: 'horizontal' }) | (DrawnArrow & { type: 'arrow' })
-  | (DrawnText & { type: 'text' }) | (DrawnImage & { type: 'image' });
-type DrawingTool = 'none' | 'select' | 'rect' | 'line' | 'horizontal' | 'arrow' | 'text' | 'image' | 'event';
-type ShapeDrawingTool = Extract<DrawingTool, 'rect' | 'line' | 'horizontal' | 'arrow'>;
-interface AnnotationHistory { rects: DrawnRect[]; lines: DrawnLine[]; horizontals: DrawnHorizontal[]; arrows: DrawnArrow[]; texts: DrawnText[]; images: DrawnImage[]; }
+type ReplayAnnotation = { type: string; id: string };
+// Shapes (lines, zones, text…) come from the shared drawing tools; this canvas
+// only places timeline moments and pinned evidence images.
+type DrawingTool = 'none' | 'image' | 'event';
 interface ReplayTimelineEvent {
   eventId: string; timeframe: string; candleTime: number; price: number;
   visibilityScope?: 'timeframe' | 'all'; order?: number;
@@ -77,19 +73,7 @@ const EMOTIONS = [
   { name: 'Fearful', emoji: '😨' }, { name: 'FOMO', emoji: '💥' },
 ];
 const GRADES = ['A', 'B', 'C', 'D', 'F'] as const;
-const DRAWING_COLORS = [
-  { value: '#3b82f6', label: 'Blue' }, { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' }, { value: '#ef4444', label: 'Red' },
-  { value: '#8b5cf6', label: 'Purple' }, { value: '#ec4899', label: 'Pink' },
-] as const;
-const SHAPE_DRAWING_TOOLS: ShapeDrawingTool[] = ['rect', 'line', 'horizontal', 'arrow'];
 const TOOL_GUIDANCE: Partial<Record<DrawingTool, { label: string; instruction: string }>> = {
-  select: { label: 'Select', instruction: 'Drag an annotation to move it. Click it (without dragging) to edit its color, text, or line style.' },
-  rect: { label: 'Zone', instruction: 'Drag across the chart to mark an area. The tool turns off after one zone.' },
-  line: { label: 'Trend line', instruction: 'Drag from the start point to the end point.' },
-  horizontal: { label: 'Price level', instruction: 'Click once at the price you want to mark.' },
-  arrow: { label: 'Arrow', instruction: 'Drag from the observation toward the outcome.' },
-  text: { label: 'Text note', instruction: 'Write the note, then click the candle and price where it belongs.' },
   image: { label: 'Chart image', instruction: 'Add a caption, then click the chart to pin the evidence.' },
   event: { label: 'Timeline moment', instruction: 'Click the candle where the decision, emotion, mistake, or lesson happened.' },
 };
@@ -130,7 +114,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [error, setError] = useState('');
   const [isSetupError, setIsSetupError] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const annotationInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -145,26 +128,18 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [drawingTool, setDrawingTool] = useState<DrawingTool>('none');
-  const [showDrawingTools, setShowDrawingTools] = useState(false);
-  const [rectColor, setRectColor] = useState<string>(DRAWING_COLORS[0].value);
-  const [drawnRects, setDrawnRects] = useState<DrawnRect[]>([]);
-  const [drawnLines, setDrawnLines] = useState<DrawnLine[]>([]);
-  const [drawnHorizontals, setDrawnHorizontals] = useState<DrawnHorizontal[]>([]);
-  const [drawnArrows, setDrawnArrows] = useState<DrawnArrow[]>([]);
-  const [drawnTexts, setDrawnTexts] = useState<DrawnText[]>([]);
   const [drawnImages, setDrawnImages] = useState<DrawnImage[]>([]);
-  const [selectedAnnotationId, setSelectedAnnotationId] = useState('');
+  const drawingsRef = useRef<SerializedDrawing[]>([]);
+  const [drawings, setDrawings] = useState<SerializedDrawing[]>([]);
+  const candlesRef = useRef<Candle[] | null>(null);
   const [pendingImage, setPendingImage] = useState<Omit<DrawnImage, 'id' | 'time' | 'price' | 'color'> | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [annotationText, setAnnotationText] = useState('');
   const [annotationSaveState, setAnnotationSaveState] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
   const [annotationSaveError, setAnnotationSaveError] = useState('');
   const [loadedAnnotationKey, setLoadedAnnotationKey] = useState('');
   const [showAnnotationList, setShowAnnotationList] = useState(false);
   const annotationBaselineRef = useRef('');
   const activeAnnotationKeyRef = useRef('');
-  const annotationHistoryRef = useRef<AnnotationHistory[]>([]);
-  const [annotationHistoryDepth, setAnnotationHistoryDepth] = useState(0);
   const annotationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [timelineEvents, setTimelineEvents] = useState<ReplayTimelineEvent[]>([]);
   const [eventSaveState, setEventSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
@@ -191,13 +166,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const draftAppliedTradeRef = useRef('');
   const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const replayJournalInitializedRef = useRef(false);
-  const drawStart = useRef<{ x: number; y: number } | null>(null);
-  const movingAnnotationRef = useRef<{ annotation: ReplayAnnotation; startX: number; startY: number; originTime: number; originPrice: number; moved: boolean } | null>(null);
-  const autoSelectModeRef = useRef(false);
-  const [hoveredAnnotationId, setHoveredAnnotationId] = useState('');
-  const [editingAnnotation, setEditingAnnotation] = useState<{ annotation: ReplayAnnotation; anchorX: number; anchorY: number } | null>(null);
-  const [annotationEditDraft, setAnnotationEditDraft] = useState<{ text: string; caption: string; color: string; lineStyle: AnnotationLineStyle }>({ text: '', caption: '', color: '', lineStyle: 'solid' });
-  const currentPreview = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const redrawCanvasRef = useRef<() => void>(() => undefined);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [notes, setNotes] = useState('');
@@ -222,50 +190,39 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       : defaultReplayTimeframe(tradeSummary.durationMinutes)
   );
 
-  useEffect(() => {
-    if (drawingTool === 'text') annotationInputRef.current?.focus();
-  }, [drawingTool]);
+  const engine = useChartDrawings({
+    onChange: next => { drawingsRef.current = next; setDrawings(next); },
+    getCandles: () => candlesRef.current,
+  });
+  const { attach, replaceDrawings, setRevealLimit, activateTool } = engine;
 
-  const allAnnotations = useMemo<ReplayAnnotation[]>(() => [
-    ...drawnRects.map(annotation => ({ ...annotation, type: 'rect' as const })),
-    ...drawnLines.map(annotation => ({ ...annotation, type: 'line' as const })),
-    ...drawnHorizontals.map(annotation => ({ ...annotation, type: 'horizontal' as const })),
-    ...drawnArrows.map(annotation => ({ ...annotation, type: 'arrow' as const })),
-    ...drawnTexts.map(annotation => ({ ...annotation, type: 'text' as const })),
-    ...drawnImages.map(annotation => ({ ...annotation, type: 'image' as const })),
-  ], [drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts]);
+  const allAnnotations = useMemo<ReplayAnnotation[]>(
+    () => [...drawnImages.map(image => ({ ...image, type: 'image' as const })), ...toDrawingEntries(drawings)],
+    [drawnImages, drawings],
+  );
   const activeToolGuidance = TOOL_GUIDANCE[drawingTool];
-  const isShapeToolActive = SHAPE_DRAWING_TOOLS.includes(drawingTool as ShapeDrawingTool);
   const stopDrawing = () => {
     setDrawingTool('none');
-    setShowDrawingTools(false);
     setPendingImage(null);
     setEventLocation(null);
     setEditingEventId('');
-    setAnnotationText('');
-    drawStart.current = null;
-    currentPreview.current = null;
     redrawCanvasRef.current();
   };
-  const activateDrawingTool = (tool: Exclude<DrawingTool, 'image'>) => {
+  const activateDrawingTool = (tool: 'event') => {
     const turningOff = drawingTool === tool;
+    if (!turningOff) activateTool(null);
     setDrawingTool(turningOff ? 'none' : tool);
-    setShowDrawingTools(!turningOff && SHAPE_DRAWING_TOOLS.includes(tool as ShapeDrawingTool));
-    setSelectedAnnotationId('');
     setPendingImage(null);
     setEventLocation(null);
     setEditingEventId('');
   };
+  // Picking a shared drawing tool turns off the Moment / image placement.
+  useEffect(() => {
+    if (!engine.activeTool) return;
+    queueMicrotask(() => { setDrawingTool('none'); setPendingImage(null); });
+  }, [engine.activeTool]);
   const annotationKey = `${tradeId}:${selectedInterval}`;
   useEffect(() => { activeAnnotationKeyRef.current = annotationKey; }, [annotationKey]);
-  const pushAnnotationHistory = () => {
-    annotationHistoryRef.current = [...annotationHistoryRef.current.slice(-19), {
-      rects: drawnRects.map(item => ({ ...item })), lines: drawnLines.map(item => ({ ...item })),
-      horizontals: drawnHorizontals.map(item => ({ ...item })), arrows: drawnArrows.map(item => ({ ...item })),
-      texts: drawnTexts.map(item => ({ ...item })), images: drawnImages.map(item => ({ ...item })),
-    }];
-    setAnnotationHistoryDepth(annotationHistoryRef.current.length);
-  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -277,16 +234,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Could not load chart annotations');
         const annotations = Array.isArray(body.annotations) ? body.annotations as ReplayAnnotation[] : [];
-        setDrawnRects(annotations.filter(item => item.type === 'rect').map(item => ({ ...item }) as DrawnRect));
-        setDrawnLines(annotations.filter(item => item.type === 'line').map(item => ({ ...item }) as DrawnLine));
-        setDrawnHorizontals(annotations.filter(item => item.type === 'horizontal').map(item => ({ ...item }) as DrawnHorizontal));
-        setDrawnArrows(annotations.filter(item => item.type === 'arrow').map(item => ({ ...item }) as DrawnArrow));
-        setDrawnTexts(annotations.filter(item => item.type === 'text').map(item => ({ ...item }) as DrawnText));
-        setDrawnImages(annotations.filter(item => item.type === 'image').map(item => ({ ...item }) as DrawnImage));
-        setSelectedAnnotationId(''); setPendingImage(null);
-        annotationHistoryRef.current = [];
-        setAnnotationHistoryDepth(0);
-        annotationBaselineRef.current = JSON.stringify(annotations);
+        const { drawings: loaded, other } = splitAnnotations(annotations);
+        const images = other.filter(item => item.type === 'image') as unknown as DrawnImage[];
+        drawingsRef.current = loaded; setDrawings(loaded);
+        const candles = candlesRef.current;
+        replaceDrawings(candles ? snapToCandles(loaded, candles.map(c => Number(c.time))) : loaded);
+        setDrawnImages(images); setPendingImage(null);
+        // Older shapes are converted to the shared tools' format; only save once something changes.
+        annotationBaselineRef.current = JSON.stringify([...images.map(image => ({ ...image, type: 'image' })), ...toDrawingEntries(loaded)]);
         if (eventsLoadedTradeRef.current !== tradeId) {
           const events = Array.isArray(body.events) ? body.events as ReplayTimelineEvent[] : [];
           setTimelineEvents(events);
@@ -306,7 +261,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         setAnnotationSaveState('error'); setAnnotationSaveError(error.message || 'Could not load chart annotations');
       });
     return () => controller.abort();
-  }, [annotationKey, selectedInterval, tradeId]);
+  }, [annotationKey, replaceDrawings, selectedInterval, tradeId]);
 
   useEffect(() => {
     if (loadedAnnotationKey !== annotationKey) return;
@@ -488,6 +443,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       color: replayData.pnlUSD >= 0 ? '#10b981' : '#ef4444',
       lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: 'Exit',
     });
+    const detach = attach(chart, series, el, snapToCandles(drawingsRef.current, replayData.candles.map(c => Number(c.time))));
     const syncCanvas = () => {
       if (!canvasRef.current) return;
       canvasRef.current.width = el.clientWidth; canvasRef.current.height = el.clientHeight;
@@ -497,8 +453,14 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const ro = new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }); syncCanvas(); redrawAnnotations(); });
     ro.observe(el);
     chart.timeScale().subscribeVisibleTimeRangeChange(redrawAnnotations);
-    return () => { ro.disconnect(); chart.timeScale().unsubscribeVisibleTimeRangeChange(redrawAnnotations); markersRef.current?.detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; markersRef.current = null; };
-  }, [replayData, resolvedTheme]);
+    return () => { ro.disconnect(); chart.timeScale().unsubscribeVisibleTimeRangeChange(redrawAnnotations); detach(); markersRef.current?.detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; markersRef.current = null; };
+  }, [attach, replayData, resolvedTheme]);
+  useEffect(() => { candlesRef.current = replayData?.candles ?? null; }, [replayData]);
+  // Drawings stay hidden until the replay reaches the candles they were drawn on.
+  useEffect(() => {
+    const revealed = replayData?.candles[Math.min(replayIdx, replayData.candles.length - 1)];
+    setRevealLimit(revealed ? Number(revealed.time) : null);
+  }, [engine.chart, replayData, replayIdx, setRevealLimit]);
 
   useEffect(() => {
     if (!replayData || !seriesRef.current || !markersRef.current) return;
@@ -573,69 +535,6 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const revealedTime = Number(replayData?.candles[Math.min(replayIdx, (replayData?.candles.length || 1) - 1)]?.time || Number.POSITIVE_INFINITY);
-    const selected = (id: string) => id === selectedAnnotationId;
-    const drawSelection = (x: number, y: number, width: number, height: number) => {
-      ctx.save(); ctx.strokeStyle = resolvedTheme === 'dark' ? '#f8fafc' : '#0f172a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
-      ctx.strokeRect(x - 4, y - 4, width + 8, height + 8); ctx.restore();
-    };
-    const drawArrowHead = (x1: number, y1: number, x2: number, y2: number, color: string) => {
-      const angle = Math.atan2(y2 - y1, x2 - x1); const size = 10;
-      ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
-      ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
-      ctx.closePath(); ctx.fill(); ctx.restore();
-    };
-    for (const r of drawnRects) {
-      if (Math.max(r.time1, r.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(r.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(r.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(r.price1); const y2 = series.priceToCoordinate(r.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = r.color; ctx.fillStyle = r.color + '22'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1));
-      ctx.fill(); ctx.stroke(); ctx.restore();
-      if (selected(r.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-    }
-    for (const line of drawnLines) {
-      if (Math.max(line.time1, line.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(line.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(line.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(line.price1); const y2 = series.priceToCoordinate(line.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = line.color; ctx.lineWidth = 2; ctx.setLineDash(line.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
-      if (selected(line.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
-    }
-    for (const level of drawnHorizontals) {
-      if (level.time > revealedTime) continue;
-      const x = chart.timeScale().timeToCoordinate(level.time as UTCTimestamp); const y = series.priceToCoordinate(level.price);
-      if (x == null || y == null) continue;
-      ctx.save(); ctx.strokeStyle = level.color; ctx.lineWidth = 1.5; ctx.setLineDash(level.lineStyle === 'solid' ? [] : [7, 4]);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-      ctx.fillStyle = level.color; ctx.font = '700 10px sans-serif'; ctx.fillText(level.price.toFixed(2), x + 6, y - 6); ctx.restore();
-      if (selected(level.id)) drawSelection(x, y - 2, Math.max(2, canvas.width - x), 4);
-    }
-    for (const arrow of drawnArrows) {
-      if (Math.max(arrow.time1, arrow.time2) > revealedTime) continue;
-      const x1 = chart.timeScale().timeToCoordinate(arrow.time1 as UTCTimestamp);
-      const x2 = chart.timeScale().timeToCoordinate(arrow.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(arrow.price1); const y2 = series.priceToCoordinate(arrow.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      ctx.save(); ctx.strokeStyle = arrow.color; ctx.lineWidth = 2.5; ctx.setLineDash(arrow.lineStyle === 'dashed' ? [7, 4] : []); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
-      drawArrowHead(x1, y1, x2, y2, arrow.color);
-      if (selected(arrow.id)) drawSelection(Math.min(x1, x2), Math.min(y1, y2), Math.max(2, Math.abs(x2 - x1)), Math.max(2, Math.abs(y2 - y1)));
-    }
-    for (const note of drawnTexts) {
-      if (note.time > revealedTime) continue;
-      const x = chart.timeScale().timeToCoordinate(note.time as UTCTimestamp);
-      const y = series.priceToCoordinate(note.price);
-      if (x == null || y == null) continue;
-      ctx.save(); ctx.font = '600 12px sans-serif';
-      const width = ctx.measureText(note.text).width;
-      ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0d14dd' : '#ffffffee'; ctx.fillRect(x - 5, y - 17, width + 10, 23);
-      ctx.strokeStyle = note.color; ctx.strokeRect(x - 5, y - 17, width + 10, 23);
-      ctx.fillStyle = note.color; ctx.fillText(note.text, x, y); ctx.restore();
-      if (selected(note.id)) drawSelection(x - 5, y - 17, width + 10, 23);
-    }
     for (const pin of drawnImages) {
       if (pin.time > revealedTime) continue;
       const x = chart.timeScale().timeToCoordinate(pin.time as UTCTimestamp); const y = series.priceToCoordinate(pin.price);
@@ -646,226 +545,35 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         image = new window.Image(); image.crossOrigin = 'anonymous'; image.onload = () => redrawCanvasRef.current(); image.src = pin.url;
         imageCacheRef.current.set(pin.url, image);
       }
-      ctx.save(); ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0e14ee' : '#ffffffee'; ctx.strokeStyle = pin.color; ctx.lineWidth = selected(pin.id) ? 2.5 : 1.5;
+      ctx.save(); ctx.fillStyle = resolvedTheme === 'dark' ? '#0a0e14ee' : '#ffffffee'; ctx.strokeStyle = pin.color; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cardX, cardY + 58); ctx.stroke();
       ctx.fillRect(cardX, cardY, 100, 66);
       if (image.complete && image.naturalWidth > 0) ctx.drawImage(image, cardX + 3, cardY + 3, 94, 48);
       else { ctx.fillStyle = resolvedTheme === 'dark' ? '#182033' : '#e8edf5'; ctx.fillRect(cardX + 3, cardY + 3, 94, 48); }
       ctx.strokeRect(cardX, cardY, 100, 66); ctx.fillStyle = resolvedTheme === 'dark' ? '#cbd5e1' : '#334155'; ctx.font = '600 9px sans-serif';
       ctx.fillText((pin.caption || 'Chart evidence').slice(0, 18), cardX + 5, cardY + 61); ctx.restore();
-      if (selected(pin.id)) drawSelection(cardX, cardY, 100, 66);
     }
-    if (currentPreview.current) {
-      const { x1, y1, x2, y2 } = currentPreview.current;
-      ctx.save(); ctx.strokeStyle = rectColor; ctx.fillStyle = rectColor + '18'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
-      ctx.beginPath();
-      if (drawingTool === 'line' || drawingTool === 'arrow') { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); if (drawingTool === 'arrow') drawArrowHead(x1, y1, x2, y2, rectColor); }
-      else { ctx.rect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1)); ctx.fill(); ctx.stroke(); }
-      ctx.restore();
-    }
-  }, [drawingTool, drawnArrows, drawnHorizontals, drawnImages, drawnLines, drawnRects, drawnTexts, rectColor, replayData, replayIdx, resolvedTheme, selectedAnnotationId]);
+  }, [drawnImages, replayData, replayIdx, resolvedTheme]);
 
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 
-  const findAnnotationAt = (x: number, y: number) => {
-    const chart = chartRef.current, series = seriesRef.current, canvas = canvasRef.current;
-    if (!chart || !series || !canvas) return null;
-    const distanceToSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
-      const dx = x2 - x1, dy = y2 - y1; if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
-      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
-      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
-    };
-    for (const annotation of [...allAnnotations].reverse()) {
-      if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'horizontal') {
-        const ax = chart.timeScale().timeToCoordinate(annotation.time as UTCTimestamp); const ay = series.priceToCoordinate(annotation.price);
-        if (ax == null || ay == null) continue;
-        if (annotation.type === 'horizontal' && x >= ax - 8 && Math.abs(y - ay) <= 8) return annotation;
-        if (annotation.type === 'image') {
-          const cardX = Math.min(canvas.width - 110, Math.max(8, ax + 10)); const cardY = Math.max(8, ay - 78);
-          if ((x >= cardX - 5 && x <= cardX + 105 && y >= cardY - 5 && y <= cardY + 71) || Math.hypot(x - ax, y - ay) <= 12) return annotation;
-        }
-        if (annotation.type === 'text') {
-          const ctx = canvas.getContext('2d'); if (!ctx) continue; ctx.font = '600 12px sans-serif'; const width = ctx.measureText(annotation.text).width;
-          if (x >= ax - 9 && x <= ax + width + 9 && y >= ay - 21 && y <= ay + 7) return annotation;
-        }
-        continue;
-      }
-      const x1 = chart.timeScale().timeToCoordinate(annotation.time1 as UTCTimestamp); const x2 = chart.timeScale().timeToCoordinate(annotation.time2 as UTCTimestamp);
-      const y1 = series.priceToCoordinate(annotation.price1); const y2 = series.priceToCoordinate(annotation.price2);
-      if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
-      if (annotation.type === 'rect') {
-        const left = Math.min(x1, x2), right = Math.max(x1, x2), top = Math.min(y1, y2), bottom = Math.max(y1, y2);
-        if (x >= left - 7 && x <= right + 7 && y >= top - 7 && y <= bottom + 7) return annotation;
-      } else if (distanceToSegment(x, y, x1, y1, x2, y2) <= 9) return annotation;
-    }
-    return null;
-  };
-
-  const beginAnnotationInteraction = (x: number, y: number) => {
-    const hit = findAnnotationAt(x, y);
-    setSelectedAnnotationId(hit?.id || '');
-    const chart = chartRef.current, series = seriesRef.current;
-    if (hit && chart && series) {
-      const originTime = chart.timeScale().coordinateToTime(x);
-      const originPrice = series.coordinateToPrice(y);
-      if (originTime != null && originPrice != null) {
-        movingAnnotationRef.current = { annotation: hit, startX: x, startY: y, originTime: Number(originTime), originPrice, moved: false };
-      }
-    }
-    return hit;
-  };
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (editingAnnotation) setEditingAnnotation(null);
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (drawingTool === 'none') {
-      // Idle state: the canvas only receives pointer events here when the cursor is
-      // already hovering a hit annotation (see handleChartWrapHoverMove), so a plain
-      // click/drag on an object works without pressing the Select tool first. Borrow
-      // 'select' as the interaction mode for the duration of this gesture so the
-      // in-progress drag keeps receiving events even after the cursor leaves the
-      // object's hit box, then revert to idle on mouseup.
-      const hit = beginAnnotationInteraction(x, y);
-      if (hit) { autoSelectModeRef.current = true; setDrawingTool('select'); }
-      return;
-    }
-    if (drawingTool === 'select') { beginAnnotationInteraction(x, y); return; }
+    const chart = chartRef.current, series = seriesRef.current;
+    if (!chart || !series) return;
+    const time = chart.timeScale().coordinateToTime(x);
+    const price = series.coordinateToPrice(y);
+    if (time == null || price == null) return;
     if (drawingTool === 'event') {
-      const chart = chartRef.current, series = seriesRef.current;
-      if (!chart || !series) return;
-      const time = chart.timeScale().coordinateToTime(x);
-      const price = series.coordinateToPrice(y);
-      if (time != null && price != null) {
-        setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setEventLocation({ time: Number(time), price });
-      }
+      setEditingEventId(''); setEventDraft(EMPTY_EVENT_DRAFT); setEventLocation({ time: Number(time), price });
       return;
     }
-    if (drawingTool === 'horizontal' || drawingTool === 'image') {
-      const chart = chartRef.current, series = seriesRef.current; if (!chart || !series) return;
-      const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
-      if (time == null || price == null || (drawingTool === 'image' && !pendingImage)) return;
-      pushAnnotationHistory(); setSelectedAnnotationId('');
-      if (drawingTool === 'horizontal') {
-        setDrawnHorizontals(current => [...current, { id: `horizontal-${Date.now()}`, time: Number(time), price, color: rectColor }]);
-        setDrawingTool('none'); setShowDrawingTools(false);
-      }
-      else if (pendingImage) {
-        setDrawnImages(current => [...current, { id: `image-${Date.now()}`, time: Number(time), price, color: rectColor, ...pendingImage }]);
-        setPendingImage(null); setDrawingTool('none');
-      }
-      return;
-    }
-    if (drawingTool === 'text') {
-      const chart = chartRef.current, series = seriesRef.current;
-      const text = annotationText.trim();
-      if (!chart || !series || !text) return;
-      const time = chart.timeScale().coordinateToTime(x); const price = series.coordinateToPrice(y);
-      if (time != null && price != null) {
-        pushAnnotationHistory();
-        setDrawnTexts(current => [...current, { id: `text-${Date.now()}`, time: time as number, price, text: text.slice(0, 80), color: rectColor }]);
-        setAnnotationText('');
-        setDrawingTool('none');
-      }
-      return;
-    }
-    drawStart.current = { x, y };
-  };
-  const applyAnnotationDelta = (original: ReplayAnnotation, deltaTime: number, deltaPrice: number) => {
-    const id = original.id;
-    if (original.type === 'rect' || original.type === 'line' || original.type === 'arrow') {
-      const updated = { ...original, time1: original.time1 + deltaTime, time2: original.time2 + deltaTime, price1: original.price1 + deltaPrice, price2: original.price2 + deltaPrice };
-      if (original.type === 'rect') setDrawnRects(cur => cur.map(item => item.id === id ? updated as DrawnRect : item));
-      if (original.type === 'line') setDrawnLines(cur => cur.map(item => item.id === id ? updated as DrawnLine : item));
-      if (original.type === 'arrow') setDrawnArrows(cur => cur.map(item => item.id === id ? updated as DrawnArrow : item));
-    } else {
-      const updated = { ...original, time: original.time + deltaTime, price: original.price + deltaPrice };
-      if (original.type === 'horizontal') setDrawnHorizontals(cur => cur.map(item => item.id === id ? updated as DrawnHorizontal : item));
-      if (original.type === 'text') setDrawnTexts(cur => cur.map(item => item.id === id ? updated as DrawnText : item));
-      if (original.type === 'image') setDrawnImages(cur => cur.map(item => item.id === id ? updated as DrawnImage : item));
+    if (drawingTool === 'image' && pendingImage) {
+      setDrawnImages(current => [...current, { id: `image-${Date.now()}`, time: Number(time), price, color: engine.color, ...pendingImage }]);
+      setPendingImage(null); setDrawingTool('none');
     }
   };
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (drawingTool === 'select' && movingAnnotationRef.current) {
-      const move = movingAnnotationRef.current;
-      const chart = chartRef.current, series = seriesRef.current;
-      if (!chart || !series) return;
-      const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
-      const x = e.clientX - r.left, y = e.clientY - r.top;
-      if (!move.moved && Math.hypot(x - move.startX, y - move.startY) < 3) return;
-      if (!move.moved) { move.moved = true; pushAnnotationHistory(); }
-      const time = chart.timeScale().coordinateToTime(x);
-      const price = series.coordinateToPrice(y);
-      if (time == null || price == null) return;
-      applyAnnotationDelta(move.annotation, Number(time) - move.originTime, price - move.originPrice);
-      return;
-    }
-    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
-    const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
-    currentPreview.current = { x1: drawStart.current.x, y1: drawStart.current.y, x2: e.clientX - r.left, y2: e.clientY - r.top };
-    redrawCanvas();
-  };
-  const endAutoSelectMode = () => {
-    if (!autoSelectModeRef.current) return;
-    autoSelectModeRef.current = false;
-    setDrawingTool('none');
-    setHoveredAnnotationId('');
-  };
-  const openAnnotationEditor = (annotation: ReplayAnnotation, anchorX: number, anchorY: number) => {
-    setEditingAnnotation({ annotation, anchorX, anchorY });
-    setAnnotationEditDraft({
-      text: annotation.type === 'text' ? annotation.text : '',
-      caption: annotation.type === 'image' ? annotation.caption : '',
-      color: annotation.color,
-      lineStyle: (annotation.type === 'line' || annotation.type === 'arrow' || annotation.type === 'horizontal')
-        ? (annotation.lineStyle || (annotation.type === 'horizontal' ? 'dashed' : 'solid'))
-        : 'solid',
-    });
-  };
-  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (movingAnnotationRef.current) {
-      const move = movingAnnotationRef.current;
-      movingAnnotationRef.current = null;
-      if (!move.moved) openAnnotationEditor(move.annotation, move.startX, move.startY);
-      endAutoSelectMode();
-      return;
-    }
-    if (!['rect', 'line', 'arrow'].includes(drawingTool) || !drawStart.current) return;
-    const canvas = canvasRef.current, chart = chartRef.current, series = seriesRef.current;
-    if (!canvas || !chart || !series) return;
-    const r = canvas.getBoundingClientRect(); const x2 = e.clientX - r.left; const y2 = e.clientY - r.top;
-    let placed = false;
-    if (Math.hypot(x2 - drawStart.current.x, y2 - drawStart.current.y) > 6) {
-      const t1 = chart.timeScale().coordinateToTime(drawStart.current.x);
-      const t2 = chart.timeScale().coordinateToTime(x2);
-      const p1 = series.coordinateToPrice(drawStart.current.y);
-      const p2 = series.coordinateToPrice(y2);
-      if (t1 != null && t2 != null && p1 != null && p2 != null) {
-        pushAnnotationHistory();
-        const shape = { id: `${drawingTool}-${Date.now()}`, time1: t1 as number, time2: t2 as number, price1: p1, price2: p2, color: rectColor };
-        if (drawingTool === 'line') setDrawnLines(prev => [...prev, shape]);
-        else if (drawingTool === 'arrow') setDrawnArrows(prev => [...prev, shape]);
-        else setDrawnRects(prev => [...prev, shape]);
-        placed = true;
-      }
-    }
-    drawStart.current = null; currentPreview.current = null; redrawCanvas();
-    if (placed) { setDrawingTool('none'); setShowDrawingTools(false); }
-  };
-  // Idle-state (no tool active) hover detection. The canvas overlay stays
-  // pointer-events:none by default so the chart underneath can still be
-  // panned/scrolled; this listener lives on the wrapping div (which always
-  // receives bubbled mouse events regardless of the canvas's pointer-events)
-  // and flips the canvas interactive only while hovering an existing
-  // annotation, so it can be dragged or clicked-to-delete without pressing
-  // the Select tool first.
-  const handleChartWrapHoverMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drawingTool !== 'none' || movingAnnotationRef.current) return;
-    const canvas = canvasRef.current; if (!canvas) return;
-    const r = canvas.getBoundingClientRect();
-    const hit = findAnnotationAt(e.clientX - r.left, e.clientY - r.top);
-    setHoveredAnnotationId(hit?.id || '');
-  };
-  const handleChartWrapMouseLeave = () => { if (drawingTool === 'none') setHoveredAnnotationId(''); };
 
   const uploadReplayImage = async (file: File) => {
     if (!file.type.startsWith('image/')) { alert('Choose an image file to attach to the chart.'); return; }
@@ -885,8 +593,9 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       const screenshots = Array.isArray(body.screenshots) ? body.screenshots : [];
       const uploaded = screenshots[screenshots.length - 1];
       if (!uploaded?.url) throw new Error('The image uploaded but no image URL was returned');
+      activateTool(null);
       setPendingImage({ url: String(uploaded.url), caption, screenshotId: String(uploaded._id || uploaded.publicId || '') });
-      setDrawingTool('image'); setSelectedAnnotationId('');
+      setDrawingTool('image');
     } catch (uploadError) {
       alert(uploadError instanceof Error ? uploadError.message : 'Could not upload chart image'); setDrawingTool('none');
     } finally { setUploadingImage(false); }
@@ -933,13 +642,15 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
     finally { setSaving(false); }
   };
 
+  const drawingBusy = Boolean(engine.activeTool || engine.selectedId || engine.editing);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (showShortcutHelp) { e.preventDefault(); setShowShortcutHelp(false); }
-      else if (editingAnnotation) { e.preventDefault(); closeAnnotationEditor(); }
-      else if (eventLocation || selectedAnnotationId || drawingTool !== 'none' || pendingImage) {
-        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setSelectedAnnotationId(''); setPendingImage(null); setAnnotationText(''); setShowDrawingTools(false); setDrawingTool('none');
+      // The drawing tools handle Esc themselves (cancel the tool, deselect, close the editor).
+      else if (drawingBusy) e.preventDefault();
+      else if (eventLocation || drawingTool !== 'none' || pendingImage) {
+        e.preventDefault(); setEventLocation(null); setEditingEventId(''); setPendingImage(null); setDrawingTool('none');
       } else onClose();
     };
     const previousOverflow = document.body.style.overflow;
@@ -952,7 +663,7 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       document.body.classList.remove('replay-open');
       window.removeEventListener('keydown', onKey);
     };
-  }, [drawingTool, eventLocation, onClose, pendingImage, selectedAnnotationId, showShortcutHelp]);
+  }, [drawingBusy, drawingTool, eventLocation, onClose, pendingImage, showShortcutHelp]);
 
   const totalCandles = replayData?.candles.length ?? 1;
   const progressPct = ((replayIdx + 1) / totalCandles) * 100;
@@ -991,73 +702,15 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
   const switchTimeframe = (interval: string) => {
     if (interval === selectedInterval) return;
     setPlaying(false); setReplayData(null); setLoading(true); setError('');
-    setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnImages([]);
-    setSelectedAnnotationId(''); setPendingImage(null); currentPreview.current = null;
-    annotationHistoryRef.current = []; setAnnotationHistoryDepth(0);
+    setDrawnImages([]); drawingsRef.current = []; setDrawings([]); activateTool(null);
+    setPendingImage(null); setDrawingTool('none');
     setSelectedInterval(interval);
     onIntervalChange?.(interval);
   };
-  const undoAnnotation = () => {
-    const previous = annotationHistoryRef.current.pop();
-    if (!previous) return;
-    setAnnotationHistoryDepth(annotationHistoryRef.current.length);
-    setDrawnRects(previous.rects); setDrawnLines(previous.lines); setDrawnHorizontals(previous.horizontals); setDrawnArrows(previous.arrows); setDrawnTexts(previous.texts); setDrawnImages(previous.images);
-    setSelectedAnnotationId('');
-  };
-  const deleteAnnotation = (annotation: ReplayAnnotation) => {
-    pushAnnotationHistory();
-    if (annotation.type === 'rect') setDrawnRects(current => current.filter(item => item.id !== annotation.id));
-    if (annotation.type === 'line') setDrawnLines(current => current.filter(item => item.id !== annotation.id));
-    if (annotation.type === 'horizontal') setDrawnHorizontals(current => current.filter(item => item.id !== annotation.id));
-    if (annotation.type === 'arrow') setDrawnArrows(current => current.filter(item => item.id !== annotation.id));
-    if (annotation.type === 'text') setDrawnTexts(current => current.filter(item => item.id !== annotation.id));
-    if (annotation.type === 'image') setDrawnImages(current => current.filter(item => item.id !== annotation.id));
-    setSelectedAnnotationId(current => current === annotation.id ? '' : current);
-  };
-  const deleteSelectedAnnotation = () => {
-    const annotation = allAnnotations.find(item => item.id === selectedAnnotationId); if (annotation) deleteAnnotation(annotation);
-  };
-  const closeAnnotationEditor = () => setEditingAnnotation(null);
-  const applyAnnotationEdit = () => {
-    if (!editingAnnotation) return;
-    const { annotation } = editingAnnotation;
-    const id = annotation.id;
-    pushAnnotationHistory();
-    if (annotation.type === 'text') {
-      const text = annotationEditDraft.text.trim().slice(0, 80);
-      if (!text) { deleteAnnotation(annotation); closeAnnotationEditor(); return; }
-      setDrawnTexts(cur => cur.map(item => item.id === id ? { ...item, text, color: annotationEditDraft.color } : item));
-    } else if (annotation.type === 'image') {
-      setDrawnImages(cur => cur.map(item => item.id === id ? { ...item, caption: annotationEditDraft.caption.trim().slice(0, 180), color: annotationEditDraft.color } : item));
-    } else if (annotation.type === 'rect') {
-      setDrawnRects(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color } : item));
-    } else if (annotation.type === 'line') {
-      setDrawnLines(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
-    } else if (annotation.type === 'arrow') {
-      setDrawnArrows(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
-    } else if (annotation.type === 'horizontal') {
-      setDrawnHorizontals(cur => cur.map(item => item.id === id ? { ...item, color: annotationEditDraft.color, lineStyle: annotationEditDraft.lineStyle } : item));
-    }
-    closeAnnotationEditor();
-  };
-  const deleteEditingAnnotation = () => {
-    if (!editingAnnotation) return;
-    deleteAnnotation(editingAnnotation.annotation);
-    closeAnnotationEditor();
-  };
-  useEffect(() => {
-    const onDelete = (event: KeyboardEvent) => {
-      if (!selectedAnnotationId || !['Delete', 'Backspace'].includes(event.key)) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      event.preventDefault(); deleteSelectedAnnotation();
-    };
-    window.addEventListener('keydown', onDelete); return () => window.removeEventListener('keydown', onDelete);
-  });
-  const clearAnnotations = () => {
-    if (allAnnotations.length === 0 || !window.confirm(`Clear all ${allAnnotations.length} annotations from ${selectedInterval}?`)) return;
-    pushAnnotationHistory(); setDrawnRects([]); setDrawnLines([]); setDrawnHorizontals([]); setDrawnArrows([]); setDrawnTexts([]); setDrawnImages([]);
-    setSelectedAnnotationId(''); currentPreview.current = null; redrawCanvas();
+  const deleteImage = (id: string) => setDrawnImages(current => current.filter(item => item.id !== id));
+  const renameImage = (image: DrawnImage) => {
+    const caption = window.prompt('Caption for this image:', image.caption);
+    if (caption != null) setDrawnImages(current => current.map(item => item.id === image.id ? { ...item, caption: caption.trim().slice(0, 180) } : item));
   };
   const saveTimelineEvent = () => {
     if (!eventLocation || !eventDraft.title.trim()) return;
@@ -1183,37 +836,17 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
         <div className="replay-tool-group">
           <span className="replay-tool-group-label">Document</span>
           <button type="button" aria-pressed={drawingTool === 'event'} className={`replay-tool-btn replay-tool-primary${drawingTool === 'event' ? ' active' : ''}`} onClick={() => activateDrawingTool('event')} title="Record a decision, emotion, mistake, or lesson at a candle"><MapPin size={16} /> Moment</button>
-          <button type="button" aria-pressed={drawingTool === 'text'} className={`replay-tool-btn${drawingTool === 'text' ? ' active' : ''}`} onClick={() => activateDrawingTool('text')} title="Write directly on the chart"><TypeIcon size={16} /> Text</button>
           <input ref={imageInputRef} className="replay-hidden-file" type="file" accept="image/*" onChange={handleReplayImageUpload} />
           <button type="button" disabled={uploadingImage} aria-pressed={drawingTool === 'image'} className={`replay-tool-btn${drawingTool === 'image' ? ' active' : ''}`} onClick={() => imageInputRef.current?.click()} title="Upload and pin visual evidence to the chart"><ImagePlus size={16} /> {uploadingImage ? 'Uploading…' : 'Evidence'}</button>
-          <button type="button" aria-expanded={showDrawingTools} aria-controls="replay-drawing-tray" aria-pressed={isShapeToolActive} className={`replay-tool-btn${isShapeToolActive || showDrawingTools ? ' active' : ''}`} onClick={() => setShowDrawingTools(current => !current)} title="Open drawing tools"><Square size={16} /> {isShapeToolActive ? TOOL_GUIDANCE[drawingTool]?.label : 'Draw'} <ChevronDown size={14} /></button>
         </div>
         <span className="replay-toolbar-spacer" />
         <span className={`replay-annotation-status ${annotationSaveState}`} role="status" title={annotationSaveError || 'Chart annotations save automatically'}>{annotationSaveState === 'loading' ? 'Loading notes…' : annotationSaveState === 'saving' ? 'Saving notes…' : annotationSaveState === 'error' ? 'Notes not saved' : 'Notes saved'}</span>
-        <div className="replay-tool-group replay-tool-actions">
-          <button type="button" aria-pressed={drawingTool === 'select'} className={`replay-tool-btn${drawingTool === 'select' ? ' active' : ''}`} onClick={() => activateDrawingTool('select')} title="Drag an annotation to move it, click it to edit"><MousePointer2 size={16} /> Select</button>
-          <button type="button" className="replay-tool-btn" disabled={annotationHistoryDepth === 0} onClick={undoAnnotation} title="Undo the last annotation change"><Undo2 size={16} /> Undo</button>
-          <button type="button" className="replay-tool-btn replay-delete-tool" disabled={!selectedAnnotationId} onClick={deleteSelectedAnnotation} title="Delete the selected annotation (Delete)"><Trash2 size={16} /> Delete</button>
-          {allAnnotations.length > 0 && <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Manage saved annotations" onClick={() => setShowAnnotationList(current => !current)}>Objects ({allAnnotations.length})</button>}
-        </div>
+        {drawnImages.length > 0 && (
+          <div className="replay-tool-group replay-tool-actions">
+            <button type="button" aria-pressed={showAnnotationList} className={`replay-tool-btn${showAnnotationList ? ' active' : ''}`} title="Rename or remove pinned images" onClick={() => setShowAnnotationList(current => !current)}>Images ({drawnImages.length})</button>
+          </div>
+        )}
       </div>
-
-      {showDrawingTools && (
-        <div id="replay-drawing-tray" className="replay-drawing-tray" aria-label="Drawing tools">
-          <div className="replay-tool-group">
-            <span className="replay-tool-group-label">Drawing</span>
-            <button type="button" aria-pressed={drawingTool === 'horizontal'} className={`replay-tool-btn${drawingTool === 'horizontal' ? ' active' : ''}`} onClick={() => activateDrawingTool('horizontal')}><MoveHorizontal size={16} /> Price level</button>
-            <button type="button" aria-pressed={drawingTool === 'arrow'} className={`replay-tool-btn${drawingTool === 'arrow' ? ' active' : ''}`} onClick={() => activateDrawingTool('arrow')}><ArrowUpRight size={16} /> Arrow</button>
-          </div>
-          <div className="replay-toolbar-divider" />
-          <div className="replay-tool-group replay-color-group" role="group" aria-label="Drawing color">
-            <span className="replay-tool-group-label">Color</span>
-            {DRAWING_COLORS.map(color => <button type="button" key={color.value} aria-label={`Use ${color.label.toLowerCase()} drawing color`} title={color.label} aria-pressed={color.value === rectColor} className={color.value === rectColor ? 'active' : ''} onClick={() => setRectColor(color.value)} style={{ '--replay-swatch': color.value } as React.CSSProperties} />)}
-          </div>
-          <span className="replay-drawing-tray-help">Choose a tool, then make one mark. Select it later to delete it.</span>
-          <button type="button" className="replay-tool-tray-close" onClick={() => setShowDrawingTools(false)} aria-label="Close drawing tools"><X size={16} /></button>
-        </div>
-      )}
 
       {activeToolGuidance && (
         <div className="replay-active-tool" role="status">
@@ -1225,24 +858,12 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
       )}
 
       <div className="replay-body">
-        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop} onMouseMove={handleChartWrapHoverMove} onMouseLeave={handleChartWrapMouseLeave}>
+        <ChartDrawingToolbar engine={engine} className="replay-drawing-toolbar" />
+        <div className={`replay-chart-wrap${isDraggingFileOverChart ? ' drag-over' : ''}`} onDragOver={handleChartDragOver} onDragLeave={() => setIsDraggingFileOverChart(false)} onDrop={handleChartDrop}>
           <div ref={chartContainerRef} className="replay-chart-container" />
+          <ChartDrawingLayer engine={engine} />
           {isDraggingFileOverChart && (
             <div className="replay-chart-drop-hint" role="status"><ImagePlus size={20} /> Drop image to pin as chart evidence</div>
-          )}
-          {drawingTool === 'text' && (
-            <div className="replay-chart-text-editor" role="group" aria-label="Write on chart">
-              <TypeIcon size={15} />
-              <input
-                ref={annotationInputRef}
-                aria-label="Text to place on chart"
-                placeholder="Write a note…"
-                maxLength={80}
-                value={annotationText}
-                onChange={event => setAnnotationText(event.target.value)}
-              />
-              <span>{annotationText.trim() ? 'Click the chart to place it' : 'Type your note first'}</span>
-            </div>
           )}
           {drawingTool === 'image' && pendingImage && (
             <div className="replay-chart-image-placer" role="status">
@@ -1275,63 +896,24 @@ export default function TradeReplayModal({ tradeId, tradeSummary, initialInterva
               <div className="replay-event-editor-actions"><button type="button" onClick={() => { setEventLocation(null); setEditingEventId(''); setDrawingTool('none'); }}>Cancel</button><button type="button" className="primary" disabled={!eventDraft.title.trim()} onClick={saveTimelineEvent}>{editingEventId ? 'Update event' : 'Add to timeline'}</button></div>
             </div>
           )}
-          {showAnnotationList && allAnnotations.length > 0 && (
-            <div className="replay-annotation-manager" aria-label="Chart annotations">
-              <div className="replay-annotation-manager-head"><strong>Saved annotations</strong><button type="button" onClick={clearAnnotations}>Clear all</button></div>
-              {allAnnotations.map((annotation, index) => (
-                <div className={`replay-annotation-row${selectedAnnotationId === annotation.id ? ' selected' : ''}`} key={annotation.id}>
-                  <button type="button" className="replay-annotation-select" aria-pressed={selectedAnnotationId === annotation.id} onClick={() => { setSelectedAnnotationId(annotation.id); setShowDrawingTools(false); setDrawingTool('select'); }}>
-                    <i style={{ background: annotation.color }} />
-                    <span><b>{annotation.type === 'rect' ? 'Zone' : annotation.type === 'line' ? 'Trend line' : annotation.type === 'horizontal' ? 'Level' : annotation.type === 'arrow' ? 'Arrow' : annotation.type === 'image' ? 'Image' : 'Text'}</b>{annotation.type === 'text' ? ` — ${annotation.text}` : annotation.type === 'image' ? ` — ${annotation.caption || 'Chart evidence'}` : ` ${index + 1}`}</span>
+          {showAnnotationList && drawnImages.length > 0 && (
+            <div className="replay-annotation-manager" aria-label="Pinned images">
+              <div className="replay-annotation-manager-head"><strong>Pinned images</strong></div>
+              {drawnImages.map(image => (
+                <div className="replay-annotation-row" key={image.id}>
+                  <button type="button" className="replay-annotation-select" onClick={() => renameImage(image)} title="Rename">
+                    <i style={{ background: image.color }} />
+                    <span><b>Image</b> — {image.caption || 'Chart evidence'}</span>
                   </button>
-                  <button type="button" onClick={click => { click.stopPropagation(); deleteAnnotation(annotation); }} aria-label={`Delete ${annotation.type} annotation`}><Trash2 size={13} /></button>
+                  <button type="button" onClick={() => deleteImage(image.id)} aria-label="Remove image"><Trash2 size={13} /></button>
                 </div>
               ))}
             </div>
           )}
-          {editingAnnotation && (() => {
-            const canvas = canvasRef.current;
-            const maxLeft = (canvas?.clientWidth ?? 900) - 240;
-            const maxTop = (canvas?.clientHeight ?? 500) - 260;
-            const left = Math.max(8, Math.min(editingAnnotation.anchorX + 10, maxLeft));
-            const top = Math.max(8, Math.min(editingAnnotation.anchorY + 10, maxTop));
-            const a = editingAnnotation.annotation;
-            const typeLabel = a.type === 'text' ? 'Text note' : a.type === 'image' ? 'Chart image' : a.type === 'horizontal' ? 'Price level' : a.type === 'arrow' ? 'Arrow' : a.type === 'line' ? 'Trend line' : 'Zone';
-            return (
-              <div className="replay-annotation-editor" role="dialog" aria-label={`Edit ${typeLabel}`} style={{ left, top }}>
-                <div className="replay-annotation-editor-head"><strong>{typeLabel}</strong><button type="button" onClick={closeAnnotationEditor} aria-label="Close editor">×</button></div>
-                {a.type === 'text' && (
-                  <label>Text<input maxLength={80} value={annotationEditDraft.text} onChange={event => setAnnotationEditDraft(cur => ({ ...cur, text: event.target.value }))} autoFocus /></label>
-                )}
-                {a.type === 'image' && (
-                  <label>Caption<input maxLength={180} value={annotationEditDraft.caption} onChange={event => setAnnotationEditDraft(cur => ({ ...cur, caption: event.target.value }))} autoFocus /></label>
-                )}
-                <div className="replay-annotation-editor-colors" role="group" aria-label="Color">
-                  {DRAWING_COLORS.map(color => (
-                    <button type="button" key={color.value} title={color.label} aria-label={color.label} aria-pressed={annotationEditDraft.color === color.value}
-                      className={annotationEditDraft.color === color.value ? 'active' : ''}
-                      onClick={() => setAnnotationEditDraft(cur => ({ ...cur, color: color.value }))}
-                      style={{ '--replay-swatch': color.value } as React.CSSProperties} />
-                  ))}
-                </div>
-                {(a.type === 'line' || a.type === 'arrow' || a.type === 'horizontal') && (
-                  <div className="replay-annotation-editor-linestyle" role="group" aria-label="Line style">
-                    <button type="button" aria-pressed={annotationEditDraft.lineStyle === 'solid'} className={annotationEditDraft.lineStyle === 'solid' ? 'active' : ''} onClick={() => setAnnotationEditDraft(cur => ({ ...cur, lineStyle: 'solid' }))}>Solid</button>
-                    <button type="button" aria-pressed={annotationEditDraft.lineStyle === 'dashed'} className={annotationEditDraft.lineStyle === 'dashed' ? 'active' : ''} onClick={() => setAnnotationEditDraft(cur => ({ ...cur, lineStyle: 'dashed' }))}>Dashed</button>
-                  </div>
-                )}
-                <div className="replay-annotation-editor-actions">
-                  <button type="button" className="replay-annotation-editor-delete" onClick={deleteEditingAnnotation}><Trash2 size={13} /> Delete</button>
-                  <button type="button" className="primary" onClick={applyAnnotationEdit}>Save</button>
-                </div>
-              </div>
-            );
-          })()}
           <canvas ref={canvasRef}
-            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}${drawingTool === 'select' ? ' selecting' : ''}${drawingTool === 'none' && hoveredAnnotationId ? ' idle-hover' : ''}`}
-            aria-label={drawingTool === 'select' ? 'Select a chart annotation' : 'Place a chart annotation'}
-            onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={() => { movingAnnotationRef.current = null; endAutoSelectMode(); if (drawStart.current) { drawStart.current = null; currentPreview.current = null; redrawCanvas(); } }} />
+            className={`replay-canvas-overlay${drawingTool !== 'none' ? ' drawing-active' : ''}`}
+            aria-label={drawingTool === 'event' ? 'Click the candle for this moment' : 'Pinned chart images'}
+            onMouseDown={handleCanvasMouseDown} />
           {pausedMarker && <div className="replay-marker-pause" role="status"><PauseCircle size={18} /><div><strong>Paused at {pausedMarker}</strong><span>Review what you knew and what you decided here.</span></div></div>}
           {showShortcutHelp && (
             <div className="replay-shortcut-help" role="dialog" aria-label="Replay keyboard shortcuts">

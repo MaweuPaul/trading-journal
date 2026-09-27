@@ -3355,6 +3355,8 @@ textarea.replay-rule-input { min-height: 76px; resize: vertical; }
   .replay-event-editor-grid { grid-template-columns: 1fr; }
   .replay-event-visibility > div { grid-template-columns: 1fr; }
   .replay-body { flex-direction: column; overflow-y: auto; }
+  .replay-body > .replay-drawing-toolbar { width: auto !important; flex-direction: row !important; overflow-x: auto; overflow-y: hidden; padding: 4px 8px !important; border-right: 0 !important; border-bottom: 1px solid #1a2035; }
+  .replay-body > .replay-drawing-toolbar > div[role='radiogroup'] { flex-direction: row; }
   .replay-chart-wrap { flex: 0 0 48dvh; min-height: 300px; }
   .replay-journal-panel { flex: 0 0 auto; overflow: visible; border-left: 0; border-top: 1px solid #1a2035; }
   .replay-bottombar { min-height: 72px; height: auto; padding: 8px 10px; overflow-x: auto; }

@@ -11,23 +11,31 @@ function normalizeBacktestDrawings(input) {
   if (input.length > 200) throw new Error('A backtest chart can have at most 200 drawings');
   const ids = new Set();
 
-  const safePrimitives = (obj, stringCap) => {
-    const out = {};
-    if (!obj || typeof obj !== 'object') return out;
-    for (const [key, value] of Object.entries(obj)) {
-      if (typeof value === 'string') out[key] = value.slice(0, stringCap);
-      else if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
-      else if (typeof value === 'boolean') out[key] = value;
-      else if (Array.isArray(value)) out[key] = value.slice(0, 20).filter(v => typeof v === 'number' && Number.isFinite(v));
-    }
-    return out;
-  };
-
   return input.map((drawing, index) => {
+    const out = normalizeDrawing(drawing, index);
+    if (ids.has(out.id)) throw new Error(`Drawing ID ${out.id} is duplicated`);
+    ids.add(out.id);
+    return out;
+  });
+}
+
+const safePrimitives = (obj, stringCap) => {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'string') out[key] = value.slice(0, stringCap);
+    else if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === 'boolean') out[key] = value;
+    else if (Array.isArray(value)) out[key] = value.slice(0, 20).filter(v => typeof v === 'number' && Number.isFinite(v));
+  }
+  return out;
+};
+
+/** One SerializedDrawing (the shared chart drawing tools' saved form). */
+function normalizeDrawing(drawing, index = 0) {
+  {
     const id = String(drawing?.id || '').trim();
     if (!/^[A-Za-z0-9:_-]{1,100}$/.test(id)) throw new Error(`Drawing ${index + 1} has an invalid ID`);
-    if (ids.has(id)) throw new Error(`Drawing ID ${id} is duplicated`);
-    ids.add(id);
 
     const type = String(drawing?.type || '').trim();
     if (!type || type.length > 60) throw new Error(`Drawing ${index + 1} has an invalid type`);
@@ -47,7 +55,7 @@ function normalizeBacktestDrawings(input) {
       style: safePrimitives(drawing.style, 200),
       options: safePrimitives(drawing.options, 500), // options can carry longer text (e.g. TextAnnotation content)
     };
-  });
+  }
 }
 
-module.exports = { normalizeBacktestDrawings };
+module.exports = { normalizeBacktestDrawings, normalizeDrawing };

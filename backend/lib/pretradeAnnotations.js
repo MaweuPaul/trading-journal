@@ -1,3 +1,4 @@
+const { normalizeDrawing } = require('./backtestDrawings');
 // Same per-type validation as backend/lib/replayAnnotations.js, but for
 // Pre-Trade Analysis charts: no "interval" keying (annotations use absolute
 // time/price and stay meaningful across timeframe switches) and no 'event'
@@ -13,11 +14,16 @@ function normalizePretradeAnnotations(input) {
   };
   return input.map((annotation, index) => {
     const type = String(annotation?.type || '');
-    if (!['rect', 'line', 'horizontal', 'arrow', 'text', 'image', 'fib'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
+    if (!['rect', 'line', 'horizontal', 'arrow', 'text', 'image', 'fib', 'drawing'].includes(type)) throw new Error(`Annotation ${index + 1} has an unsupported type`);
     const annotationId = String(annotation.id || '').trim();
     if (!/^[A-Za-z0-9:_-]{1,100}$/.test(annotationId)) throw new Error(`Annotation ${index + 1} has an invalid ID`);
     if (ids.has(annotationId)) throw new Error(`Annotation ID ${annotationId} is duplicated`);
     ids.add(annotationId);
+    // A drawing from the shared chart drawing tools (components/chart-drawing), in the library's own format.
+    if (type === 'drawing') {
+      const drawing = normalizeDrawing({ ...annotation.drawing, id: annotationId }, index);
+      return { id: annotationId, type, drawing };
+    }
     const color = /^#[0-9a-fA-F]{6}$/.test(String(annotation.color || '')) ? String(annotation.color) : '#3b82f6';
     const lineStyle = annotation.lineStyle === 'dashed' ? 'dashed' : annotation.lineStyle === 'solid' ? 'solid' : undefined;
     if (type === 'text') {

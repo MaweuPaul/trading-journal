@@ -25,7 +25,7 @@ import {
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
-import DrawingTextEditor from '../backtest-tools/DrawingTextEditor';
+import DrawingPropertiesPanel, { DrawingPropertiesCapabilities, DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
 import DrawingTextOverlay from '../backtest-tools/DrawingTextOverlay';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
@@ -123,9 +123,17 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
-interface DrawingTextEdit { drawingId: string; drawingName: string; initialValue: string; isNew: boolean }
+interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
 type DrawingWithText = IDrawing & {
-  style: IDrawing['style'] & { drawingText?: string };
+  style: IDrawing['style'] & {
+    drawingText?: string;
+    drawingTextFontSize?: number;
+    drawingTextBold?: boolean;
+    drawingTextItalic?: boolean;
+    drawingTextPlacement?: DrawingPropertiesValue['textPlacement'];
+    drawingTextAlign?: DrawingPropertiesValue['textAlign'];
+  };
+  options: IDrawing['options'] & { filled?: boolean };
   getText?: () => string;
   setText?: (text: string) => void;
 };
@@ -144,6 +152,63 @@ function setDrawingText(drawing: IDrawing, text: string) {
 
 function drawingDisplayName(type: string) {
   return WORKSPACE_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
+}
+
+function drawingCapabilities(drawing: IDrawing): DrawingPropertiesCapabilities {
+  const textTypes = new Set(['rectangle', 'trend-line', 'ray', 'horizontal-line', 'parallel-channel', 'fib-retracement', 'fib-extension', 'arrow', 'text-annotation']);
+  const fillTypes = new Set(['rectangle']);
+  return {
+    style: true,
+    fill: fillTypes.has(drawing.type),
+    text: textTypes.has(drawing.type),
+    coordinates: true,
+    visibility: true,
+    extendRight: drawing.type === 'rectangle' || drawing.type === 'trend-line' || drawing.type === 'ray',
+  };
+}
+
+function drawingPropertiesValue(drawing: IDrawing): DrawingPropertiesValue {
+  const withText = drawing as DrawingWithText;
+  return {
+    lineColor: drawing.style.lineColor || '#3b82f6',
+    lineWidth: drawing.style.lineWidth || 2,
+    fillColor: drawing.style.fillColor || drawing.style.lineColor || '#3b82f6',
+    fillOpacity: typeof drawing.style.fillOpacity === 'number' ? drawing.style.fillOpacity : 0.12,
+    filled: Boolean(withText.options.filled),
+    text: getDrawingText(drawing),
+    textFontSize: withText.style.drawingTextFontSize || 12,
+    textBold: Boolean(withText.style.drawingTextBold),
+    textItalic: Boolean(withText.style.drawingTextItalic),
+    textPlacement: withText.style.drawingTextPlacement || 'inside',
+    textAlign: withText.style.drawingTextAlign || 'center',
+    visible: drawing.options.visible !== false,
+    locked: Boolean(drawing.options.locked),
+    extendRight: Boolean(drawing.options.extendRight),
+    anchors: drawing.anchors.map(anchor => ({ time: String(anchor.time), price: anchor.price })),
+  };
+}
+
+function applyDrawingProperties(drawing: IDrawing, value: DrawingPropertiesValue) {
+  setDrawingText(drawing, value.text);
+  drawing.updateStyle({
+    lineColor: value.lineColor,
+    lineWidth: value.lineWidth,
+    fillColor: value.fillColor,
+    fillOpacity: value.fillOpacity,
+    drawingText: value.text,
+    drawingTextFontSize: value.textFontSize,
+    drawingTextBold: value.textBold,
+    drawingTextItalic: value.textItalic,
+    drawingTextPlacement: value.textPlacement,
+    drawingTextAlign: value.textAlign,
+  } as Partial<DrawingWithText['style']>);
+  drawing.updateOptions({
+    visible: value.visible,
+    locked: value.locked,
+    extendRight: value.extendRight,
+    filled: value.filled,
+  } as Partial<DrawingWithText['options']>);
+  drawing.requestUpdate();
 }
 
 function drawingFactory(type: string, data: SerializedDrawing) {
@@ -266,7 +331,7 @@ export default function Workspace() {
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingCount, setDrawingCount] = useState(0);
   const [drawingRevision, setDrawingRevision] = useState(0);
-  const [drawingTextEdit, setDrawingTextEdit] = useState<DrawingTextEdit | null>(null);
+  const [drawingPropertiesEdit, setDrawingPropertiesEdit] = useState<DrawingPropertiesEdit | null>(null);
   const drawingHistoryRef = useRef<SerializedDrawing[][]>([]);
   const [historyDepth, setHistoryDepth] = useState(0);
   const pendingDrawingRef = useRef<PendingDrawing | null>(null);
@@ -462,36 +527,35 @@ export default function Workspace() {
   // instead of reading them off state -- state set just before this is
   // called (setSymbol etc.) hasn't committed yet, so this closure would
   // otherwise still see the *previous* render's values.
-  const editSelectedDrawingText = () => {
+  const editSelectedDrawingProperties = () => {
     const drawing = selectedDrawingId ? managerRef.current?.getDrawing(selectedDrawingId) : null;
     if (!drawing) return;
-    setDrawingTextEdit({
+    setDrawingPropertiesEdit({
       drawingId: drawing.id,
       drawingName: drawingDisplayName(drawing.type),
-      initialValue: getDrawingText(drawing),
       isNew: false,
     });
   };
-  const cancelDrawingText = () => {
-    const edit = drawingTextEdit;
-    setDrawingTextEdit(null);
+  const cancelDrawingProperties = () => {
+    const edit = drawingPropertiesEdit;
+    setDrawingPropertiesEdit(null);
     if (!edit?.isNew) return;
     managerRef.current?.removeDrawing(edit.drawingId);
     setSelectedDrawingId(null);
   };
-  const saveDrawingText = (value: string) => {
-    const edit = drawingTextEdit;
+  const saveDrawingProperties = (value: DrawingPropertiesValue) => {
+    const edit = drawingPropertiesEdit;
     const manager = managerRef.current;
     const drawing = edit ? manager?.getDrawing(edit.drawingId) : null;
-    setDrawingTextEdit(null);
+    setDrawingPropertiesEdit(null);
     if (!edit || !manager || !drawing) return;
     if (!edit.isNew) pushHistorySnapshot();
-    if (!value && drawing.type === 'text-annotation') {
+    if (!value.text && drawing.type === 'text-annotation') {
       manager.removeDrawing(drawing.id);
       setSelectedDrawingId(null);
       return;
     }
-    setDrawingText(drawing, value);
+    applyDrawingProperties(drawing, value);
     manager.selectDrawing(drawing.id);
     setSelectedDrawingId(drawing.id);
     setDrawingRevision(revision => revision + 1);
@@ -776,10 +840,9 @@ export default function Workspace() {
       const drawing = manager.hitTest({ x: ev.clientX - r.left, y: ev.clientY - r.top });
       if (!drawing) return;
       manager.selectDrawing(drawing.id);
-      setDrawingTextEdit({
+      setDrawingPropertiesEdit({
         drawingId: drawing.id,
         drawingName: drawingDisplayName(drawing.type),
-        initialValue: getDrawingText(drawing),
         isNew: false,
       });
       ev.preventDefault();
@@ -806,10 +869,9 @@ export default function Workspace() {
           // Zones extend with the replay: the right edge follows the latest candle (see the reveal effect).
           if (event.drawing.type === 'rectangle' && !event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: true });
           if (event.drawing.type === 'text-annotation') {
-            setDrawingTextEdit({
+            setDrawingPropertiesEdit({
               drawingId: event.drawing.id,
               drawingName: drawingDisplayName(event.drawing.type),
-              initialValue: getDrawingText(event.drawing),
               isNew: true,
             });
           }
@@ -1972,7 +2034,7 @@ export default function Workspace() {
           </button>
           {selectedDrawingId && (
             <>
-              <button type="button" onClick={editSelectedDrawingText} title="Add or edit drawing text" aria-label="Add or edit drawing text"
+              <button type="button" onClick={editSelectedDrawingProperties} title="Add or edit drawing text" aria-label="Add or edit drawing text"
                 className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-primary/15 tw:hover:text-primary">
                 <Icon name="edit_note" className="tw:text-[20px]" />
               </button>
@@ -2015,16 +2077,21 @@ export default function Workspace() {
             drawings={managerRef.current?.exportDrawings() ?? []}
             revision={drawingRevision}
           />
-          {drawingTextEdit && (
-            <DrawingTextEditor
-              key={drawingTextEdit.drawingId}
-              drawingName={drawingTextEdit.drawingName}
-              initialValue={drawingTextEdit.initialValue}
-              isNew={drawingTextEdit.isNew}
-              onSave={saveDrawingText}
-              onCancel={cancelDrawingText}
-            />
-          )}
+          {drawingPropertiesEdit && (() => {
+            const drawing = managerRef.current?.getDrawing(drawingPropertiesEdit.drawingId);
+            if (!drawing) return null;
+            return (
+              <DrawingPropertiesPanel
+                key={drawingPropertiesEdit.drawingId}
+                drawingName={drawingPropertiesEdit.drawingName}
+                isNew={drawingPropertiesEdit.isNew}
+                capabilities={drawingCapabilities(drawing)}
+                value={drawingPropertiesValue(drawing)}
+                onSave={saveDrawingProperties}
+                onCancel={cancelDrawingProperties}
+              />
+            );
+          })()}
           {chartMenu && (
             <>
               <div className="tw:fixed tw:inset-0 tw:z-40" onMouseDown={() => setChartMenu(null)} onContextMenu={e => { e.preventDefault(); setChartMenu(null); }} />

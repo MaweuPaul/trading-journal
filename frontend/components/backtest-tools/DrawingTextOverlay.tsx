@@ -11,7 +11,14 @@ interface DrawingTextOverlayProps {
 }
 
 type DrawingWithText = SerializedDrawing & {
-  style: SerializedDrawing['style'] & { drawingText?: string };
+  style: SerializedDrawing['style'] & {
+    drawingText?: string;
+    drawingTextFontSize?: number;
+    drawingTextBold?: boolean;
+    drawingTextItalic?: boolean;
+    drawingTextPlacement?: 'inside' | 'above' | 'below';
+    drawingTextAlign?: 'left' | 'center' | 'right';
+  };
 };
 
 export default function DrawingTextOverlay({
@@ -35,9 +42,28 @@ export default function DrawingTextOverlay({
     });
     if (!points.length) return [];
 
+    const placement = drawing.style.drawingTextPlacement ?? 'inside';
+    const align = drawing.style.drawingTextAlign ?? 'center';
     const x = points.reduce((sum, point) => sum + point.x, 0) / points.length;
-    const y = points.reduce((sum, point) => sum + point.y, 0) / points.length;
-    return [{ id: drawing.id, text, x, y, color: drawing.style.lineColor }];
+    const yBase = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+    const y = placement === 'above'
+      ? Math.min(...points.map(point => point.y)) - 18
+      : placement === 'below'
+        ? Math.max(...points.map(point => point.y)) + 18
+        : yBase;
+    const translateX = align === 'left' ? '0' : align === 'right' ? '-100%' : '-50%';
+    return [{
+      id: drawing.id,
+      text,
+      x,
+      y,
+      translateX,
+      color: drawing.style.lineColor,
+      fontSize: drawing.style.drawingTextFontSize ?? 12,
+      fontWeight: drawing.style.drawingTextBold ? 700 : 600,
+      fontStyle: drawing.style.drawingTextItalic ? 'italic' : 'normal',
+      textAlign: align,
+    }];
   });
 
   return (
@@ -45,8 +71,17 @@ export default function DrawingTextOverlay({
       {labels.map(label => (
         <span
           key={label.id}
-          className="tw:absolute tw:max-w-56 tw:-translate-x-1/2 tw:-translate-y-1/2 tw:whitespace-pre-wrap tw:rounded-md tw:border tw:bg-surface-container-lowest/90 tw:px-2 tw:py-1 tw:text-center tw:text-xs tw:font-semibold tw:leading-snug tw:text-on-surface tw:shadow-md tw:backdrop-blur-sm"
-          style={{ left: label.x, top: label.y, borderColor: label.color }}
+          className="tw:absolute tw:max-w-56 tw:-translate-y-1/2 tw:whitespace-pre-wrap tw:rounded-md tw:border tw:bg-surface-container-lowest/90 tw:px-2 tw:py-1 tw:leading-snug tw:text-on-surface tw:shadow-md tw:backdrop-blur-sm"
+          style={{
+            left: label.x,
+            top: label.y,
+            transform: `translate(${label.translateX}, -50%)`,
+            borderColor: label.color,
+            fontSize: label.fontSize,
+            fontWeight: label.fontWeight,
+            fontStyle: label.fontStyle,
+            textAlign: label.textAlign,
+          }}
         >
           {label.text}
         </span>

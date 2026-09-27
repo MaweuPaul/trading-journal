@@ -63,7 +63,7 @@ export default function LoginPage() {
       router.push(nextPath());
       router.refresh();
     } catch (err: any) {
-      setError(err.message || 'Connection failed. Please make sure the backend is running.');
+      setError(err.message || 'Could not reach the journal. Check your connection and try again.');
     } finally {
       setLoading(false);
     }

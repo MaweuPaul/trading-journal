@@ -24,7 +24,7 @@ export default function SignupPage() {
     fetch(`${API}/auth/setup-status`)
       .then(response => response.json())
       .then(status => setDatabaseAvailable(Boolean(status.databaseAvailable)))
-      .catch(() => { setDatabaseAvailable(false); setError('Could not contact the journal backend.'); });
+      .catch(() => { setDatabaseAvailable(false); setError('Could not reach the journal. Check your connection and try again.'); });
   }, [router]);
 
   const submit = async (event: React.FormEvent) => {
@@ -89,7 +89,7 @@ export default function SignupPage() {
             <button type="submit" className="login-btn" disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : 'Create account'}</button>
           </form>
         ) : (
-          <div style={{ padding: '12px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>The backend database is unavailable right now — try again shortly.</div>
+          <div style={{ padding: '12px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Sign-up isn&apos;t available right now. Please try again shortly.</div>
         )}
 
         <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12 }}><Link href="/login" style={{ color: 'var(--accent)', fontWeight: 700 }}>Already have an account? Sign in</Link></div>

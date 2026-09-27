@@ -125,7 +125,7 @@ const isoMin = s => new Date(s * 1000).toISOString().slice(0, 16) + 'Z';
   const fastBreakout = Boolean(tools.find(t => t.name === 'step')?.inputSchema?.properties?.untilCloseAbove);
   if (!fastBreakout) console.log('(This server has no untilCloseAbove/untilCloseBelow on step yet: watching bar by bar, which is much slower.)');
   console.log(`ORB NY Open on ${cfg.symbol}, ${cfg.from} -> ${cfg.to}`, JSON.stringify({ candleMinutes: cfg.candleMinutes, monitorHours: cfg.monitorHours, targetMult: cfg.targetMult, bias: cfg.bias, breakoutTf: cfg.breakoutTf, retest: cfg.retest ? `${cfg.retestExpiryMin} min` : false }));
-  if (cfg.log) await call('create_strategy', { name: cfg.strategy, description: STRATEGY_RULES });
+  if (cfg.log) await call('create_strategy', { name: cfg.strategy, description: STRATEGY_RULES.slice(0, 500) });
 
   const session = await call('start_session', { symbol: cfg.symbol, interval: '1min', from: cfg.from, to: cfg.to, strategy: cfg.log ? cfg.strategy : undefined, context: 0 });
   const sid = session.sessionId;

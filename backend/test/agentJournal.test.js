@@ -153,3 +153,28 @@ test('journal tools only appear on keys with journal access, which the owner can
   assert.equal((await toolNames(plain.key)).includes('list_trades'), false);
   assert.equal((await asOwner(`/api-keys/${plain._id}`, { method: 'PATCH', body: '{}' })).status, 400);
 });
+
+test('knowledge base, pre-trade analyses and cash flows are readable, only the owner\'s', async () => {
+  const user = H.newUserId(), other = H.newUserId();
+  const k = await H.models.KnowledgeEntry.create({ user, title: 'Asian range', content: 'Gold often sweeps the Asian high before NY.', tags: ['liquidity'] });
+  await H.models.KnowledgeEntry.create({ user: other, title: 'not mine', content: 'Asian' });
+  const list = await journal.listKnowledge(user, { search: 'asian' });
+  assert.equal(list.total, 1);
+  assert.equal((await journal.listKnowledge(user, { tag: 'LIQUIDITY' })).total, 1);
+  assert.match((await journal.getKnowledgeEntry(user, String(k._id))).entry.content, /sweeps/);
+  await assert.rejects(journal.getKnowledgeEntry(other, String(k._id)), /not found/);
+
+  const a = await H.models.PreTradeAnalysis.create({
+    user, playbookId: 'p', playbookVersionId: 'v', symbol: 'XAUUSD', direction: 'long', notes: 'wait for the sweep',
+    playbookSnapshot: { name: 'NY ORB', versionNumber: 1, blocks: [{ name: 'Plan', rules: [{ ruleId: 'r1', label: 'Bias' }] }] }, responses: { r1: 'long' },
+  });
+  assert.equal((await journal.listPreTradeAnalyses(user, { status: 'open' })).total, 1);
+  const got = (await journal.getPreTradeAnalysis(user, String(a._id))).analysis;
+  assert.deepEqual(got.playbookAnswers.answers, [{ block: 'Plan', rule: 'Bias', answer: 'long' }]);
+
+  await H.models.AccountEvent.create({ user, type: 'deposit', amount: 1000, occurredAt: new Date('2024-01-02'), accountKey: 'ctrader:1' });
+  await H.models.AccountEvent.create({ user, type: 'withdrawal', amount: -300, occurredAt: new Date('2024-02-02'), accountKey: 'ctrader:1' });
+  const ev = await journal.getAccountEvents(user, {});
+  assert.deepEqual(ev.totals, { deposits: 1000, withdrawals: 300, adjustments: 0 });
+  assert.equal((await journal.getAccountEvents(user, { from: '2024-02-01' })).events.length, 1);
+});

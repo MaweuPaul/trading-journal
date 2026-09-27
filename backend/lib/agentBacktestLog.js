@@ -417,4 +417,5 @@ async function evaluateHoldout(userId, { name, version }) {
 module.exports = {
   listBacktests, getBacktest, updateBacktest, deleteBacktest, deleteStrategy, getMetrics, GROUPS,
   getStrategy, updateStrategyRules, setHoldout, evaluateHoldout,
+  statsOf, groupKeys, featureBuckets,
 };

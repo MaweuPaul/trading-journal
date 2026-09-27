@@ -480,6 +480,15 @@ export default function ManualPage() {
               <li><b>Test it once on the held-out data</b><span className="d">Keep the change only if it holds up there. Every look at held-out results is counted, and versions made after peeking are flagged.</span></li>
             </ol>
             <Callout icon="Note">This doesn&apos;t retrain the AI model itself. It gives the agent a disciplined, recorded way to learn from your data, and keeps you from trusting an improvement that only exists in the data it was fitted to.</Callout>
+            <div className="manual-sub">Mechanical strategies as code</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>For rule-based strategies the agent doesn&apos;t have to step through candles one call at a time. It writes the rules as a short piece of code, and the journal runs it over months or years of your cTrader history, usually in seconds to minutes. Any new strategy works this way without changes to the journal itself.</p>
+            <ul className="manual-feature-list">
+              <li><b>Still no hindsight</b>: the code is fed one closed candle at a time, on every timeframe it uses, so it can&apos;t peek ahead.</li>
+              <li><b>The journal settles every trade</b>, the same way as replays: stops, targets and pending orders are checked on 1-minute candles. The agent can add spread and commission.</li>
+              <li><b>Sandboxed</b>: the code can&apos;t reach the internet, your data or the server, and runs with strict time and memory limits.</li>
+              <li><b>Results</b> come back with likely ranges and breakdowns (by setup tag, weekday, hour, exit reason or any entry condition), and can be logged to your Backtest Log as agent trades.</li>
+            </ul>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Code up my ORB liquidity sweep on gold, 5-minute candles, and run it on the last year with a 0.3 spread. Break the results down by weekday.&quot;</i> Strategies that need judgement (reading structure, discretionary setups) still use the bar-by-bar replay.</p>
             <div className="manual-sub">Reviewing your real trades</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>With <b>journal access</b> on, the agent can read your real trades the way a coach would, with your actual data in front of it. It is read-only: it can&apos;t edit, tag or delete anything.</p>
             <ul className="manual-feature-list">
@@ -487,6 +496,7 @@ export default function ManualPage() {
               <li><b>Statistics</b>: the same numbers as your Stats pages, net of commission and swap, with likely ranges, split by setup, session, emotion, grades, rules followed, hold time and more.</li>
               <li><b>Price action</b>: candles from cTrader around any trade, with its entry, exit, stop and target, so it can see what the market did.</li>
               <li><b>Your playbooks</b>: the rules you wrote, to hold each trade against.</li>
+              <li><b>Everything else</b>: your knowledge base, pre-trade analyses, and deposits and withdrawals.</li>
             </ul>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>Try asking: <i>&quot;Review my live trades from the last 3 months. Where am I losing money, is it the setup or my execution? Show me the trades that prove it.&quot;</i></p>
             <div className="manual-sub">Limits</div>

@@ -89,6 +89,8 @@ function memoryModel(Model) {
   Model.countDocuments = async query => find(query).length;
   Model.updateOne = async (query, update) => { const doc = find(query)[0]; if (doc) Object.assign(doc, update.$set || update); return {}; };
   Model.create = async data => { const doc = new Model(data); await doc.validate(); await doc.save(); return doc; };
+  Model.insertMany = async list => Promise.all(list.map(data => Model.create(data)));
+  Model.updateMany = async () => ({});
   Model.findOneAndUpdate = async (query, update, opts) => {
     const doc = find(query)[0];
     if (!doc) {
@@ -120,6 +122,10 @@ const models = {
   ReplayJournal: memoryModel(require('../models/ReplayJournal')),
   TradingAccount: memoryModel(require('../models/TradingAccount')),
   User: memoryModel(require('../models/User')),
+  StrategyRun: memoryModel(require('../models/StrategyRun')),
+  KnowledgeEntry: memoryModel(require('../models/KnowledgeEntry')),
+  PreTradeAnalysis: memoryModel(require('../models/PreTradeAnalysis')),
+  AccountEvent: memoryModel(require('../models/AccountEvent')),
 };
 // Only after the models are compiled: routes check this before touching the DB.
 Object.defineProperty(mongoose.connection, 'readyState', { get: () => 1 });

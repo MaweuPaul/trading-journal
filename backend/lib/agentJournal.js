@@ -7,6 +7,9 @@ const Trade = require('../models/Trade');
 const ReplayJournal = require('../models/ReplayJournal');
 const TradingAccount = require('../models/TradingAccount');
 const User = require('../models/User');
+const KnowledgeEntry = require('../models/KnowledgeEntry');
+const PreTradeAnalysis = require('../models/PreTradeAnalysis');
+const AccountEvent = require('../models/AccountEvent');
 const { netTradeAmount, realizedRMultiple } = require('./tradeMath');
 const { confidenceFor } = require('./confidence');
 const { getTrendbars } = require('./ctraderReplay');
@@ -390,4 +393,65 @@ async function getTradeCandles(userId, id, { interval, barsBefore = 100, barsAft
   };
 }
 
-module.exports = { GROUPS, listAccounts, listTrades, getTrade, getMetrics, getPlaybooks, getTradeCandles, publicTrade };
+// ── The rest of the journal: knowledge base, pre-trade analyses, cash flows ──
+const validId = id => /^[a-f0-9]{24}$/i.test(String(id || ''));
+const shots = list => (list || []).map(x => ({ url: x.url, caption: x.caption || '' }));
+
+async function listKnowledge(userId, { search, tag, limit = 50 } = {}) {
+  let entries = await KnowledgeEntry.find({ user: userId }).sort({ createdAt: -1 }).limit(1000).lean();
+  const q = String(search || '').toLowerCase();
+  if (q) entries = entries.filter(e => `${e.title} ${e.content}`.toLowerCase().includes(q));
+  if (tag) entries = entries.filter(e => (e.tags || []).some(t => t.toLowerCase() === String(tag).toLowerCase()));
+  return {
+    total: entries.length,
+    entries: entries.slice(0, Math.min(100, limit)).map(e => ({ id: String(e._id), title: e.title, tags: e.tags || [], preview: (e.content || '').slice(0, 200), screenshots: (e.screenshots || []).length, updatedAt: e.updatedAt })),
+  };
+}
+async function getKnowledgeEntry(userId, id, { includeScreenshots = false } = {}) {
+  const e = validId(id) && await KnowledgeEntry.findOne({ _id: id, user: userId }).lean();
+  if (!e) throw new AgentError('Knowledge entry not found.', 'NOT_FOUND');
+  const images = includeScreenshots ? (await Promise.all((e.screenshots || []).slice(0, MAX_SCREENSHOTS).map(x => fetchImage(x.url)))).filter(Boolean) : [];
+  return { entry: { id: String(e._id), title: e.title, content: e.content, tags: e.tags || [], screenshots: shots(e.screenshots), createdAt: e.createdAt, updatedAt: e.updatedAt }, images };
+}
+
+async function listPreTradeAnalyses(userId, { status, symbol, limit = 50 } = {}) {
+  let list = await PreTradeAnalysis.find({ user: userId }).sort({ createdAt: -1 }).limit(1000).lean();
+  if (status) list = list.filter(a => a.status === status);
+  if (symbol) list = list.filter(a => (a.symbol || '').toUpperCase() === String(symbol).toUpperCase());
+  return {
+    total: list.length,
+    analyses: list.slice(0, Math.min(100, limit)).map(a => ({ id: String(a._id), symbol: a.symbol || null, direction: a.direction || null, status: a.status, playbook: a.playbookSnapshot?.name || null, linkedTradeId: a.linkedTradeId || null, notes: (a.notes || '').slice(0, 200), createdAt: a.createdAt })),
+  };
+}
+async function getPreTradeAnalysis(userId, id, { includeScreenshots = false } = {}) {
+  const a = validId(id) && await PreTradeAnalysis.findOne({ _id: id, user: userId }).lean();
+  if (!a) throw new AgentError('Pre-trade analysis not found.', 'NOT_FOUND');
+  const images = includeScreenshots ? (await Promise.all((a.screenshots || []).slice(0, MAX_SCREENSHOTS).map(x => fetchImage(x.url)))).filter(Boolean) : [];
+  return {
+    analysis: {
+      id: String(a._id), symbol: a.symbol || null, direction: a.direction || null, status: a.status, linkedTradeId: a.linkedTradeId || null,
+      notes: a.notes || '', playbookAnswers: playbookAnswers({ playbookSnapshot: a.playbookSnapshot, playbookResponses: a.responses }),
+      chart: { symbol: a.chartSymbol || null, interval: a.chartInterval || null, annotations: a.chartAnnotations || [] },
+      screenshots: shots(a.screenshots), createdAt: a.createdAt, updatedAt: a.updatedAt,
+    },
+    images,
+  };
+}
+
+async function getAccountEvents(userId, { account, from, to } = {}) {
+  const f = parseDate(from, 'from'), t = parseDate(to, 'to');
+  let events = await AccountEvent.find({ user: userId }).sort({ occurredAt: -1 }).limit(5000).lean();
+  if (account) events = events.filter(e => (e.accountKey || '(unassigned)').toLowerCase() === String(account).toLowerCase());
+  if (f) events = events.filter(e => new Date(e.occurredAt) >= f);
+  if (t) events = events.filter(e => new Date(e.occurredAt) <= t);
+  const sum = type => round(events.filter(e => e.type === type).reduce((a, e) => a + Math.abs(Number(e.amount) || 0), 0));
+  return {
+    totals: { deposits: sum('deposit'), withdrawals: sum('withdrawal'), adjustments: round(events.filter(e => e.type === 'adjustment').reduce((a, e) => a + (Number(e.amount) || 0), 0)) },
+    events: events.slice(0, 500).map(e => ({ type: e.type, amount: e.amount, currency: e.currency, occurredAt: iso(e.occurredAt), note: e.note || '', account: e.accountKey || null, balanceAfter: e.balanceAfter ?? null })),
+  };
+}
+
+module.exports = {
+  GROUPS, listAccounts, listTrades, getTrade, getMetrics, getPlaybooks, getTradeCandles, publicTrade,
+  listKnowledge, getKnowledgeEntry, listPreTradeAnalyses, getPreTradeAnalysis, getAccountEvents,
+};

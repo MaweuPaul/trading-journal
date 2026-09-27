@@ -229,6 +229,24 @@ Ask your agent, e.g.: *"Research my ORB NY Open strategy: hold out from 2026-03-
 
 `backend/scripts/orb_ny_open_mcp.js` is a worked example client that runs the ORB New York Open strategy through these tools and records its entry conditions (`TJ_MCP_URL=… TJ_KEY=… node backend/scripts/orb_ny_open_mcp.js --symbol XAUUSD --from 2025-06-02 --to 2025-09-01`).
 
+### Strategies as code (`run_strategy`)
+
+For mechanical rules the agent doesn't need to replay candle by candle. It writes the strategy as a short JavaScript `onBar(ctx)` function and the server runs it over months or years of cTrader history, typically in seconds to a few minutes. New strategies need **no server changes**: the code decides, the server executes.
+
+- **No hindsight.** The code runs in a [QuickJS](https://github.com/justjake/quickjs-emscripten) WebAssembly sandbox that is fed one closed candle at a time, so it never holds future data, on the base timeframe or any higher one (`timeframes: ["1h", "1day"]`). Forming higher-timeframe candles are built only from closed base candles.
+- **The server settles every trade** with the replay engine's rules: market entries at the candle close, limit/stop fills and stop-vs-target order on 1-minute candles, R from the original stop. Optional `costs.spread` (price units, against you on entry) and `costs.commission` (USD per trade).
+- **What the code gets:** closed candles on any loaded timeframe, streaming SMA/EMA/RSI/ATR and array helpers, New York/London/UTC clock with DST, `params` to test variations without editing code, position/order state and events. Actions: market, limit and stop orders with stop/target/expiry, modify, cancel, close, plus `tag` and `features` for later breakdowns.
+- **Safe to run:** no network, files or host objects inside the sandbox; 128 MB memory, 2 s per `onBar` call and 180 s of strategy CPU per run; 2 runs at a time per user (`STRATEGY_RUNS_MAX` server-wide, default 2); at most 250,000 base candles and 5,000 trades per run.
+- **Results:** `get_strategy_run` returns the summary with 95% ranges, exits, trades (paged), rejected actions and the code's logs, broken down by tag, exit reason, weekday, hour, month or `feature:<name>`. With `logAs`, trades go to the Backtest Log as agent runs under that strategy and its current rules version; trades in a held-out period are logged but hidden until `evaluate_holdout`.
+
+| Tool | What it does |
+|------|--------------|
+| `strategy_api` | The code reference with two complete examples (EMA cross; opening-range liquidity sweep) |
+| `run_strategy` | Start a run; waits up to `wait` seconds (default 20) and returns the result or a `runId` |
+| `get_strategy_run`, `list_strategy_runs`, `get_strategy_run_code`, `cancel_strategy_run` | Follow, list, reproduce and stop runs |
+
+Replay sessions (`start_session`/`step`) stay the way to test **judgement-based** strategies, where the agent itself reads each candle and decides.
+
 ### Reviewing your real trades
 
 A key with **journal access** also gets read-only tools over your real (synced or manually entered) trades, so an agent can act as a trading coach with your actual data in front of it:
@@ -241,6 +259,9 @@ A key with **journal access** also gets read-only tools over your real (synced o
 | `get_journal_metrics` | Win rate, net P&L, average win/loss, profit factor, drawdown, loss streak and R, each with a sample-size level and 95% ranges; broken down by symbol, direction, account, setup, confirmation, tag, emotion, exit reason/trigger, grades, confidence rating, playbook, rules followed, re-entry, manual intervention, weekday, hour, session, month, hold time or outcome |
 | `get_playbooks` | Your written playbooks (latest version), to hold trades against |
 | `get_trade_candles` | Candles from cTrader before, during and after a trade, with its entry, exit, stop and target |
+| `list_knowledge`, `get_knowledge_entry` | Your knowledge base (notes, findings, screenshots) |
+| `list_pretrade_analyses`, `get_pretrade_analysis` | Your pre-trade plans with playbook answers, chart markup and screenshots |
+| `get_account_events` | Deposits, withdrawals and adjustments per account, with totals |
 
 Nothing in the journal can be changed through these tools. Ask, e.g.: *"Review my live trades from the last 3 months: where am I losing money, and is it the setup or my execution? Show me examples."*
 

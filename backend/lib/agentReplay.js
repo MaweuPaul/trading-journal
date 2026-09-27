@@ -1005,7 +1005,8 @@ module.exports = {
   setTimeframe, getState, listSessions, endSession,
   placeOrder, cancelOrder, modifyTrade, getIndicators,
   listStrategies, createStrategy, listSymbols, throttledFetch,
-  // exported for tests
   normalizeFeatures,
+  // execution primitives shared with lib/strategyRunner.js
+  TF_SEC, candlesIn, closedCandles, levelsHit, firstHit, orderTouched, resolveOrder, rMultipleOf, outcomeOf,
   _internal: { missingRanges, addRange, mergeCandles, firstHit, levelsHit, cache, viewOf, round, plain },
 };

@@ -10,6 +10,8 @@ const ApiKey = require('../models/ApiKey');
 const replay = require('../lib/agentReplay');
 const backtestLog = require('../lib/agentBacktestLog');
 const journal = require('../lib/agentJournal');
+const runner = require('../lib/strategyRunner');
+const { REFERENCE: STRATEGY_API } = require('../lib/strategySandbox/reference');
 
 // POST /api/mcp -- a Model Context Protocol server (stateless Streamable HTTP)
 // that lets AI agents backtest on the owner's behalf: replay history bar by
@@ -100,7 +102,8 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
         'Typical loop: start_session -> read candles (get_indicators for EMA/RSI/ATR/Bollinger) -> step until a setup forms -> open_trade at market, or place_order for a limit/stop entry -> step with a large bars value (stopOnTradeExit stops at the exit), moving the stop with modify_trade if the rules say so -> log_trade -> repeat. Finish with end_session and get_metrics.',
         'To improve a strategy without fooling yourself: set_holdout on its later data first; tune only on sessions before that date, using get_metrics breakdowns (including feature:<name> for entry conditions you record with features on open_trade/place_order/log_trade); save each rule change with update_strategy_rules (say what changed and why); then run the new version on the held-out period and judge it once with evaluate_holdout. get_strategy shows the full history. Keep a change only if it holds up out of sample.',
         'You can also work with the whole Backtest Log: list_backtests and get_backtest read every logged backtest (the owner\'s and agents\'), update_backtest edits journal fields such as notes and lessons, and get_metrics breaks results down by strategy, symbol, direction, weekday, hour, month, timeframe or source.',
-        'Prefer step with bars/untilPrice/untilCloseAbove/untilCloseBelow/untilTime over one call per candle: it is much faster.',
+        'Two ways to backtest. (1) Mechanical rules: write them as code and call run_strategy -- the server runs your code over months or years of candles in seconds to minutes, with fills and exits settled on 1-minute data; read strategy_api first. Nearly any rule-based strategy works this way with no changes to the server. (2) Judgement calls (reading structure, discretionary setups): replay bar by bar with start_session/step and decide yourself.',
+        'Prefer step with bars/untilPrice/untilCloseAbove/untilCloseBelow/untilHighAbove/untilLowBelow/untilTime over one call per candle: it is much faster.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
         'Trades you log are marked as agent runs and kept apart from the owner\'s own backtest statistics.',
         ...(journalAccess ? [JOURNAL_INSTRUCTIONS] : []),
@@ -349,12 +352,58 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     },
     args => backtestLog.getMetrics(userId, args));
 
+  tool('strategy_api', 'Strategy code reference', 'How to write strategy code for run_strategy: the ctx object (candles, higher timeframes, indicators, New York/London time), orders, how fills are settled, and two complete examples. Read it before your first run_strategy.',
+    {},
+    () => ({ reference: STRATEGY_API }));
+
+  tool('run_strategy', 'Run strategy code',
+    'Backtest a mechanical strategy written as JavaScript (define onBar(ctx); see strategy_api) over cTrader history on the server. The code only ever sees closed candles; entries, stops and targets are settled by the server on 1-minute data. '
+    + 'Runs in the background: waits up to `wait` seconds, then returns the result, or a runId to follow with get_strategy_run. With logAs, trades are logged to the Backtest Log under that strategy (as agent runs, with the current rules version); trades in its held-out period are logged but hidden here (use evaluate_holdout). '
+    + 'Start with a short range to check the code, then run the full period.',
+    {
+      code: z.string().describe('JavaScript defining onBar(ctx) (and optionally init/onEnd).'),
+      symbol: z.string(),
+      timeframe: timeframe.default('15min').describe('Base timeframe: onBar runs once per closed candle of it.'),
+      from: timeInput, to: timeInput,
+      timeframes: z.array(timeframe).max(4).default([]).describe('Higher timeframes the code reads (ctx.candle(0, "1h"), ctx.ema(50, { tf: "4h" })...).'),
+      params: z.record(z.string(), z.any()).default({}).describe('Values the code reads as ctx.params, so you can test variations without editing it.'),
+      warmupBars: z.number().int().min(0).max(2000).default(300).describe('Candles before "from" loaded as history (for indicators); onBar is not called on them.'),
+      riskAmount: z.number().positive().default(100).describe('USD risked per trade unless an order sets risk.'),
+      costs: z.object({ spread: z.number().min(0).optional().describe('Price units added against you on every entry.'), commission: z.number().min(0).optional().describe('USD per trade.') }).default({}),
+      logAs: z.string().max(60).optional().describe('Strategy name to log the trades under in the Backtest Log. Leave out while developing.'),
+      name: z.string().max(100).optional().describe('A label for this run, e.g. "v2: skip Mondays".'),
+      wait: z.number().int().min(0).max(50).default(20).describe('Seconds to wait for the result before returning a runId.'),
+    },
+    ({ wait, ...args }) => runner.startRun(userId, apiKeyId, args, { wait }));
+
+  tool('get_strategy_run', 'Get strategy run',
+    'Progress or result of a run_strategy run: summary (win rate, expectancy, profit factor, drawdown, streaks, SQN, 95% ranges), exits, a page of trades, rejected actions and your code\'s logs. groupBy breaks results down by tag, exitReason, direction, weekday, hour, month or feature:<name>.',
+    {
+      runId: z.string(),
+      groupBy: z.array(z.string()).max(4).default([]),
+      tradesOffset: z.number().int().min(0).default(0),
+      tradesLimit: z.number().int().min(0).max(200).default(20),
+    },
+    ({ runId, ...opts }) => runner.getRun(userId, runId, opts));
+
+  tool('list_strategy_runs', 'List strategy runs', 'Your 20 most recent run_strategy runs with status and settings.',
+    {},
+    () => runner.listRuns(userId));
+
+  tool('get_strategy_run_code', 'Get strategy run code', 'The exact code and params a run used (to reproduce or revise it).',
+    { runId: z.string() },
+    ({ runId }) => runner.getRunCode(userId, runId));
+
+  tool('cancel_strategy_run', 'Cancel strategy run', 'Stop a running run_strategy run.',
+    { runId: z.string() },
+    ({ runId }) => runner.cancelRun(userId, runId));
+
   if (journalAccess) registerJournalTools(tool, userId);
   return server;
 }
 
 // ── The owner's real trade journal (read-only; keys with the "journal" scope) ──
-const JOURNAL_INSTRUCTIONS = 'This key can also read the owner\'s real trade journal (read-only): list_journal_accounts, list_trades, get_trade (notes, grades, checklists, playbook answers, screenshots), get_journal_metrics (breakdowns with 95% ranges), get_playbooks and get_trade_candles (price action around a trade). '
+const JOURNAL_INSTRUCTIONS = 'This key can also read the owner\'s whole journal (read-only): list_journal_accounts, list_trades, get_trade (notes, grades, checklists, playbook answers, screenshots), get_journal_metrics (breakdowns with 95% ranges), get_playbooks, get_trade_candles (price action around a trade), list_knowledge/get_knowledge_entry, list_pretrade_analyses/get_pretrade_analysis and get_account_events. '
   + 'To review the owner\'s trading: start with get_journal_metrics overall and a few breakdowns (setup, session, emotion, rulesFollowed, exitReason, holdTime), look for groups that clearly differ (ranges that do not overlap, enough trades), then open example trades with get_trade and get_trade_candles to find out why. Say how many trades a finding rests on, and do not present a difference between small or overlapping groups as fact.';
 
 function registerJournalTools(tool, userId) {
@@ -402,6 +451,26 @@ function registerJournalTools(tool, userId) {
   tool('get_playbooks', 'Get playbooks', 'The owner\'s written trading playbooks (latest version of each): the rules to hold trades against.',
     {},
     () => journal.getPlaybooks(userId));
+
+  tool('list_knowledge', 'List knowledge base', 'The owner\'s knowledge base: general trading notes, findings and concepts (not tied to trades). Search text or filter by tag.',
+    { search: z.string().optional(), tag: z.string().optional(), limit: z.number().int().min(1).max(100).default(50) },
+    args => journal.listKnowledge(userId, args));
+
+  tool('get_knowledge_entry', 'Get knowledge entry', 'One knowledge-base entry in full; includeScreenshots attaches up to 4 images.',
+    { id: z.string(), includeScreenshots: z.boolean().default(false) },
+    ({ id, includeScreenshots }) => journal.getKnowledgeEntry(userId, id, { includeScreenshots }));
+
+  tool('list_pretrade_analyses', 'List pre-trade analyses', 'The owner\'s pre-trade plans (playbook answers filled in before a trade), newest first; status open, linked (to a trade) or archived.',
+    { status: z.enum(['open', 'linked', 'archived']).optional(), symbol: z.string().optional(), limit: z.number().int().min(1).max(100).default(50) },
+    args => journal.listPreTradeAnalyses(userId, args));
+
+  tool('get_pretrade_analysis', 'Get pre-trade analysis', 'One pre-trade analysis in full: playbook answers, notes, chart markup and screenshots (includeScreenshots attaches up to 4 images).',
+    { id: z.string(), includeScreenshots: z.boolean().default(false) },
+    ({ id, includeScreenshots }) => journal.getPreTradeAnalysis(userId, id, { includeScreenshots }));
+
+  tool('get_account_events', 'Get deposits and withdrawals', 'Deposits, withdrawals and balance adjustments per account, with totals: separate trading results from cash moved in or out.',
+    { account: z.string().optional(), from: timeInput.optional(), to: timeInput.optional() },
+    args => journal.getAccountEvents(userId, args));
 
   tool('get_trade_candles', 'Get candles around a trade',
     'Candles from the owner\'s cTrader account before, during and after a real trade, with its entry, exit, stop and target. The interval follows how long the trade was open unless you pick one. At most 600 candles.',

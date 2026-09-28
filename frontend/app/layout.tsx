@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const themeScript = `(() => { try { const saved = localStorage.getItem('trade-journal-theme') || 'system'; const resolved = saved === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : saved; document.documentElement.dataset.theme = resolved; document.documentElement.style.colorScheme = resolved; } catch (_) {} })();`;
+  const themeScript = `(() => { try { const saved = localStorage.getItem('trade-journal-theme') || 'system'; const resolved = saved === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : saved; document.documentElement.dataset.theme = resolved; document.documentElement.style.colorScheme = resolved; if (localStorage.getItem('tj-sidebar') === 'collapsed') document.documentElement.dataset.sidebar = 'collapsed'; } catch (_) {} })();`;
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>

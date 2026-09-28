@@ -44,11 +44,11 @@ export default function BacktestShell({ children }: { children: React.ReactNode 
   // Headers and the mobile tab bar are position:fixed (as in the design).
   // Sticky can't be used: globals.css gives both html and body overflow,
   // which makes body a non-scrolling scroll container. Offsets clear the
-  // app's 240px sidebar at >=900px and its 58px top bar below that.
+  // app's sidebar (240px, or 68px collapsed: --sidebar-w) at >=900px and its 58px top bar below that.
   return (
     <div className="bt-shell tw:flex tw:flex-col tw:min-h-dvh tw:pt-[114px] tw:pb-16 tw:min-[900px]:pt-11 tw:min-[900px]:pb-0">
       {/* Desktop: terminal top bar with the section tabs */}
-      <header className="tw:hidden tw:min-[900px]:flex tw:fixed tw:top-0 tw:right-0 tw:left-[240px] tw:z-40 tw:justify-between tw:items-center tw:gap-3 tw:px-4 tw:h-11 tw:bg-surface-container tw:border-b tw:border-outline-variant tw:select-none">
+      <header className="tw:hidden tw:min-[900px]:flex tw:fixed tw:top-0 tw:right-0 tw:left-[var(--sidebar-w)] tw:z-40 tw:justify-between tw:items-center tw:gap-3 tw:px-4 tw:h-11 tw:bg-surface-container tw:border-b tw:border-outline-variant tw:select-none">
         <div className="tw:flex tw:items-center tw:gap-3 tw:shrink-0">
           <span className="tw:text-body-md tw:font-semibold tw:text-on-surface">Backtest</span>
         </div>

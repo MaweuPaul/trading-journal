@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { PAGE_PURPOSE } from './pagePurpose';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useSyncExternalStore } from 'react';
-import { LayoutDashboard, List, BarChart2, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical } from 'lucide-react';
+import { LayoutDashboard, List, BarChart2, X, Menu, Calendar, LogOut, LineChart, HardDrive, Brain, SlidersHorizontal, Landmark, BookOpen, BookMarked, FlaskConical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import LogoMark from './LogoMark';
 
@@ -47,7 +47,22 @@ function fmtPnl(n: number) {
   return `${n > 0 ? '+' : n < 0 ? '-' : ''}$${abs}`;
 }
 
-function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
+// Desktop sidebar collapsed to icons. Kept on <html data-sidebar> (set before
+// first paint by the layout's script, so there's no flash) and in localStorage.
+const SIDEBAR_EVENT = 'tj-sidebar-change';
+const subscribeSidebar = (cb: () => void) => { window.addEventListener(SIDEBAR_EVENT, cb); return () => window.removeEventListener(SIDEBAR_EVENT, cb); };
+function useSidebarCollapsed() {
+  return useSyncExternalStore(subscribeSidebar, () => document.documentElement.dataset.sidebar === 'collapsed', () => false);
+}
+function setSidebarCollapsed(collapsed: boolean) {
+  if (collapsed) document.documentElement.dataset.sidebar = 'collapsed';
+  else delete document.documentElement.dataset.sidebar;
+  try { localStorage.setItem('tj-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch {}
+  window.dispatchEvent(new Event(SIDEBAR_EVENT));
+}
+
+function NavContent({ path, onClose, collapsible = false }: { path: string; onClose?: () => void; collapsible?: boolean }) {
+  const collapsed = useSidebarCollapsed() && collapsible;
   const router = useRouter();
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
@@ -116,6 +131,12 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
             <h1>TradeJournal</h1>
             <span>Trading journal</span>
           </div>
+          {collapsible && (
+            <button type="button" className="sidebar-collapse-btn" onClick={() => setSidebarCollapsed(!collapsed)}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!collapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+              {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -128,11 +149,12 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
                 key={href}
                 href={href}
                 className={`nav-item ${path === href ? 'active' : ''}`}
-                title={PAGE_PURPOSE[href] ? `${PAGE_PURPOSE[href].question} ${PAGE_PURPOSE[href].detail}` : undefined}
+                title={collapsed ? label : PAGE_PURPOSE[href] ? `${PAGE_PURPOSE[href].question} ${PAGE_PURPOSE[href].detail}` : undefined}
+                aria-label={collapsed ? label : undefined}
                 onClick={onClose}
               >
                 <Icon size={16} />
-                {label}
+                <span className="nav-label">{label}</span>
               </Link>
             ))}
           </div>
@@ -162,12 +184,13 @@ function NavContent({ path, onClose }: { path: string; onClose?: () => void }) {
               <span className="user-name">{userName || 'Trader'}</span>
               <span className="user-email">{userEmail}</span>
             </div>
-            <button className="logout-btn" onClick={handleLogout} aria-label="Sign out">
+            <button className="logout-btn" onClick={handleLogout} aria-label="Sign out" title="Sign out">
               <LogOut size={14} />
             </button>
           </div>
         )}
-        <div className={`sync-pill ${accountSummary.enabled > accountSummary.connected ? 'attention' : ''}`}>
+        <div className={`sync-pill ${accountSummary.enabled > accountSummary.connected ? 'attention' : ''}`}
+          title={accountSummary.total === 0 ? 'No trading accounts' : `${accountSummary.connected}/${accountSummary.enabled} accounts connected`}>
           <span className="sync-dot" />
           <span>{accountSummary.total === 0 ? 'No trading accounts' : `${accountSummary.connected}/${accountSummary.enabled} accounts connected`}</span>
         </div>
@@ -193,7 +216,7 @@ export default function Sidebar() {
     <>
       {/* Desktop sidebar */}
       <aside className="sidebar">
-        <NavContent path={path} />
+        <NavContent path={path} collapsible />
       </aside>
 
       {/* Mobile topbar */}

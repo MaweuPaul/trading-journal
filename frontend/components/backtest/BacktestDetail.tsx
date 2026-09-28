@@ -3,12 +3,21 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, ColorType, LineStyle } from 'lightweight-charts';
-import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import { DrawingManager } from 'lightweight-charts-drawing';
+import type { SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
 import { BacktestTrade, SIM_STARTING_BALANCE, authHeaders, fmtDate, fmtPrice, fmtR, fmtUSD, hashTag, intervalLabel, tagsOf, useBacktest } from './data';
 import { Icon } from './BacktestShell';
 import { download } from './exporting';
 import { Candle, INTERVAL_DAYS } from '../backtest-tools/types';
+import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
+import { barSeconds, drawingFactory, fillWithOpacity, futureSlotTimes, snapToCandles } from '../chart-drawing/drawingKit';
+
+/** The chart plus its labels as one image (labels are page elements, not chart canvas). */
+export type TradeChartShot = () => HTMLCanvasElement | null;
+// Look back at most this many bars for drawings made before the trade.
+const MAX_DRAWING_LOOKBACK_BARS = 1500;
 
 const DAY = 86_400_000;
 const box = 'tw:rounded tw:bg-surface-container tw:border tw:border-surface-container-highest tw:p-3 tw:flex tw:flex-col';
@@ -49,13 +58,16 @@ function Stars({ value = 0, onChange, label }: { value?: number; onChange?: (v: 
 }
 
 /** Candles around the trade, with its levels drawn on; reports excursion stats back up. */
-function TradeChart({ trade, onStats, chartRef, showLevels, showVolume }: {
-  trade: BacktestTrade; onStats: (s: Excursion | null) => void; chartRef: React.RefObject<IChartApi | null>; showLevels: boolean; showVolume: boolean;
+function TradeChart({ trade, onStats, chartRef, shotRef, showLevels, showVolume }: {
+  trade: BacktestTrade; onStats: (s: Excursion | null) => void; chartRef: React.RefObject<IChartApi | null>;
+  shotRef: React.RefObject<TradeChartShot | null>; showLevels: boolean; showVolume: boolean;
 }) {
   const { resolvedTheme } = useTheme();
   const hostRef = useRef<HTMLDivElement>(null);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [fetchFailed, setFailed] = useState('');
+  const [view, setView] = useState<{ chart: IChartApi; series: ISeriesApi<'Candlestick'>; drawings: SerializedDrawing[] } | null>(null);
+  const [labelsRevision, setLabelsRevision] = useState(0);
   const noChart = !trade.entryTime || !trade.interval || trade.source === 'quick';
   const failed = noChart ? 'No chart data recorded for a quick log' : fetchFailed;
 
@@ -63,8 +75,11 @@ function TradeChart({ trade, onStats, chartRef, showLevels, showVolume }: {
     if (noChart) return;
     const barMs = (INTERVAL_DAYS[trade.interval!] ?? INTERVAL_DAYS['15min']) * DAY;
     const entryMs = trade.entryTime! * 1000, exitMs = (trade.exitTime ?? trade.entryTime!) * 1000;
+    // Reach back far enough to show drawings made before the trade (e.g. a higher-timeframe zone).
+    const earliestDrawing = Math.min(Infinity, ...(trade.chartAnnotations ?? []).flatMap(d => d.anchors.map(a => Number(a.time) * 1000)));
+    const fromMs = Math.max(entryMs - MAX_DRAWING_LOOKBACK_BARS * barMs, Math.min(entryMs - 60 * barMs, earliestDrawing - 10 * barMs));
     const controller = new AbortController();
-    fetch(`/api/backtest-trades/chart?symbol=${encodeURIComponent(trade.symbol)}&interval=${trade.interval}&fromMs=${entryMs - 60 * barMs}&toMs=${exitMs + 25 * barMs}`,
+    fetch(`/api/backtest-trades/chart?symbol=${encodeURIComponent(trade.symbol)}&interval=${trade.interval}&fromMs=${fromMs}&toMs=${exitMs + 25 * barMs}`,
       { headers: authHeaders(), signal: controller.signal })
       .then(async res => {
         const data = await res.json();
@@ -108,7 +123,34 @@ function TradeChart({ trade, onStats, chartRef, showLevels, showVolume }: {
     });
     chartRef.current = chart;
     const series = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderVisible: false, wickUpColor: up, wickDownColor: down, priceLineVisible: false });
-    series.setData(candles);
+    // The drawings saved with the trade (locked, so they can't be nudged by
+    // accident), anchored onto these candles; ones starting before the first
+    // candle start at it. Plus the position's target and stop zones.
+    const times = candles.map(c => Number(c.time));
+    const first = times[0];
+    const saved = snapToCandles((trade.chartAnnotations ?? []).map(d => ({
+      ...d,
+      anchors: d.anchors.map(a => ({ ...a, time: Math.max(first, Number(a.time)) as typeof a.time })),
+      options: { ...d.options, locked: true },
+    })), times);
+    const exitAt = (trade.exitTime ?? trade.entryTime ?? first) as UTCTimestamp;
+    const zone = (id: string, price: number, color: string): SerializedDrawing => ({
+      id, type: 'rectangle',
+      anchors: [{ time: trade.entryTime as UTCTimestamp, price: trade.entryPrice! }, { time: exitAt, price }],
+      style: { lineColor: color, lineWidth: 1, fillColor: fillWithOpacity(color, 0.16), fillOpacity: 0.16 } as SerializedDrawing['style'],
+      options: { visible: true, locked: true, filled: true } as SerializedDrawing['options'],
+    });
+    const positionZones = showLevels && trade.entryTime && trade.entryPrice != null ? [
+      ...(trade.takeProfit != null ? [zone('position-target', trade.takeProfit, up)] : []),
+      ...(trade.stopLoss != null ? [zone('position-stop', trade.stopLoss, down)] : []),
+    ] : [];
+    const drawings = [...saved, ...snapToCandles(positionZones, times)];
+    // Empty slots after the last candle, so drawings reaching further still show.
+    const slots = futureSlotTimes(times[times.length - 1], barSeconds(times), drawings, [], 0);
+    series.setData([...candles, ...slots.map(t => ({ time: t as UTCTimestamp }))]);
+    const manager = new DrawingManager();
+    manager.attach(chart, series, el);
+    try { manager.importDrawings(drawings, drawingFactory); } catch { /* skip drawings this version can't read */ }
     if (showVolume) {
       const vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
       vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -126,11 +168,35 @@ function TradeChart({ trade, onStats, chartRef, showLevels, showVolume }: {
         { time: at(trade.exitTime ?? trade.entryTime), position: long ? 'aboveBar' : 'belowBar', shape: 'circle', color: trade.rMultiple >= 0 ? up : down, text: `Exit ${fmtR(trade.rMultiple, 1)}` },
       ]);
     }
-    chart.timeScale().fitContent();
-    return () => { chartRef.current = null; chart.remove(); };
-  }, [candles, showLevels, showVolume, resolvedTheme, trade, chartRef]);
+    // Fit the candles (and the drawings on them), not the empty slots.
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: candles.length + 3 });
+    const bump = () => setLabelsRevision(r => r + 1);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(bump);
+    setView({ chart, series, drawings: saved });
+    shotRef.current = () => {
+      const shot = chart.takeScreenshot(true);
+      const ctx = shot.getContext('2d');
+      if (ctx && saved.length) {
+        const css = getComputedStyle(root ?? document.body);
+        paintDrawingLabels(ctx, chart, series, saved, shot.width / Math.max(1, el.clientWidth), {
+          background: css.getPropertyValue('--bt-surface-container-lowest').trim() || '#ffffff',
+          text: css.getPropertyValue('--bt-on-surface').trim() || '#111827',
+        });
+      }
+      return shot;
+    };
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(bump);
+      shotRef.current = null; setView(null);
+      manager.detach(); chartRef.current = null; chart.remove();
+    };
+  }, [candles, showLevels, showVolume, resolvedTheme, trade, chartRef, shotRef]);
 
-  if (candles?.length) return <div ref={hostRef} className="tw:absolute tw:inset-0" />;
+  if (candles?.length) return (
+    <div ref={hostRef} className="tw:absolute tw:inset-0">
+      {view && <DrawingTextOverlay chart={view.chart} series={view.series} drawings={view.drawings} revision={labelsRevision} />}
+    </div>
+  );
   return <SnapshotFallback trade={trade} reason={failed} loading={!failed} />;
 }
 
@@ -155,6 +221,7 @@ export default function BacktestDetail({ id }: { id: string }) {
   const { allTrades, loading, removeTrade, updateTrade, strategies } = useBacktest();
   const trade = allTrades.find(t => t._id === id);
   const chartRef = useRef<IChartApi | null>(null);
+  const shotRef = useRef<TradeChartShot | null>(null);
   const [stats, setStats] = useState<Excursion | null>(null);
   const [showLevels, setShowLevels] = useState(true);
   const [showVolume, setShowVolume] = useState(false);
@@ -195,7 +262,7 @@ export default function BacktestDetail({ id }: { id: string }) {
     if (await removeTrade(trade._id)) router.push('/backtest/log');
   };
   const downloadSnapshot = () => {
-    const shot = chartRef.current?.takeScreenshot();
+    const shot = shotRef.current?.();
     if (!shot) return;
     const a = document.createElement('a'); a.href = shot.toDataURL('image/png'); a.download = `${id4.slice(1)}-${trade.symbol}.png`; a.click();
   };
@@ -293,7 +360,7 @@ export default function BacktestDetail({ id }: { id: string }) {
             </div>
           </div>
           <div className="tw:flex-1 tw:relative tw:bg-surface-container-lowest tw:min-h-[360px]">
-            <TradeChart trade={trade} onStats={setStats} chartRef={chartRef} showLevels={showLevels} showVolume={showVolume} />
+            <TradeChart trade={trade} onStats={setStats} chartRef={chartRef} shotRef={shotRef} showLevels={showLevels} showVolume={showVolume} />
           </div>
           <div className="tw:min-h-7 tw:px-3 tw:bg-surface-container tw:border-t tw:border-surface-container-highest tw:flex tw:flex-wrap tw:items-center tw:justify-between tw:gap-2 tw:font-mono-metric-md tw:text-[11px] tw:text-on-surface-variant tw:shrink-0">
             {stats?.exitCandle ? (

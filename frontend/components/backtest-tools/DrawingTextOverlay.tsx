@@ -21,17 +21,10 @@ type DrawingWithText = SerializedDrawing & {
   };
 };
 
-export default function DrawingTextOverlay({
-  chart,
-  series,
-  drawings,
-  revision,
-}: DrawingTextOverlayProps) {
-  void revision;
-  if (!chart || !series) return null;
-
-  const labels = (drawings as DrawingWithText[]).flatMap(drawing => {
-    if (drawing.type === 'text-annotation') return [];
+/** Where each drawing's text label sits on the chart (text notes draw their own). */
+export function drawingLabels(chart: IChartApi, series: ISeriesApi<'Candlestick'>, drawings: SerializedDrawing[]) {
+  return (drawings as DrawingWithText[]).flatMap(drawing => {
+    if (drawing.type === 'text-annotation' || drawing.options?.visible === false) return [];
     const text = drawing.style.drawingText?.trim();
     if (!text || !drawing.anchors.length) return [];
 
@@ -65,6 +58,48 @@ export default function DrawingTextOverlay({
       textAlign: align,
     }];
   });
+}
+
+/**
+ * Paint the labels onto a canvas (chart snapshots: the on-screen labels are
+ * page elements, so a chart screenshot doesn't include them). `scale` is the
+ * canvas's pixels per chart pixel.
+ */
+export function paintDrawingLabels(
+  ctx: CanvasRenderingContext2D, chart: IChartApi, series: ISeriesApi<'Candlestick'>, drawings: SerializedDrawing[],
+  scale: number, colors: { background: string; text: string },
+) {
+  for (const label of drawingLabels(chart, series, drawings)) {
+    ctx.save();
+    ctx.scale(scale, scale);
+    ctx.font = `${label.fontStyle} ${label.fontWeight} ${label.fontSize}px Inter, system-ui, sans-serif`;
+    const lines = label.text.split('\n');
+    const lineH = label.fontSize * 1.35;
+    const w = Math.min(224, Math.max(...lines.map(l => ctx.measureText(l).width)) + 16);
+    const h = lines.length * lineH + 8;
+    const left = label.translateX === '0' ? label.x : label.translateX === '-100%' ? label.x - w : label.x - w / 2;
+    const top = label.y - h / 2;
+    ctx.fillStyle = colors.background;
+    ctx.strokeStyle = label.color || '#3b82f6';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(left, top, w, h, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = colors.text; ctx.textBaseline = 'middle';
+    ctx.textAlign = label.textAlign;
+    const tx = label.textAlign === 'left' ? left + 8 : label.textAlign === 'right' ? left + w - 8 : left + w / 2;
+    lines.forEach((l, i) => ctx.fillText(l, tx, top + 4 + lineH * (i + 0.5), w - 16));
+    ctx.restore();
+  }
+}
+
+export default function DrawingTextOverlay({
+  chart,
+  series,
+  drawings,
+  revision,
+}: DrawingTextOverlayProps) {
+  void revision;
+  if (!chart || !series) return null;
+  const labels = drawingLabels(chart, series, drawings);
 
   return (
     <div aria-hidden="true" className="tw:absolute tw:inset-0 tw:z-[4] tw:overflow-hidden tw:pointer-events-none">

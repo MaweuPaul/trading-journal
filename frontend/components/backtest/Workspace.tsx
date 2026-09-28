@@ -27,7 +27,7 @@ import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
 import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
 import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, setDrawingColor } from '../chart-drawing/drawingKit';
-import DrawingTextOverlay from '../backtest-tools/DrawingTextOverlay';
+import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
 // `type` is the lightweight-charts-drawing registry key.
@@ -1192,7 +1192,18 @@ export default function Workspace() {
     const chart = chartRef.current, overlay = canvasRef.current;
     if (!chart) return null;
     const shot = chart.takeScreenshot(true);
-    if (overlay) shot.getContext('2d')?.drawImage(overlay, 0, 0, shot.width, shot.height);
+    const ctx = shot.getContext('2d');
+    if (overlay) ctx?.drawImage(overlay, 0, 0, shot.width, shot.height);
+    // Zone / line labels are page elements, not part of the chart canvas.
+    const series = seriesRef.current, drawings = managerRef.current?.exportDrawings() ?? [];
+    if (ctx && series && drawings.length) {
+      const root = chart.chartElement().closest('.bt-shell') ?? document.body;
+      const css = getComputedStyle(root);
+      paintDrawingLabels(ctx, chart, series, drawings, shot.width / Math.max(1, chart.chartElement().clientWidth), {
+        background: css.getPropertyValue('--bt-surface-container-lowest').trim() || '#ffffff',
+        text: css.getPropertyValue('--bt-on-surface').trim() || '#111827',
+      });
+    }
     const scale = Math.min(1, maxWidth / shot.width);
     const out = document.createElement('canvas');
     out.width = Math.round(shot.width * scale); out.height = Math.round(shot.height * scale);
@@ -1215,7 +1226,12 @@ export default function Workspace() {
     try {
       const pendingTag = tagDraft?.trim();
       const allTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
-      const snapshot = composeSnapshot(640)?.toDataURL('image/jpeg', 0.72);
+      // As sharp as fits the saved-snapshot limit (~300 KB).
+      let snapshot: string | undefined;
+      for (const [width, quality] of [[1600, 0.82], [1280, 0.78], [960, 0.72], [640, 0.72]] as const) {
+        snapshot = composeSnapshot(width)?.toDataURL('image/jpeg', quality);
+        if (!snapshot || snapshot.length <= 390_000) break;
+      }
       const res = await fetch('/api/backtest-trades', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({

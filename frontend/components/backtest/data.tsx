@@ -1,4 +1,5 @@
 'use client';
+import type { SerializedDrawing } from 'lightweight-charts-drawing';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -31,6 +32,8 @@ export interface BacktestTrade {
   notes: string;
   planFollowed?: boolean; setupQuality?: number; executionQuality?: number;
   mistakes?: string[]; lesson?: string; hasSnapshot?: boolean;
+  /** Drawings on the chart when it was logged (the shared drawing tools' saved form). */
+  chartAnnotations?: SerializedDrawing[];
   createdAt: string;
 }
 

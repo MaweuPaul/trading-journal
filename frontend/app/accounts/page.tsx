@@ -454,6 +454,11 @@ export default function TradingAccountsPage() {
           >
             <DownloadCloud size={14} /> Download for Windows
           </a>
+          <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+            <strong style={{ color: 'var(--text-secondary)' }}>On a Mac?</strong> The app only runs on Windows. For now, connect cTrader if your broker offers it, run the app on any Windows PC or VPS, or add trades manually on the Trades page.{' '}
+            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--amber, #b7791f)', border: '1px solid currentColor', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap' }}>Coming soon</span>{' '}
+            Upload your MT5 statement to import your trades, no Windows needed.
+          </p>
         </div>
       </section>
 

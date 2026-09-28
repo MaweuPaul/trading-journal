@@ -10,7 +10,7 @@ import type { PlaybookRule, PlaybookBlock, PlaybookSnapshot, Playbook } from '@/
 import {
   SlidersHorizontal, ChevronLeft, ChevronRight, List,
   X, Award, CheckSquare, Save, Info,
-  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun, Plus, Sparkles
+  Upload, Image as ImageIcon, Trash2, Copy, Check, LockKeyhole, Play, Sun, Plus, Sparkles, FileUp
 } from 'lucide-react';
 import { useAccountKeyFilter } from '@/hooks/useAccountKeyFilter';
 
@@ -719,6 +719,12 @@ function TradesPageContent() {
             <button className="btn btn-ghost" onClick={() => setShowExportAI(true)} title="Copy your trades and stats for ChatGPT, Claude or any AI to review">
               <Sparkles size={14} />
               Export for AI
+            </button>
+            <button className="btn btn-ghost" disabled
+              title="MT5 on a Mac? The Desktop Sync App only runs on Windows. Soon you'll be able to upload your MT5 statement here instead. Until then, use cTrader, run the sync app on any Windows PC or VPS, or add trades manually.">
+              <FileUp size={14} />
+              Import MT5 statement
+              <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--amber, #b7791f)', border: '1px solid currentColor', borderRadius: 999, padding: '1px 6px', lineHeight: 1.4 }}>Soon</span>
             </button>
             <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
               <Plus size={14} />
@@ -1690,6 +1696,9 @@ function AddTradeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <div>
             <h3>Add Trade</h3>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>For a trade your broker never recorded</span>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.45 }}>
+              On a Mac with MT5? The Desktop Sync App only runs on Windows, so add trades here for now, use cTrader, or run the app on any Windows PC or VPS. Importing your MT5 statement is coming soon.
+            </span>
           </div>
           <button className="drawer-close" onClick={onClose}><X size={16} /></button>
         </div>

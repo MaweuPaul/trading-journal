@@ -177,11 +177,7 @@ function TradeChart({ trade, onStats, chartRef, shotRef, showLevels, showVolume 
       const shot = chart.takeScreenshot(true);
       const ctx = shot.getContext('2d');
       if (ctx && saved.length) {
-        const css = getComputedStyle(root ?? document.body);
-        paintDrawingLabels(ctx, chart, series, saved, shot.width / Math.max(1, el.clientWidth), {
-          background: css.getPropertyValue('--bt-surface-container-lowest').trim() || '#ffffff',
-          text: css.getPropertyValue('--bt-on-surface').trim() || '#111827',
-        });
+        paintDrawingLabels(ctx, chart, series, saved, shot.width / Math.max(1, el.clientWidth));
       }
       return shot;
     };

@@ -1197,12 +1197,7 @@ export default function Workspace() {
     // Zone / line labels are page elements, not part of the chart canvas.
     const series = seriesRef.current, drawings = managerRef.current?.exportDrawings() ?? [];
     if (ctx && series && drawings.length) {
-      const root = chart.chartElement().closest('.bt-shell') ?? document.body;
-      const css = getComputedStyle(root);
-      paintDrawingLabels(ctx, chart, series, drawings, shot.width / Math.max(1, chart.chartElement().clientWidth), {
-        background: css.getPropertyValue('--bt-surface-container-lowest').trim() || '#ffffff',
-        text: css.getPropertyValue('--bt-on-surface').trim() || '#111827',
-      });
+      paintDrawingLabels(ctx, chart, series, drawings, shot.width / Math.max(1, chart.chartElement().clientWidth));
     }
     const scale = Math.min(1, maxWidth / shot.width);
     const out = document.createElement('canvas');

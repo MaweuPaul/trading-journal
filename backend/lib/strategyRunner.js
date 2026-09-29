@@ -478,7 +478,9 @@ const EXIT_WORDS = { target: 'Target hit', stop: 'Stopped out', close: 'Closed b
 function exitLine(t) {
   const how = EXIT_WORDS[t.exitReason] || `Exit: ${t.exitReason}`;
   const r = Number(t.rMultiple);
-  return `${how} at ${t.exitPrice}${Number.isFinite(r) ? ` (${r >= 0 ? '+' : ''}${Math.round(r * 100) / 100}R)` : ''}.`;
+  // As many decimals as the entry price (targets and stops are computed, so they run long).
+  const dp = Math.min(5, Math.max(2, (String(t.entryPrice).split('.')[1] || '').length));
+  return `${how} at ${Number(t.exitPrice).toFixed(dp)}${Number.isFinite(r) ? ` (${r >= 0 ? '+' : ''}${Math.round(r * 100) / 100}R)` : ''}.`;
 }
 const score = v => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(5, Math.round(Number(v)))) : 0);
 

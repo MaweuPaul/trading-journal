@@ -43,7 +43,9 @@ function publicAccount(account, tradeCount = 0) {
     lastBalance: account.lastBalance,
     actualAccountType: account.actualAccountType || '',
     tradeCount,
-    hasCredentials: true,
+    hasCredentials: account.provider === 'mt5',
+    statementLogin: account.statementLogin || '',
+    statementServer: account.statementServer || '',
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
     investor: {

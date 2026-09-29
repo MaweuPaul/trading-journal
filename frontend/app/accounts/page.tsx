@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
   ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video, DownloadCloud,
-  Users, Copy, ShieldOff, Check, TerminalSquare,
+  Users, Copy, ShieldOff, Check, TerminalSquare, FileUp,
 } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 import AgentKeys from '@/components/AgentKeys';
@@ -16,7 +16,9 @@ type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
 interface TradingAccount {
   id: string;
   accountKey: string;
-  provider: 'mt5' | 'ctrader';
+  provider: 'mt5' | 'ctrader' | 'mt5_import';
+  statementLogin?: string;
+  statementServer?: string;
   label: string;
   enabled: boolean;
   requireRealAccount: boolean;
@@ -68,6 +70,7 @@ function formatDate(value: string | null) {
 }
 
 function statusCopy(account: TradingAccount) {
+  if (account.provider === 'mt5_import') return { label: 'Imported', icon: FileUp };
   if (!account.enabled) return { label: 'Disabled', icon: WifiOff };
   if (account.lastStatus === 'connected') return { label: 'Connected', icon: CheckCircle2 };
   if (account.lastStatus === 'error') return { label: 'Needs attention', icon: AlertCircle };
@@ -455,9 +458,7 @@ export default function TradingAccountsPage() {
             <DownloadCloud size={14} /> Download for Windows
           </a>
           <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
-            <strong style={{ color: 'var(--text-secondary)' }}>On a Mac?</strong> The app only runs on Windows. For now, connect cTrader if your broker offers it, run the app on any Windows PC or VPS, or add trades manually on the Trades page.{' '}
-            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--amber, #b7791f)', border: '1px solid currentColor', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap' }}>Coming soon</span>{' '}
-            Upload your MT5 statement to import your trades, no Windows needed.
+            <strong style={{ color: 'var(--text-secondary)' }}>On a Mac?</strong> The app only runs on Windows. Instead, save a report in MT5 (History → right-click → Report → HTML) and upload it with <strong>Import MT5 statement</strong> on the Trades page. Import again whenever you want new trades; ones already in your journal are skipped.
           </p>
         </div>
       </section>
@@ -504,16 +505,19 @@ export default function TradingAccountsPage() {
           {accounts.map(account => {
             const status = statusCopy(account); const StatusIcon = status.icon;
             const isCtrader = account.provider === 'ctrader';
+            const isImport = account.provider === 'mt5_import';
             return <article className="account-card" key={account.id}>
-              <div className="account-card-top"><div className="account-provider-icon">{isCtrader ? <Video size={19} /> : <Landmark size={19} />}</div><div className="account-card-name"><h3>{account.label}</h3><span>{isCtrader ? 'cTrader Open API · OAuth' : 'MetaTrader 5'} · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
-              {account.lastError && <div className="account-card-error"><AlertCircle size={14} />{account.lastError}</div>}
-              <dl className="account-metrics"><div><dt>Trades</dt><dd>{account.tradeCount}</dd></div><div><dt>Balance</dt><dd>{account.lastBalance == null ? '—' : `$${account.lastBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}</dd></div><div><dt>Last sync</dt><dd>{formatDate(account.lastSyncAt)}</dd></div>{!isCtrader && <div><dt>Agent seen</dt><dd>{formatDate(account.lastAgentSeenAt)}</dd></div>}</dl>
+              <div className="account-card-top"><div className="account-provider-icon">{isCtrader ? <Video size={19} /> : isImport ? <FileUp size={19} /> : <Landmark size={19} />}</div><div className="account-card-name"><h3>{account.label}</h3><span>{isCtrader ? 'cTrader Open API · OAuth' : isImport ? 'MT5 · statement import' : 'MetaTrader 5'} · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${isImport ? 'connected' : account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
+              {account.lastError && !isImport && <div className="account-card-error"><AlertCircle size={14} />{account.lastError}</div>}
+              <dl className="account-metrics"><div><dt>Trades</dt><dd>{account.tradeCount}</dd></div><div><dt>Balance</dt><dd>{account.lastBalance == null ? '—' : `$${account.lastBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}</dd></div><div><dt>{isImport ? 'Last import' : 'Last sync'}</dt><dd>{formatDate(account.lastSyncAt)}</dd></div>{!isCtrader && !isImport && <div><dt>Agent seen</dt><dd>{formatDate(account.lastAgentSeenAt)}</dd></div>}</dl>
               <div className="account-card-foot">
-                <label className="account-switch"><input type="checkbox" checked={account.enabled} onChange={() => toggleAccount(account)} /><span />{account.enabled ? 'Sync enabled' : 'Sync disabled'}</label>
+                {isImport
+                  ? <a href="/trades" style={{ fontSize: 11.5, color: 'var(--text-muted)' }} title="Save a new report in MT5 and import it on the Trades page; trades already here are skipped.">New trades: Trades → Import MT5 statement</a>
+                  : <label className="account-switch"><input type="checkbox" checked={account.enabled} onChange={() => toggleAccount(account)} /><span />{account.enabled ? 'Sync enabled' : 'Sync disabled'}</label>}
                 <div>
                   {isCtrader
                     ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="This account is authorized via OAuth in the cTrader section below — there's no login to edit.">Managed via cTrader connection below</span>
-                    : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
+                    : isImport ? null : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
                   <button onClick={() => setInvestorOpenId(current => current === account.id ? null : account.id)} aria-expanded={investorOpenId === account.id} aria-label={`Investor access for ${account.label}`}>
                     <Users size={15} /> Investor{account.investor.enabled ? ' · on' : ''}
                   </button>

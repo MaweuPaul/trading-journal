@@ -22,6 +22,7 @@ const {
 const { calculateMissedProfit, summarizeRMultiples, realizedRMultiple } = require('../lib/tradeMath');
 const { confidenceFor } = require('../lib/confidence');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
+const { importMt5Statement } = require('../lib/mt5StatementImport');
 
 const LOCAL_DB_PATH = path.join(__dirname, '../local_trades.json');
 const LOCAL_EVENTS_PATH = path.join(__dirname, '../local_account_events.json');
@@ -1864,6 +1865,36 @@ router.get('/trades/latest-close', auth, async (req, res) => {
   }
 });
 
+// POST /api/trades/import/mt5-statement  { content, target, commit }
+// An MT5 report (History → Report → HTML) for traders without the Windows
+// sync app (MT5 on a Mac). commit:false previews what would be added.
+router.post('/trades/import/mt5-statement', auth, ownerOnly, async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Importing needs a connected database. Unavailable while running offline.' });
+  }
+  try {
+    let checklist = [], executionChecklist = [];
+    if (req.body.commit) {
+      try {
+        const rules = await getUserRules(req.user.userId);
+        const snap = category => rules.filter(rule => rule.category === category && rule.enabled !== false)
+          .sort((a, b) => a.order - b.order).map(rule => ({ ruleId: rule.ruleId, rule: rule.label, complied: false }));
+        checklist = snap('pre_trade'); executionChecklist = snap('execution');
+      } catch { /* trades still import without the checklist snapshot */ }
+    }
+    const result = await importMt5Statement({
+      userId: req.user.userId,
+      content: req.body.content,
+      target: typeof req.body.target === 'string' ? req.body.target : 'auto',
+      commit: Boolean(req.body.commit),
+      checklist, executionChecklist,
+    });
+    res.status(req.body.commit ? 201 : 200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Could not import this report.' });
+  }
+});
+
 // POST /api/trades/manual  hand-entered trade, e.g. one your broker never
 // recorded. Only the computed fields (duration, running balance) are
 // derived here; everything else is exactly what the trader typed in.
@@ -2680,6 +2711,13 @@ router.post('/sync', auth, syncAgentOnly, async (req, res) => {
             accountMetadataUpdated++;
             if (accountIdentity.accountType) accountTypesUpdated++;
           }
+          skipped++;
+          continue;
+        }
+        // Already imported from an uploaded MT5 report (one trade per position).
+        if (t.positionId && accountIdentity.accountKey && await Trade.findOne({
+          user: req.user.userId, accountKey: accountIdentity.accountKey, positionId: String(t.positionId), importSource: 'mt5-statement',
+        }).select('_id')) {
           skipped++;
           continue;
         }

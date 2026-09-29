@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import InfoHint from '@/components/InfoHint';
 import TradeReplayModal from '@/components/TradeReplayModal';
 import ExportForAI from '@/components/ExportForAI';
+import Mt5StatementImport from '@/components/Mt5StatementImport';
 import PlaybookRuleInput from '@/components/PlaybookRuleInput';
 import type { PlaybookRule, PlaybookBlock, PlaybookSnapshot, Playbook } from '@/types/playbook';
 import {
@@ -286,6 +287,7 @@ function TradesPageContent() {
   const [replayTradeId, setReplayTradeId] = useState<string | null>(null);
   const [showAddTrade, setShowAddTrade] = useState(false);
   const [showExportAI, setShowExportAI] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -720,11 +722,10 @@ function TradesPageContent() {
               <Sparkles size={14} />
               Export for AI
             </button>
-            <button className="btn btn-ghost" disabled
-              title="MT5 on a Mac? The Desktop Sync App only runs on Windows. Soon you'll be able to upload your MT5 statement here instead. Until then, use cTrader, run the sync app on any Windows PC or VPS, or add trades manually.">
+            <button className="btn btn-ghost" onClick={() => setShowImport(true)}
+              title="Upload a report saved from MT5 (History → Report → HTML). For MT5 on a Mac, or without the Windows sync app.">
               <FileUp size={14} />
               Import MT5 statement
-              <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--amber, #b7791f)', border: '1px solid currentColor', borderRadius: 999, padding: '1px 6px', lineHeight: 1.4 }}>Soon</span>
             </button>
             <button className="btn btn-primary" onClick={() => setShowAddTrade(true)}>
               <Plus size={14} />
@@ -1630,6 +1631,7 @@ function TradesPageContent() {
           onClose={() => setShowExportAI(false)}
         />
       )}
+      {showImport && <Mt5StatementImport onClose={() => setShowImport(false)} onImported={() => load()} />}
       {showAddTrade && (
         <AddTradeModal
           onClose={() => setShowAddTrade(false)}
@@ -1697,7 +1699,7 @@ function AddTradeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <h3>Add Trade</h3>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>For a trade your broker never recorded</span>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.45 }}>
-              On a Mac with MT5? The Desktop Sync App only runs on Windows, so add trades here for now, use cTrader, or run the app on any Windows PC or VPS. Importing your MT5 statement is coming soon.
+              On a Mac with MT5? Use Import MT5 statement on the Trades page to bring in all your trades at once.
             </span>
           </div>
           <button className="drawer-close" onClick={onClose}><X size={16} /></button>

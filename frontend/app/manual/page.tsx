@@ -212,10 +212,11 @@ export default function ManualPage() {
               </ul>
               <p className="manual-manifesto-close"><strong>Log it honestly. Anything less, and you&apos;re only fooling yourself.</strong></p>
             </aside>
-            <div className="manual-sub">The two ways trades get in</div>
+            <div className="manual-sub">How trades get in</div>
             <ul className="manual-feature-list">
               <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>
               <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader&apos;s own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader&apos;s API — no desktop app needed. Trade Replay, AI backtesting, and the Pre-Trade chart use cTrader candles, even when your trade history comes from MT5.</li>
+              <li><b>MT5 statement import</b> — for MT5 on a Mac, or without the Windows app. Save a report in MT5 (History → right-click → Report → HTML) and upload it on the Trades page. Import again whenever you want newer trades; the ones already in your journal are skipped.</li>
             </ul>
             <div className="manual-sub">First-time setup</div>
             <ol className="manual-steps">
@@ -264,6 +265,7 @@ export default function ManualPage() {
               <li><b>Group by session</b> clusters trades under Tokyo / London / London–NY Overlap / New York / Pacific headers, each with its own trade count, net P&amp;L, and win rate.</li>
               <li>Re-entries appear nested under their parent trade (indented, tagged &quot;RE-ENT of #ticket&quot;); trades sharing a position get a colored stripe down the left edge.</li>
               <li><b>Add Trade</b> <span className="muted">— for a fill your broker never recorded. Type in symbol, direction, entry/exit price, lot size, P&amp;L, and open/close time; it&apos;s saved as a real trade (running balance chained off the trade before it) and tagged &quot;MANUAL&quot; in the symbol column so it&apos;s never confused with a synced one.</span></li>
+              <li><b>Import MT5 statement</b> <span className="muted">— upload a report saved from MT5 (History → right-click → Custom Period, then Report → HTML). It shows how many trades are new before adding anything, matches the report to your account by its number (or creates an import account), and brings in deposits and withdrawals too. Each position becomes one trade, even if you closed it in parts; stop loss and take profit are the levels at close.</span></li>
             </ul>
             <div className="manual-sub">The Journal Drawer</div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 10 }}>Click any row to open it. This is where a closed trade turns into a journaled one.</p>
@@ -569,6 +571,11 @@ export default function ManualPage() {
               <li><b>Generate your sync key</b><span className="d">Under &quot;Your personal sync key,&quot; click Generate / rotate. It&apos;s shown once — copy it immediately.</span></li>
               <li><b>Install the Desktop Sync App</b><span className="d">Download it, paste in your sync key, and click Start Sync. The account record alone doesn&apos;t sync anything by itself.</span></li>
             </ol>
+            <div className="manual-sub">MT5 without Windows (statement import)</div>
+            <ul className="manual-feature-list">
+              <li>On a Mac, the Desktop Sync App can&apos;t run. Use <b>Import MT5 statement</b> on the Trades page instead: the first import creates an account card marked <b>MT5 · statement import</b>, and later imports of the same account number add only new trades.</li>
+              <li>Importing a report for an account the Windows app already syncs? The import finds that account by its number and adds only what the app hasn&apos;t, and the app then skips what you imported, so nothing is added twice.</li>
+            </ul>
             <div className="manual-sub">Connecting cTrader</div>
             <ul className="manual-feature-list">
               <li><b>Connect cTrader</b> redirects to cTrader&apos;s own OAuth approval page. On return, pick which of your cTrader accounts under that login to actually connect.</li>

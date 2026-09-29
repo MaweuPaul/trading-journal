@@ -89,6 +89,10 @@ const tradeSchema = new mongoose.Schema({
   // backtest you want in real history, an OTC fill, etc). Never touched by
   // the MT5/cTrader sync pipeline's dealId matching.
   manualEntry: { type: Boolean, default: false },
+  // 'mt5-statement' for a trade imported from an uploaded MT5 report: one per
+  // position (partial closes combined). The desktop sync skips positions
+  // already imported this way, so the same account never shows twice.
+  importSource: { type: String, default: '' },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
 }, { timestamps: true });
 

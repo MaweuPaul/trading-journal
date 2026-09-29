@@ -9,7 +9,9 @@ const encryptedValueSchema = new mongoose.Schema({
 
 const tradingAccountSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  provider: { type: String, enum: ['mt5', 'ctrader'], default: 'mt5' },
+  // mt5_import: an MT5 account whose trades come from uploaded MT5 reports
+  // (no login stored, never synced by the desktop app -- e.g. MT5 on a Mac).
+  provider: { type: String, enum: ['mt5', 'ctrader', 'mt5_import'], default: 'mt5' },
   accountKey: { type: String, required: true },
   label: { type: String, required: true, trim: true, maxlength: 80 },
   credentials: {
@@ -19,6 +21,9 @@ const tradingAccountSchema = new mongoose.Schema({
     password: { type: encryptedValueSchema, required: function isMt5() { return this.provider === 'mt5'; } },
     server: { type: encryptedValueSchema, required: function isMt5() { return this.provider === 'mt5'; } },
   },
+  // mt5_import only: the MT5 login and server read from the report, so the next report finds this account.
+  statementLogin: { type: String, default: '', maxlength: 20 },
+  statementServer: { type: String, default: '', maxlength: 160 },
   enabled: { type: Boolean, default: true },
   archivedAt: { type: Date, default: null },
   requireRealAccount: { type: Boolean, default: false },

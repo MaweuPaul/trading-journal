@@ -110,6 +110,7 @@ function memoryModel(Model) {
     return {};
   };
   Model.deleteOne = async query => { const doc = find(query)[0]; if (doc) store.delete(String(doc._id)); return { deletedCount: doc ? 1 : 0 }; };
+  Model.deleteMany = async query => { const docs = find(query); for (const doc of docs) store.delete(String(doc._id)); return { deletedCount: docs.length }; };
   Model.store = store;
   return Model;
 }

@@ -89,11 +89,15 @@ export default function StrategiesView() {
     if (res.ok) { setName(''); setIdea(''); } else setError(res.error || 'Could not create the strategy');
   };
   const remove = async (label: string) => {
-    // Every logged backtest carrying the tag, whichever runs view is selected.
-    const tagged = allTrades.filter(t => tagsOf(t).includes(label)).length;
-    const message = tagged
-      ? `Delete the strategy "${label}"?\n\n${tagged} logged backtest${tagged === 1 ? ' is' : 's are'} tagged with it. The tag will be removed from ${tagged === 1 ? 'it' : 'them'}; the backtests themselves are kept.`
-      : `Delete the strategy "${label}"?`;
+    // Every logged backtest filed under it (yours and AI agents'), whichever runs view is selected.
+    const own = allTrades.filter(t => (t.strategy || tagsOf(t)[0]) === label).length;
+    const alsoTagged = allTrades.filter(t => (t.strategy || tagsOf(t)[0]) !== label && tagsOf(t).includes(label)).length;
+    const message = [
+      `Delete the strategy "${label}" and everything saved under it?`,
+      own ? `${own} logged backtest${own === 1 ? '' : 's'} will be deleted, along with its rules, AI agent runs and replay sessions.` : 'Its rules, AI agent runs and replay sessions will be deleted.',
+      alsoTagged ? `${alsoTagged} backtest${alsoTagged === 1 ? '' : 's'} from other strategies ${alsoTagged === 1 ? 'is' : 'are'} also tagged with it. ${alsoTagged === 1 ? 'It keeps' : 'They keep'} ${alsoTagged === 1 ? 'its' : 'their'} own strategy and just lose${alsoTagged === 1 ? 's' : ''} this tag.` : '',
+      'This can\'t be undone.',
+    ].filter(Boolean).join('\n\n');
     if (!window.confirm(message)) return;
     setError('');
     const res = await removeStrategy(label);

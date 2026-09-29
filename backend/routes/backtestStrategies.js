@@ -5,6 +5,7 @@ const BacktestStrategy = require('../models/BacktestStrategy');
 const BacktestTrade = require('../models/BacktestTrade');
 const auth = require('../middleware/auth');
 const { strategyAndTags } = require('../lib/backtestTags');
+const { purgeStrategy } = require('../lib/strategyPurge');
 
 function ownerOnly(req, res, next) {
   if (req.user.role === 'sync_agent') return res.status(403).json({ error: 'Owner session required.' });
@@ -89,7 +90,8 @@ router.delete('/backtest-strategies/:id', auth, ownerOnly, async (req, res) => {
   }
 });
 
-// Delete a strategy by name, whether or not it has a saved definition. Names
+// Delete a strategy by name, whether or not it has a saved definition. With
+// ?all=1 its backtests, code runs and replay sessions go too. Names
 // that only exist as tags on logged backtests keep reappearing in the list,
 // so with ?untag=1 the tag is also removed from every backtest carrying it
 // (the backtests themselves stay; their primary strategy becomes their next
@@ -99,6 +101,14 @@ router.delete('/backtest-strategies/by-name/:name', auth, ownerOnly, async (req,
   try {
     const name = String(req.params.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Strategy name is required' });
+    // ?all=1: the strategy and everything filed under it (lib/strategyPurge).
+    if (req.query.all === '1') {
+      const result = await purgeStrategy(req.user.userId, name);
+      if (!result.deletedDefinition && !result.deletedBacktests && !result.untagged && !result.deletedRuns && !result.deletedSessions) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+      return res.json({ ok: true, ...result });
+    }
     const definition = await BacktestStrategy.deleteOne({ user: req.user.userId, name });
     let untagged = 0;
     if (req.query.untag === '1') {

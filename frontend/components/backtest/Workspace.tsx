@@ -28,6 +28,7 @@ import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
 import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
 import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, setDrawingColor } from '../chart-drawing/drawingKit';
 import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
+import SecondChart from './SecondChart';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
 // `type` is the lightweight-charts-drawing registry key.
@@ -201,6 +202,17 @@ export default function Workspace() {
   // After switching to a higher timeframe mid-replay, the candle still forming
   // is shown as rebuilt from revealed candles (no peeking at its real close).
   const [partial, setPartial] = useState<{ idx: number; candle: Candle; endMs: number } | null>(null);
+  // Second chart beside the main one (another timeframe, crosshair synced); remembered per browser.
+  const [dualTf, setDualTfState] = useState<string | null>(null);
+  useEffect(() => { let saved: string | null = null; try { saved = localStorage.getItem('bt-dual-chart'); } catch { /* private mode */ } if (saved) queueMicrotask(() => setDualTfState(saved)); }, []);
+  const setDualTf = (tf: string | null) => { setDualTfState(tf); try { if (tf) localStorage.setItem('bt-dual-chart', tf); else localStorage.removeItem('bt-dual-chart'); } catch { /* private mode */ } };
+  const secondChartColors = () => {
+    const root = rootRef.current;
+    return {
+      bg: cssVar(root, '--bt-surface-container-lowest', '#090f15'), text: cssVar(root, '--bt-on-surface-variant', '#d8c3ad'),
+      grid: hexAlpha(cssVar(root, '--bt-surface-container', '#1b2027'), 0.8), up: cssVar(root, '--bt-secondary', '#4edea3'), down: cssVar(root, '--bt-error', '#ffb4ab'),
+    };
+  };
   const resolvingRef = useRef<string | null>(null);
   // Bumped on every fresh load / timeframe switch. The chart is rebuilt only
   // then -- appending streamed candles keeps drawings and zoom intact.
@@ -1542,6 +1554,12 @@ export default function Workspace() {
           {candles && <button type="button" onClick={endSession} className="tw:flex tw:items-center tw:gap-1 tw:text-on-surface-variant tw:hover:text-error"><Icon name="stop_circle" className="tw:text-[14px]" />End session</button>}
         </div>
         <div className="tw:flex tw:items-center tw:gap-1 tw:shrink-0">
+          <button type="button" onClick={() => setDualTf(dualTf ? null : (interval === '4h' || interval === '1day' ? '1h' : '4h'))} aria-pressed={Boolean(dualTf)}
+            title="Show a second chart on another timeframe beside this one, with the crosshair synced"
+            className={`tw:flex tw:items-center tw:gap-1 tw:px-2 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:transition ${dualTf ? 'tw:text-primary' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
+            <Icon name="splitscreen_right" className="tw:text-[15px] tw:text-primary" />
+            <span>Dual chart</span>
+          </button>
           <div className="tw:relative">
             <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
               className="tw:flex tw:items-center tw:gap-1 tw:px-2 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:text-on-surface-variant tw:hover:text-on-surface tw:transition">
@@ -1990,7 +2008,8 @@ export default function Workspace() {
         </aside>
         <div className="tw:relative tw:flex-1 tw:min-w-0 tw:flex tw:flex-col">
           {isDesktop && desktopLegend}
-          <div className={`tw:relative tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}
+          <div className={`tw:flex tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}>
+          <div className="tw:relative tw:flex-1 tw:min-w-0 tw:h-full"
             onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}
             onContextMenu={e => {
               if (!candles) return;
@@ -2110,6 +2129,15 @@ export default function Workspace() {
                 </>
               )}
             </div>
+          )}
+          </div>
+          {dualTf && (
+            <SecondChart
+              symbol={symbol.trim().toUpperCase()} interval={dualTf} onInterval={setDualTf} onClose={() => setDualTf(null)}
+              clockMs={candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null}
+              mainChart={chartRef.current} mainSeries={seriesRef.current} mainCandles={candles}
+              colors={secondChartColors()} headers={authHeaders}
+            />
           )}
           </div>
           {isDesktop && resultDrawer}

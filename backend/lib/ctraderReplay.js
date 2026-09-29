@@ -300,18 +300,22 @@ async function listAccountSymbols({ userId, preferredCtidTraderAccountId }) {
     err.code = 'NOT_CONNECTED';
     throw err;
   }
+  // Every connected account's symbols together: charts load a symbol from
+  // whichever account has it (see getTrendbars), so the list offers them all.
   let lastError = null;
-  for (const connection of [...connections].reverse()) {
+  const names = new Set();
+  for (const connection of connections) {
     try {
       const connectionInfo = await refreshConnectionIfNeeded(connection, userId);
       const client = await getAuthenticatedClient(connectionInfo);
       const cache = await getSymbolCache(client, connectionInfo.ctidTraderAccountId);
-      return [...cache.bySymbolName.keys()].sort();
+      for (const name of cache.bySymbolName.keys()) names.add(name);
     } catch (err) {
       lastError = err;
     }
   }
-  throw lastError;
+  if (!names.size && lastError) throw lastError;
+  return [...names].sort();
 }
 
 const TRENDBARS_PER_REQUEST = 1500;

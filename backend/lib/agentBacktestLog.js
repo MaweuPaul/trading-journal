@@ -209,6 +209,31 @@ async function deleteBacktest(userId, id) {
   return { deleted: true, id: String(id) };
 }
 
+/**
+ * Delete many agent-logged backtests at once: all of a strategy's, one
+ * run_strategy run's, or narrowed by symbol and dates. The owner's own
+ * backtests are never touched. Without confirm it only counts, so the agent
+ * sees what would go before anything does.
+ */
+async function deleteBacktests(userId, { strategy, runId, symbol, from, to, confirm = false } = {}) {
+  if (!strategy && !runId) throw new AgentError('Name a strategy or a runId: which of your logged trades should go?');
+  const run = runId ? String(runId).trim() : '';
+  let trades = await findTradesRaw(userId, { source: 'agent', strategy, symbol, from, to });
+  // Trades logged before runs were recorded on them name the run in their notes.
+  if (run) trades = trades.filter(t => t.strategyRun === run || (!t.strategyRun && String(t.notes || '').toLowerCase().includes(`strategy run ${run.toLowerCase()}`)));
+  trades = trades.filter(t => t.source === 'agent');
+  if (!trades.length) return { deleted: 0, note: 'No agent-logged backtests match.' };
+  if (!confirm) {
+    return {
+      wouldDelete: trades.length,
+      examples: trades.slice(0, 3).map(t => t.name),
+      next: `Call delete_backtests again with the same filters and confirm: true to delete these ${trades.length}.`,
+    };
+  }
+  const result = await BacktestTrade.deleteMany({ user: userId, source: 'agent', _id: { $in: trades.map(t => t._id) } });
+  return { deleted: result.deletedCount ?? trades.length };
+}
+
 async function deleteStrategy(userId, name) {
   const clean = String(name || '').trim().replace(/^#+/, '');
   const result = await BacktestStrategy.deleteOne({ user: userId, name: clean });
@@ -415,7 +440,7 @@ async function evaluateHoldout(userId, { name, version }) {
 }
 
 module.exports = {
-  listBacktests, getBacktest, updateBacktest, deleteBacktest, deleteStrategy, getMetrics, GROUPS,
+  listBacktests, getBacktest, updateBacktest, deleteBacktest, deleteBacktests, deleteStrategy, getMetrics, GROUPS,
   getStrategy, updateStrategyRules, setHoldout, evaluateHoldout,
   statsOf, groupKeys, featureBuckets,
 };

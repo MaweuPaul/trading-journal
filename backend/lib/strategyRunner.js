@@ -499,6 +499,7 @@ async function logTrades(userId, runId, s, version, trades) {
     executionQuality: score(t.features?.executionQuality),
     features: { ...(t.features || {}), ...(t.tag ? { tag: t.tag } : {}) },
     strategyVersion: version,
+    strategyRun: String(runId),
   }));
   if (typeof BacktestTrade.insertMany === 'function') await BacktestTrade.insertMany(docs, { ordered: false });
   else for (const d of docs) await BacktestTrade.create(d);

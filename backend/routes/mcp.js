@@ -333,6 +333,17 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     { id: z.string() },
     ({ id }) => backtestLog.deleteBacktest(userId, id));
 
+  tool('delete_backtests', 'Delete backtests (bulk)',
+    'Delete many backtests that agents logged: all under a strategy, one run_strategy run\'s (runId), optionally narrowed by symbol and dates. Never touches the owner\'s own backtests. First call without confirm to see how many match; then call again with confirm: true.',
+    {
+      strategy: z.string().optional(),
+      runId: z.string().optional().describe('The run_strategy run that logged them.'),
+      symbol: z.string().optional(),
+      from: timeInput.optional(), to: timeInput.optional(),
+      confirm: z.boolean().default(false),
+    },
+    args => backtestLog.deleteBacktests(userId, args));
+
   tool('delete_strategy', 'Delete strategy', 'Delete a strategy definition (its name and description). Backtests logged under it keep their tag.',
     { name: z.string() },
     ({ name }) => backtestLog.deleteStrategy(userId, name));

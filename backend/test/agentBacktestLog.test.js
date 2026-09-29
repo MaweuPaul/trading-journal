@@ -90,3 +90,30 @@ test('deleting a strategy removes only its definition', async () => {
   assert.equal((await log.deleteStrategy(user, '#Temp')).deleted, true);
   await assert.rejects(log.deleteStrategy(user, 'Temp'), err => err.code === 'NOT_FOUND');
 });
+
+test('bulk delete: only agent trades, counted first, by strategy or run', async () => {
+  const user = H.newUserId();
+  const { ids, blindId } = await seed(user);
+  await assert.rejects(log.deleteBacktests(user, {}), /strategy or a runId/);
+  const preview = await log.deleteBacktests(user, { strategy: 'S' });
+  assert.equal(preview.wouldDelete, 6, '5 agent trades + the blind one; not the replay or quick ones');
+  assert.equal(H.models.Trade.store.size >= 8, true, 'a preview deletes nothing');
+  assert.ok(ids.every(id => H.models.Trade.store.has(id)));
+
+  // One run's trades: recorded on the trade, or (older ones) named in its notes.
+  const mk = extra => H.models.Trade.create({ ...base, user, source: 'agent', outcome: 'win', rMultiple: 1, entryTime: 1, exitTime: 2, strategy: 'R', tags: ['R'], ...extra });
+  const a = await mk({ strategyRun: 'aaaaaaaaaaaaaaaaaaaaaaaa' });
+  const b = await mk({ notes: 'Setup...\n\nLogged by strategy run aaaaaaaaaaaaaaaaaaaaaaaa (long Plus).' });
+  const c = await mk({ strategyRun: 'bbbbbbbbbbbbbbbbbbbbbbbb' });
+  const own = await mk({ source: 'replay', notes: 'strategy run aaaaaaaaaaaaaaaaaaaaaaaa' });
+  const byRun = await log.deleteBacktests(user, { runId: 'aaaaaaaaaaaaaaaaaaaaaaaa', confirm: true });
+  assert.equal(byRun.deleted, 2);
+  for (const t of [a, b]) assert.equal(H.models.Trade.store.has(String(t._id)), false);
+  for (const t of [c, own]) assert.equal(H.models.Trade.store.has(String(t._id)), true);
+
+  const all = await log.deleteBacktests(user, { strategy: 'S', confirm: true });
+  assert.equal(all.deleted, 6);
+  assert.equal(H.models.Trade.store.has(blindId), false);
+  assert.equal(H.models.Trade.store.has(ids[5]), true, "the owner's replay backtest stays");
+  assert.equal(H.models.Trade.store.has(ids[6]), true, "the owner's quick log stays");
+});

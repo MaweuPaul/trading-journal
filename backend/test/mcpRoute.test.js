@@ -74,7 +74,7 @@ test('MCP: a full backtest loop over HTTP', async () => {
   assert.equal(init.status, 200);
   assert.equal(init.body.result.serverInfo.name, 'tradejournal-backtest');
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name).sort();
-  assert.deepEqual(tools, ['cancel_order', 'cancel_strategy_run', 'close_trade', 'create_strategy', 'delete_backtest', 'delete_strategy', 'discard_trade', 'end_session',
+  assert.deepEqual(tools, ['cancel_order', 'cancel_strategy_run', 'close_trade', 'create_strategy', 'delete_backtest', 'delete_backtests', 'delete_strategy', 'discard_trade', 'end_session',
     'evaluate_holdout', 'get_backtest', 'get_candles', 'get_indicators', 'get_metrics', 'get_state', 'get_strategy', 'get_strategy_run', 'get_strategy_run_code',
     'list_backtests', 'list_sessions', 'list_strategies', 'list_strategy_runs', 'list_symbols', 'log_trade', 'modify_trade', 'open_trade', 'place_order',
     'run_strategy', 'set_holdout', 'set_timeframe', 'start_session', 'step', 'strategy_api', 'update_backtest', 'update_strategy_rules']);

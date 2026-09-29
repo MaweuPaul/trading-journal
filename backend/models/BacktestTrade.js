@@ -26,6 +26,8 @@ const backtestTradeSchema = new mongoose.Schema({
   features: { type: mongoose.Schema.Types.Mixed, default: undefined },
   // Version of the strategy's rules (BacktestStrategy.versions) the trade was taken under.
   strategyVersion: { type: Number, default: null },
+  // The run_strategy run that logged it (agent trades), so a run's trades can be removed together.
+  strategyRun: { type: String, default: undefined, index: true, sparse: true },
   symbol: { type: String, required: true },
   interval: { type: String, default: '' },
   direction: { type: String, enum: ['long', 'short'], required: true },

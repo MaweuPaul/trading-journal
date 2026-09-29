@@ -4,7 +4,7 @@
 // the candle it falls in -- and, on the same symbol, the same price). Nothing
 // past the replay clock: closed candles, plus the still-forming candle built
 // from the main chart's revealed candles when both show the same symbol.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import type { SerializedDrawing } from 'lightweight-charts-drawing';
@@ -24,6 +24,36 @@ function candleAt(list: { time: unknown }[], t: number) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (Number(list[mid].time) <= t) { found = mid; lo = mid + 1; } else hi = mid - 1; }
   return found;
 }
+const AHEAD = 300;
+/**
+ * Candles of `symbol` from `back` bars before the clock to well past it
+ * (never past now). A new block loads only once the clock nears the end of
+ * the one held; a late answer still lands unless the symbol or timeframe changed.
+ */
+function useCandleWindow(symbol: string, interval: string, clockMs: number | null, back: number, headers: () => HeadersInit, onError: (msg: string) => void) {
+  const [held, setHeld] = useState<{ key: string; from: number; to: number; latest: boolean; candles: Candle[] }>({ key: '', from: 0, to: 0, latest: false, candles: [] });
+  const loading = useRef('');
+  const key = `${symbol}|${interval}`;
+  const bar = barMs(interval);
+  const covered = held.key === key && clockMs != null && clockMs - back * bar >= held.from && (clockMs + 20 * bar <= held.to || held.latest);
+  useEffect(() => {
+    if (!symbol || clockMs == null || covered) return;
+    const from = Math.floor(clockMs / bar) * bar - back * bar;
+    const now = Math.ceil(Date.now() / bar) * bar;
+    const to = Math.min(Math.floor(clockMs / bar) * bar + AHEAD * bar, now);
+    const ask = `${key}|${from}`;
+    if (loading.current.startsWith(`${key}|`)) return; // one block at a time per market
+    loading.current = ask;
+    getCandles(symbol, interval, from, to, headers())
+      .then(candles => { if (loading.current === ask) { setHeld({ key, from, to, latest: to >= now, candles }); onError(''); } })
+      .catch(err => { if (loading.current === ask) onError(err instanceof Error ? err.message : 'Chart data unavailable'); })
+      .finally(() => { if (loading.current === ask) loading.current = ''; });
+  }, [symbol, interval, clockMs, covered, key, bar, back, headers, onError]);
+  useEffect(() => () => { loading.current = ''; }, [key]);
+  return held.key === key ? held.candles : EMPTY;
+}
+const EMPTY: Candle[] = [];
+const ignore = () => {};
 const drawingsKey = (symbol: string) => `bt-dual-drawings:${symbol}`;
 function loadDrawings(symbol: string): SerializedDrawing[] {
   try { const raw = localStorage.getItem(drawingsKey(symbol)); return raw ? JSON.parse(raw) : []; } catch { return []; }
@@ -38,7 +68,6 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const dataRef = useRef<Candle[]>([]);
-  const [closed, setClosed] = useState<Candle[]>([]);
   const [error, setError] = useState('');
 
   // Its own symbol (blank = same as the main chart), remembered per browser.
@@ -111,19 +140,20 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
     return () => { ro.disconnect(); detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
   }, [colors.bg, colors.text, colors.grid, colors.up, colors.down, attach]);
 
-  // Closed candles at the replay clock (refetched once per candle; the cache keeps this cheap).
-  const closedBar = clockMs == null ? null : Math.floor(clockMs / barMs(interval));
+  // Candles around the replay clock, loaded in blocks that reach ahead of
+  // it and revealed locally, so replay never waits on the network each candle.
+  const nearClock = useCandleWindow(symbol, interval, clockMs, BARS, headers, setError);
   const firstLoad = useRef(true);
   useEffect(() => { firstLoad.current = true; }, [interval, symbol]);
-  useEffect(() => {
-    if (closedBar == null || !symbol) return;
-    let cancelled = false;
-    const toMs = closedBar * barMs(interval);
-    getCandles(symbol, interval, toMs - BARS * barMs(interval), toMs, headers())
-      .then(list => { if (!cancelled) { setClosed(list.filter(c => Number(c.time) * 1000 + barMs(interval) <= toMs)); setError(''); } })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Chart data unavailable'); });
-    return () => { cancelled = true; };
-  }, [symbol, interval, closedBar, headers]);
+  const closed = useMemo(() => {
+    if (clockMs == null) return [];
+    const bar = barMs(interval);
+    return nearClock.filter(c => Number(c.time) * 1000 + bar <= clockMs);
+  }, [nearClock, clockMs, interval]);
+  // Another symbol on a larger timeframe: its forming candle comes from its
+  // own candles on the main chart's timeframe.
+  const needFine = !sameMarket && barMs(mainInterval) < barMs(interval);
+  const fine = useCandleWindow(needFine ? symbol : '', mainInterval, clockMs, Math.ceil(barMs(interval) / barMs(mainInterval)) + 1, headers, ignore);
 
   // Closed candles + the forming one (same symbol, main chart on a smaller
   // timeframe: its revealed candles inside the current bar) + empty slots so
@@ -134,8 +164,9 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
     const bar = barMs(interval), mainBar = barMs(mainInterval);
     const start = Math.floor(clockMs / bar) * bar;
     const shown: Candle[] = [...closed];
-    if (sameMarket && mainBar < bar && mainCandles?.length) {
-      const inBar = mainCandles.filter(c => Number(c.time) * 1000 >= start && Number(c.time) * 1000 + mainBar <= clockMs);
+    const source = sameMarket ? mainCandles : needFine ? fine : null;
+    if (mainBar < bar && source?.length) {
+      const inBar = source.filter(c => Number(c.time) * 1000 >= start && Number(c.time) * 1000 + mainBar <= clockMs);
       if (inBar.length) {
         shown.push({
           time: (start / 1000) as Candle['time'], open: inBar[0].open, close: inBar[inBar.length - 1].close,
@@ -161,7 +192,7 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
     }
     // engine.exportDrawings is read fresh; the engine object itself changes every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [closed, clockMs, interval, mainInterval, mainCandles, sameMarket, replaceDrawings]);
+  }, [closed, clockMs, interval, mainInterval, mainCandles, sameMarket, needFine, fine, replaceDrawings]);
 
   // Crosshair sync, both ways.
   useEffect(() => {

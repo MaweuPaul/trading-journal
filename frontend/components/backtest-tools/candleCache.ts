@@ -12,7 +12,8 @@ import { INTERVAL_DAYS } from './types';
 type Range = [number, number]; // [fromMs, toMs), sorted, non-overlapping
 interface Entry { key: string; ranges: Range[]; candles: Candle[] }
 
-const DB_NAME = 'tj-candles';
+// Renamed when older copies may hold bad history (v2: holes from the old cTrader paging).
+const DB_NAME = 'tj-candles-v2';
 const STORE = 'series';
 const memory = new Map<string, Entry>();
 
@@ -22,6 +23,7 @@ export class ChartFetchError extends Error {
 
 function openDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  try { indexedDB.deleteDatabase('tj-candles'); } catch { /* the old copy: free the space */ }
   return new Promise(resolve => {
     try {
       const req = indexedDB.open(DB_NAME, 1);

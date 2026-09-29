@@ -148,11 +148,16 @@ test('code errors come back with a message; endless loops are stopped', async ()
 test('logAs logs agent trades with the rules version; held-out trades stay hidden', async () => {
   const user = H.newUserId();
   await H.models.Strategy.create({ user, name: 'EMA test', holdoutFrom: new Date('2024-02-01'), versions: [{ version: 1, rules: 'a' }, { version: 2, rules: 'b' }] });
-  const code = `function onBar(ctx) { if (!ctx.position && ctx.time.utc.minute === 0 && ctx.time.utc.hour === 14) ctx.buy({ stop: ctx.bar.close - 1, target: ctx.bar.close + 1, features: { hour: 14 } }); }`;
+  const code = `function onBar(ctx) { if (!ctx.position && ctx.time.utc.minute === 0 && ctx.time.utc.hour === 14) ctx.buy({ stop: ctx.bar.close - 1, target: ctx.bar.close + 1, notes: 'Buy at 14:00.', features: { hour: 14, setupQuality: 4, executionQuality: 5 } }); }`;
   const res = await run(user, code, { logAs: 'EMA test' });
   const logged = [...H.models.Trade.store.values()].filter(t => String(t.user) === user);
   assert.equal(logged.length, res.loggedTo.trades);
   assert.ok(logged.every(t => t.source === 'agent' && t.strategyVersion === 2 && t.features.hour === 14 && t.features.atr14 > 0));
+  const first = logged[0];
+  assert.equal(first.setupQuality, 4);
+  assert.equal(first.executionQuality, 5);
+  assert.match(first.notes, /^Buy at 14:00\.\n\n(Target hit|Stopped out|Still open|Closed)/);
+  assert.match(first.notes, /Logged by strategy run [a-f0-9]{24}\.$/);
   assert.ok(res.heldOut, 'held-out note');
   const visible = await all(user, res);
   assert.ok(visible.every(t => t.entryTime < '2024-02-01'));

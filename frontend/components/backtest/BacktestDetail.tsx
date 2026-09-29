@@ -39,7 +39,7 @@ function holdTime(t: BacktestTrade) {
 }
 function grade(t: BacktestTrade) {
   const q = ((t.setupQuality ?? 0) + (t.executionQuality ?? 0)) / 2;
-  if (!q && t.planFollowed == null) return null;
+  if (!q) return null; // not scored yet (e.g. an AI agent's trade)
   const score = q - (t.planFollowed === false ? 1 : 0);
   return score >= 4.75 ? 'A+' : score >= 4 ? 'A' : score >= 3.5 ? 'B+' : score >= 3 ? 'B' : score >= 2 ? 'C' : 'D';
 }

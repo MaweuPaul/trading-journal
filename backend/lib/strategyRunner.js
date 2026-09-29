@@ -474,6 +474,14 @@ async function startRun(userId, apiKeyId, input = {}, { wait = 20 } = {}) {
   return getRun(userId, runId);
 }
 
+const EXIT_WORDS = { target: 'Target hit', stop: 'Stopped out', close: 'Closed by the strategy', manual: 'Closed by the strategy', end: 'Still open when the test ended; closed at the last price' };
+function exitLine(t) {
+  const how = EXIT_WORDS[t.exitReason] || `Exit: ${t.exitReason}`;
+  const r = Number(t.rMultiple);
+  return `${how} at ${t.exitPrice}${Number.isFinite(r) ? ` (${r >= 0 ? '+' : ''}${Math.round(r * 100) / 100}R)` : ''}.`;
+}
+const score = v => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(5, Math.round(Number(v)))) : 0);
+
 async function logTrades(userId, runId, s, version, trades) {
   const list = trades.slice(0, MAX_LOGGED_TRADES);
   const docs = list.map(t => ({
@@ -484,8 +492,11 @@ async function logTrades(userId, runId, s, version, trades) {
     entryTime: t.entryTime, entryPrice: t.entryPrice, exitTime: t.exitTime, exitPrice: t.exitPrice,
     stopLoss: t.stopLoss, takeProfit: t.takeProfit ?? null, outcome: t.outcome, riskAmount: t.riskAmount,
     pnlUSD: t.pnlUSD, rMultiple: t.rMultiple,
-    notes: [`Strategy run ${runId}${t.tag ? ` · ${t.tag}` : ''} · exit: ${t.exitReason}`, t.notes, t.finalStopLoss !== t.stopLoss ? `Stop moved from ${t.stopLoss} to ${t.finalStopLoss} during the trade (R is measured from the original stop).` : '', t.partials ? `Partial exits: ${t.partials.map(x => `${Math.round(x.portion * 100)}% at ${x.price} (${x.time})`).join(', ')}; the rest at ${t.exitPrice}.` : ''].filter(Boolean).join('\n\n').slice(0, 5000),
+    notes: [t.notes, exitLine(t), t.finalStopLoss !== t.stopLoss ? `Stop moved from ${t.stopLoss} to ${t.finalStopLoss} during the trade (R is measured from the original stop).` : '', t.partials ? `Partial exits: ${t.partials.map(x => `${Math.round(x.portion * 100)}% at ${x.price} (${x.time})`).join(', ')}; the rest at ${t.exitPrice}.` : '', `Logged by strategy run ${runId}${t.tag ? ` (${t.tag})` : ''}.`].filter(Boolean).join('\n\n').slice(0, 5000),
     planFollowed: true,
+    // The code can score its own setups: features.setupQuality / executionQuality (1-5).
+    setupQuality: score(t.features?.setupQuality),
+    executionQuality: score(t.features?.executionQuality),
     features: { ...(t.features || {}), ...(t.tag ? { tag: t.tag } : {}) },
     strategyVersion: version,
   }));

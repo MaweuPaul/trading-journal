@@ -54,6 +54,9 @@ ctx.log(...)                        debug output (first 300 lines kept); console
 stop is required; target is optional (leave it out to trail). risk (USD) defaults to riskAmount; id is optional. tag labels the setup
 (results can be broken down by it). features records entry conditions ({ name: number | boolean | short text }),
 so get_strategy_run / get_metrics can split results by them (groupBy "feature:<name>").
+With logAs, notes become the logged trade's notes (describe the setup in plain words: the levels,
+what confirmed it, why the stop and target sit where they do), and features.setupQuality /
+features.executionQuality (1-5) fill its setup and execution scores.
 
 ## How orders are settled (by the server, not your code)
 Market entries fill at the candle close (plus spread if costs.spread is set). Limit/stop orders fill on

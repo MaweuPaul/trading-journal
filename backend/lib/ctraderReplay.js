@@ -319,9 +319,28 @@ async function listAccountSymbols({ userId, preferredCtidTraderAccountId }) {
 }
 
 const TRENDBARS_PER_REQUEST = 1500;
-// Upper bound on pages per call (~21k bars) so one chart request can't hammer
+// Upper bound on pages per call (~22k bars) so one chart request can't hammer
 // the cTrader connection.
-const MAX_TRENDBAR_PAGES = 14;
+const MAX_TRENDBAR_PAGES = 16;
+const PERIOD_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3 };
+// Each paged request covers a time window short enough to hold fewer bars than
+// one response carries, so it returns the whole window whichever end cTrader
+// counts from. (Asking for a long window and walking back from the newest bar
+// left holes: cTrader sometimes answers with the window's oldest bars instead.)
+const WINDOW_BARS = TRENDBARS_PER_REQUEST - 100;
+
+/** Bars for [fromMs, toMs] in windows, newest first, at most `pages` requests. */
+async function fetchWindows(request, { fromMs, toMs, barMs, pages }) {
+  const bars = [];
+  let cursorMs = Math.floor(toMs);
+  for (let page = 0; page < pages && cursorMs > fromMs; page++) {
+    const startMs = Math.max(Math.floor(fromMs), cursorMs - WINDOW_BARS * barMs);
+    const res = await request(startMs, cursorMs);
+    bars.push(...(res.trendbar || []));
+    cursorMs = startMs; // the boundary bar may come twice; callers de-duplicate
+  }
+  return bars;
+}
 
 // cTrader allows about 5 historical-data requests a second per connection and
 // answers faster bursts with "You are being rate limited" -- which used to fail
@@ -391,30 +410,23 @@ async function getTrendbars({ userId, symbol, periodLabel, fromMs, toMs, preferr
     throw err;
   }
 
-  // cTrader returns at most TRENDBARS_PER_REQUEST bars per GET_TRENDBARS_REQ
-  // (the newest ones before toTimestamp), so walk backwards page by page until
-  // the window is covered, then stitch the pages together.
+  // cTrader returns at most TRENDBARS_PER_REQUEST bars per GET_TRENDBARS_REQ.
+  // One page: the newest bars before toTimestamp. More pages: fixed windows
+  // (fetchWindows), stitched together.
   const fromSeconds = Math.floor(fromMs / 1000);
   const toSeconds = Math.ceil(toMs / 1000);
-  const bars = [];
-  let cursorMs = Math.floor(toMs);
   const pages = Math.max(1, Math.min(MAX_TRENDBAR_PAGES, Math.floor(maxPages)));
-  for (let page = 0; page < pages; page++) {
-    const res = await pacedTrendbarRequest(client, connectionInfo.ctidTraderAccountId, {
-      ctidTraderAccountId: Number(connectionInfo.ctidTraderAccountId),
-      fromTimestamp: Math.floor(fromMs),
-      toTimestamp: cursorMs,
-      period,
-      symbolId,
-      count: TRENDBARS_PER_REQUEST,
-    });
-    const pageBars = res.trendbar || [];
-    if (!pageBars.length) break;
-    bars.push(...pageBars);
-    const earliestMs = Math.min(...pageBars.map(b => Number(b.utcTimestampInMinutes) * 60000));
-    if (earliestMs <= fromMs || pageBars.length < TRENDBARS_PER_REQUEST || earliestMs >= cursorMs) break;
-    cursorMs = earliestMs - 1;
-  }
+  const request = (a, b) => pacedTrendbarRequest(client, connectionInfo.ctidTraderAccountId, {
+    ctidTraderAccountId: Number(connectionInfo.ctidTraderAccountId),
+    fromTimestamp: Math.floor(a),
+    toTimestamp: Math.floor(b),
+    period,
+    symbolId,
+    count: TRENDBARS_PER_REQUEST,
+  });
+  const bars = pages === 1
+    ? ((await request(fromMs, toMs)).trendbar || [])
+    : await fetchWindows(request, { fromMs, toMs, barMs: PERIOD_MS[periodLabel], pages });
 
   // Prices are transmitted as 1/100000ths of a unit, and open/high/close are
   // deltas above the bar's low (see OpenApiModelMessages.proto ProtoOATrendbar).
@@ -492,4 +504,4 @@ async function getSymbolSpec({ userId, symbol, preferredCtidTraderAccountId }) {
   };
 }
 
-module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols, getSymbolSpec, pacedTrendbarRequest };
+module.exports = { fetchAccountList, getTrendbars, loadConnection, listConnections, getAuthenticatedClient, listAccountSymbols, getSymbolSpec, pacedTrendbarRequest, _internal: { fetchWindows, WINDOW_BARS } };

@@ -2136,7 +2136,7 @@ export default function Workspace() {
           </div>
           {dualTf && (
             <SecondChart
-              symbol={symbol.trim().toUpperCase()} interval={dualTf} onInterval={setDualTf} onClose={() => setDualTf(null)}
+              symbol={symbol.trim().toUpperCase()} mainInterval={interval} interval={dualTf} onInterval={setDualTf} onClose={() => setDualTf(null)}
               clockMs={candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null}
               mainChart={chartRef.current} mainSeries={seriesRef.current} mainCandles={candles}
               colors={secondChartColors()} headers={authHeaders}

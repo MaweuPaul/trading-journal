@@ -143,7 +143,13 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     setCount(manager.getAllDrawings().length);
     setAttached({ chart, series });
 
-    const refresh = () => setRevision(r => r + 1);
+    // At most once a frame: the chart fires these while it repaints, and a
+    // re-render per event can feed back into another repaint (and loop).
+    let frame = 0;
+    const refresh = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; setRevision(r => r + 1); });
+    };
     const unsub = [
       manager.on('drawing:added', ev => {
         if (importingRef.current) return;
@@ -232,6 +238,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.unsubscribeCrosshairMove(onRange);
       pendingRef.current = null;
+      if (frame) cancelAnimationFrame(frame);
       manager.detach();
       if (managerRef.current === manager) { managerRef.current = null; chartRef.current = null; seriesRef.current = null; setAttached(null); }
     };

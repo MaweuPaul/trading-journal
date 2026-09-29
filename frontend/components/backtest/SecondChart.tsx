@@ -1,13 +1,20 @@
 'use client';
-// A second chart beside the Workspace chart, on its own timeframe, showing
-// only candles already closed at the replay clock (no hindsight). The
-// crosshair is synced both ways: same time (the candle it falls in) and price.
+// A second chart beside the Workspace chart: its own timeframe and symbol,
+// the shared drawing tools, and the crosshair synced both ways (same time --
+// the candle it falls in -- and, on the same symbol, the same price). Nothing
+// past the replay clock: closed candles, plus the still-forming candle built
+// from the main chart's revealed candles when both show the same symbol.
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
+import type { SerializedDrawing } from 'lightweight-charts-drawing';
 import { getCandles } from '../backtest-tools/candleCache';
 import { CHART_INTERVALS, INTERVAL_DAYS } from '../backtest-tools/types';
 import type { Candle } from '../backtest-tools/types';
+import { useChartDrawings } from '../chart-drawing/useChartDrawings';
+import ChartDrawingToolbar from '../chart-drawing/ChartDrawingToolbar';
+import ChartDrawingLayer from '../chart-drawing/ChartDrawingLayer';
+import { futureSlotTimes, snapToCandles } from '../chart-drawing/drawingKit';
 
 const BARS = 400;
 const barMs = (tf: string) => (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * 86_400_000;
@@ -17,9 +24,13 @@ function candleAt(list: { time: unknown }[], t: number) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (Number(list[mid].time) <= t) { found = mid; lo = mid + 1; } else hi = mid - 1; }
   return found;
 }
+const drawingsKey = (symbol: string) => `bt-dual-drawings:${symbol}`;
+function loadDrawings(symbol: string): SerializedDrawing[] {
+  try { const raw = localStorage.getItem(drawingsKey(symbol)); return raw ? JSON.parse(raw) : []; } catch { return []; }
+}
 
-export default function SecondChart({ symbol: mainSymbol, interval, onInterval, clockMs, mainChart, mainSeries, mainCandles, colors, headers, onClose }: {
-  symbol: string; interval: string; onInterval: (tf: string) => void; clockMs: number | null;
+export default function SecondChart({ symbol: mainSymbol, mainInterval, interval, onInterval, clockMs, mainChart, mainSeries, mainCandles, colors, headers, onClose }: {
+  symbol: string; mainInterval: string; interval: string; onInterval: (tf: string) => void; clockMs: number | null;
   mainChart: IChartApi | null; mainSeries: ISeriesApi<'Candlestick'> | null; mainCandles: Candle[] | null;
   colors: { bg: string; text: string; grid: string; up: string; down: string }; headers: () => HeadersInit; onClose: () => void;
 }) {
@@ -27,19 +38,47 @@ export default function SecondChart({ symbol: mainSymbol, interval, onInterval, 
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const dataRef = useRef<Candle[]>([]);
+  const [closed, setClosed] = useState<Candle[]>([]);
   const [error, setError] = useState('');
+
   // Its own symbol (blank = same as the main chart), remembered per browser.
   const [ownSymbol, setOwnSymbol] = useState('');
   const [symbolDraft, setSymbolDraft] = useState('');
-  useEffect(() => { let saved = ''; try { saved = localStorage.getItem('bt-dual-symbol') || ''; } catch { /* private mode */ } if (saved) queueMicrotask(() => { setOwnSymbol(saved); setSymbolDraft(saved); }); }, []);
+  const [symbolList, setSymbolList] = useState<string[]>([]);
+  useEffect(() => {
+    let saved = ''; try { saved = localStorage.getItem('bt-dual-symbol') || ''; } catch { /* private mode */ }
+    if (saved) queueMicrotask(() => { setOwnSymbol(saved); setSymbolDraft(saved); });
+    fetch('/api/pre-trade-analyses/symbols', { headers: headers() }).then(r => (r.ok ? r.json() : { symbols: [] }))
+      .then(d => setSymbolList(Array.isArray(d.symbols) ? d.symbols : [])).catch(() => {});
+  }, [headers]);
   const applySymbol = (raw: string) => {
-    const next = raw.trim().toUpperCase() === mainSymbol ? '' : raw.trim().toUpperCase().slice(0, 30);
+    const want = raw.trim().toUpperCase().slice(0, 30);
+    const next = want === mainSymbol ? '' : want;
     setOwnSymbol(next); setSymbolDraft(next);
     try { if (next) localStorage.setItem('bt-dual-symbol', next); else localStorage.removeItem('bt-dual-symbol'); } catch { /* private mode */ }
   };
   const symbol = ownSymbol || mainSymbol;
   const sameMarket = !ownSymbol;
+
+  // Drawings (the shared tools), kept per symbol in this browser.
+  const symbolRef = useRef(symbol);
+  const engine = useChartDrawings({
+    onChange: drawings => { try { localStorage.setItem(drawingsKey(symbolRef.current), JSON.stringify(drawings.slice(0, 200))); } catch { /* full or private */ } },
+    getCandles: () => dataRef.current,
+  });
+  const { attach, replaceDrawings } = engine;
+  useEffect(() => {
+    symbolRef.current = symbol;
+    replaceDrawings(loadDrawings(symbol));
+  }, [symbol, replaceDrawings]);
+
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
   // Right-click menu, like the main chart: default zoom on the latest candle, or all candles.
   const resetView = () => {
     const n = dataRef.current.length, chart = chartRef.current; if (!chart || !n) return;
@@ -53,7 +92,7 @@ export default function SecondChart({ symbol: mainSymbol, interval, onInterval, 
     chart.priceScale('right').applyOptions({ autoScale: true });
   };
 
-  // The chart itself.
+  // The chart itself, with the drawing tools attached.
   useEffect(() => {
     const el = hostRef.current; if (!el) return;
     const chart = createChart(el, {
@@ -66,12 +105,13 @@ export default function SecondChart({ symbol: mainSymbol, interval, onInterval, 
     });
     const series = chart.addSeries(CandlestickSeries, { upColor: colors.up, downColor: colors.down, borderVisible: false, wickUpColor: colors.up, wickDownColor: colors.down });
     chartRef.current = chart; seriesRef.current = series;
+    const detach = attach(chart, series, el, loadDrawings(symbolRef.current));
     const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
-  }, [colors.bg, colors.text, colors.grid, colors.up, colors.down]);
+    return () => { ro.disconnect(); detach(); chart.remove(); chartRef.current = null; seriesRef.current = null; };
+  }, [colors.bg, colors.text, colors.grid, colors.up, colors.down, attach]);
 
-  // Candles closed by the replay clock (refetched as it moves; the cache keeps this cheap).
+  // Closed candles at the replay clock (refetched once per candle; the cache keeps this cheap).
   const closedBar = clockMs == null ? null : Math.floor(clockMs / barMs(interval));
   const firstLoad = useRef(true);
   useEffect(() => { firstLoad.current = true; }, [interval, symbol]);
@@ -80,76 +120,123 @@ export default function SecondChart({ symbol: mainSymbol, interval, onInterval, 
     let cancelled = false;
     const toMs = closedBar * barMs(interval);
     getCandles(symbol, interval, toMs - BARS * barMs(interval), toMs, headers())
-      .then(list => {
-        if (cancelled || !seriesRef.current) return;
-        const closed = list.filter(c => Number(c.time) * 1000 + barMs(interval) <= toMs);
-        dataRef.current = closed;
-        // Decimals to suit the market: 5 for FX pairs, 2 for gold and indices.
-        const last = closed[closed.length - 1]?.close ?? 0;
-        const precision = last < 10 ? 5 : last < 200 ? 3 : 2;
-        seriesRef.current.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
-        seriesRef.current.setData(closed.map(c => ({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close })));
-        if (firstLoad.current && closed.length) {
-          chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, closed.length - 120), to: closed.length + 4 });
-          firstLoad.current = false;
-        }
-        setError('');
-      })
+      .then(list => { if (!cancelled) { setClosed(list.filter(c => Number(c.time) * 1000 + barMs(interval) <= toMs)); setError(''); } })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Chart data unavailable'); });
     return () => { cancelled = true; };
   }, [symbol, interval, closedBar, headers]);
+
+  // Closed candles + the forming one (same symbol, main chart on a smaller
+  // timeframe: its revealed candles inside the current bar) + empty slots so
+  // drawings can reach past the last candle.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || clockMs == null) return;
+    const bar = barMs(interval), mainBar = barMs(mainInterval);
+    const start = Math.floor(clockMs / bar) * bar;
+    const shown: Candle[] = [...closed];
+    if (sameMarket && mainBar < bar && mainCandles?.length) {
+      const inBar = mainCandles.filter(c => Number(c.time) * 1000 >= start && Number(c.time) * 1000 + mainBar <= clockMs);
+      if (inBar.length) {
+        shown.push({
+          time: (start / 1000) as Candle['time'], open: inBar[0].open, close: inBar[inBar.length - 1].close,
+          high: Math.max(...inBar.map(c => c.high)), low: Math.min(...inBar.map(c => c.low)),
+        } as Candle);
+      }
+    }
+    dataRef.current = shown;
+    if (!shown.length) { series.setData([]); return; }
+    // Decimals to suit the market: 5 for FX pairs, 2 for gold and indices.
+    const last = shown[shown.length - 1].close;
+    const precision = last < 10 ? 5 : last < 200 ? 3 : 2;
+    series.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
+    const slots = futureSlotTimes(Number(shown[shown.length - 1].time), bar / 1000, engine.exportDrawings(), [], 60);
+    series.setData([
+      ...shown.map(c => ({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close })),
+      ...slots.map(t => ({ time: t as UTCTimestamp })),
+    ]);
+    if (firstLoad.current && closed.length) { // not before the history has loaded
+      chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, shown.length - 120), to: shown.length + 4 });
+      firstLoad.current = false;
+      replaceDrawings(snapToCandles(loadDrawings(symbolRef.current), shown.map(c => Number(c.time))));
+    }
+    // engine.exportDrawings is read fresh; the engine object itself changes every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closed, clockMs, interval, mainInterval, mainCandles, sameMarket, replaceDrawings]);
 
   // Crosshair sync, both ways.
   useEffect(() => {
     const chart = chartRef.current, series = seriesRef.current;
     if (!chart || !series || !mainChart || !mainSeries) return;
-    let syncing = false;
+    // Only the chart under the mouse drives the other one: setting a
+    // crosshair fires that chart's own crosshair event, and mirroring those
+    // back and forth never stops.
+    let hovered: 'main' | 'second' | null = null;
     // Another symbol: sync the time only, and put the crosshair on that candle's close.
     const mirror = (p: MouseEventParams<Time>, fromSeries: ISeriesApi<'Candlestick'>, to: IChartApi, toSeries: ISeriesApi<'Candlestick'>, toData: { time: unknown; close: number }[]) => {
-      if (syncing) return;
-      syncing = true;
-      try {
+      {
         const i = p.time == null || !p.point ? -1 : candleAt(toData, Number(p.time));
         const price = !p.point ? null : sameMarket ? fromSeries.coordinateToPrice(p.point.y) : i >= 0 ? toData[i].close : null;
         if (i < 0 || price == null) to.clearCrosshairPosition();
         else to.setCrosshairPosition(Number(price), toData[i].time as Time, toSeries);
-      } finally { syncing = false; }
+      }
     };
-    const fromMain = (p: MouseEventParams<Time>) => mirror(p, mainSeries, chart, series, dataRef.current);
-    const fromSecond = (p: MouseEventParams<Time>) => mirror(p, series, mainChart, mainSeries, mainCandles ?? []);
+    const fromMain = (p: MouseEventParams<Time>) => { if (hovered === 'main') mirror(p, mainSeries, chart, series, dataRef.current); };
+    const fromSecond = (p: MouseEventParams<Time>) => { if (hovered === 'second') mirror(p, series, mainChart, mainSeries, mainCandles ?? []); };
+    const mainEl = mainChart.chartElement(), secondEl = chart.chartElement();
+    const enterMain = () => { hovered = 'main'; }, enterSecond = () => { hovered = 'second'; };
+    const leaveMain = () => { if (hovered === 'main') { hovered = null; chart.clearCrosshairPosition(); } };
+    const leaveSecond = () => { if (hovered === 'second') { hovered = null; mainChart.clearCrosshairPosition(); } };
+    mainEl.addEventListener('mouseenter', enterMain); mainEl.addEventListener('mouseleave', leaveMain);
+    secondEl.addEventListener('mouseenter', enterSecond); secondEl.addEventListener('mouseleave', leaveSecond);
     mainChart.subscribeCrosshairMove(fromMain);
     chart.subscribeCrosshairMove(fromSecond);
-    return () => { mainChart.unsubscribeCrosshairMove(fromMain); chart.unsubscribeCrosshairMove(fromSecond); };
+    return () => {
+      mainEl.removeEventListener('mouseenter', enterMain); mainEl.removeEventListener('mouseleave', leaveMain);
+      secondEl.removeEventListener('mouseenter', enterSecond); secondEl.removeEventListener('mouseleave', leaveSecond);
+      mainChart.unsubscribeCrosshairMove(fromMain); chart.unsubscribeCrosshairMove(fromSecond);
+    };
   }, [mainChart, mainSeries, mainCandles, colors.bg, sameMarket]);
 
   return (
-    <div className="tw:relative tw:flex-1 tw:min-w-0 tw:border-l tw:border-surface-container-highest"
-      onContextMenu={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: e.clientX - r.left, y: e.clientY - r.top }); }}>
-      <div ref={hostRef} className="tw:absolute tw:inset-0" />
-      <div className="tw:absolute tw:top-1 tw:left-1 tw:z-10 tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-high/90 tw:rounded tw:px-1 tw:py-0.5">
-        <input value={symbolDraft} placeholder={mainSymbol} aria-label="Second chart symbol" title="Symbol for this chart (blank = same as the main chart)"
-          onChange={e => setSymbolDraft(e.target.value.toUpperCase())}
-          onKeyDown={e => { if (e.key === 'Enter') applySymbol(symbolDraft); if (e.key === 'Escape') setSymbolDraft(ownSymbol); e.stopPropagation(); }}
-          onBlur={() => applySymbol(symbolDraft)}
-          className="tw:w-20 tw:px-1.5 tw:py-0.5 tw:rounded tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface tw:uppercase" />
-        {CHART_INTERVALS.map(tf => (
-          <button key={tf.value} type="button" onClick={() => onInterval(tf.value)} aria-pressed={interval === tf.value}
-            className={`tw:px-1.5 tw:py-0.5 tw:rounded tw:font-mono-metric-md tw:text-[10px] ${interval === tf.value ? 'tw:bg-primary/20 tw:text-primary' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
-            {tf.label}
-          </button>
-        ))}
-        <button type="button" onClick={onClose} title="Close second chart" aria-label="Close second chart" className="tw:ml-1 tw:px-1 tw:text-on-surface-variant tw:hover:text-error tw:text-[12px]">✕</button>
+    <div className="tw:flex tw:flex-1 tw:min-w-0 tw:border-l tw:border-surface-container-highest">
+      <ChartDrawingToolbar engine={engine} />
+      <div className="tw:relative tw:flex-1 tw:min-w-0"
+        onContextMenu={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: e.clientX - r.left, y: e.clientY - r.top }); }}>
+        <div ref={hostRef} className="tw:absolute tw:inset-0" />
+        <ChartDrawingLayer engine={engine} />
+        <div className="tw:absolute tw:top-1 tw:left-1 tw:z-10 tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-high/90 tw:rounded tw:px-1 tw:py-0.5">
+          <input value={symbolDraft} placeholder={mainSymbol} list="bt-second-chart-symbols" aria-label="Second chart symbol"
+            title="Search a symbol for this chart (blank = same as the main chart)"
+            onChange={e => {
+              const v = e.target.value.toUpperCase();
+              setSymbolDraft(v);
+              if (symbolList.includes(v)) applySymbol(v); // picked from the list
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') applySymbol(symbolDraft); if (e.key === 'Escape') setSymbolDraft(ownSymbol); e.stopPropagation(); }}
+            onBlur={() => applySymbol(symbolDraft)}
+            className="tw:w-24 tw:px-1.5 tw:py-0.5 tw:rounded tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface tw:uppercase" />
+          <datalist id="bt-second-chart-symbols">
+            {symbolList.map(s => <option key={s} value={s} />)}
+          </datalist>
+          {CHART_INTERVALS.map(tf => (
+            <button key={tf.value} type="button" onClick={() => onInterval(tf.value)} aria-pressed={interval === tf.value}
+              className={`tw:px-1.5 tw:py-0.5 tw:rounded tw:font-mono-metric-md tw:text-[10px] ${interval === tf.value ? 'tw:bg-primary/20 tw:text-primary' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
+              {tf.label}
+            </button>
+          ))}
+          <button type="button" onClick={onClose} title="Close second chart" aria-label="Close second chart" className="tw:ml-1 tw:px-1 tw:text-on-surface-variant tw:hover:text-error tw:text-[12px]">✕</button>
+        </div>
+        {menu && (
+          <>
+            <div className="tw:fixed tw:inset-0 tw:z-40" onMouseDown={() => setMenu(null)} onContextMenu={e => { e.preventDefault(); setMenu(null); }} />
+            <div role="menu" aria-label="Second chart" className="tw:absolute tw:z-50 tw:min-w-44 tw:py-1 tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded-lg tw:shadow-lg" style={{ left: menu.x, top: menu.y }}>
+              <button type="button" role="menuitem" onClick={() => { resetView(); setMenu(null); }} className="tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left">Reset chart</button>
+              <button type="button" role="menuitem" onClick={() => { fitAll(); setMenu(null); }} className="tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left">Fit all candles</button>
+            </div>
+          </>
+        )}
+        {error && <div className="tw:absolute tw:inset-x-0 tw:top-10 tw:text-center tw:text-body-sm tw:text-on-surface-variant">{error}</div>}
       </div>
-      {menu && (
-        <>
-          <div className="tw:fixed tw:inset-0 tw:z-40" onMouseDown={() => setMenu(null)} onContextMenu={e => { e.preventDefault(); setMenu(null); }} />
-          <div role="menu" aria-label="Second chart" className="tw:absolute tw:z-50 tw:min-w-44 tw:py-1 tw:bg-surface-container tw:border tw:border-outline-variant tw:rounded-lg tw:shadow-lg" style={{ left: menu.x, top: menu.y }}>
-            <button type="button" role="menuitem" onClick={() => { resetView(); setMenu(null); }} className="tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left">Reset chart</button>
-            <button type="button" role="menuitem" onClick={() => { fitAll(); setMenu(null); }} className="tw:w-full tw:flex tw:items-center tw:gap-2 tw:px-3 tw:py-1.5 tw:text-body-sm tw:text-on-surface tw:hover:bg-surface-container-high tw:text-left">Fit all candles</button>
-          </div>
-        </>
-      )}
-      {error && <div className="tw:absolute tw:inset-x-0 tw:top-10 tw:text-center tw:text-body-sm tw:text-on-surface-variant">{error}</div>}
     </div>
   );
 }

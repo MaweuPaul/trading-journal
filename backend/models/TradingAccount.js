@@ -45,7 +45,9 @@ const tradingAccountSchema = new mongoose.Schema({
   // a long-lived JWT alone.
   investor: {
     enabled: { type: Boolean, default: false },
-    code: { type: String, default: null },
+    // No default: the unique index only skips accounts *without* a code, so
+    // an explicit null on two accounts collides (E11000 on the second one).
+    code: { type: String },
     passwordHash: { type: String, default: null },
     createdAt: { type: Date, default: null },
     lastViewedAt: { type: Date, default: null },
@@ -55,5 +57,15 @@ const tradingAccountSchema = new mongoose.Schema({
 tradingAccountSchema.index({ user: 1, accountKey: 1 }, { unique: true });
 tradingAccountSchema.index({ user: 1, archivedAt: 1, enabled: 1 });
 tradingAccountSchema.index({ 'investor.code': 1 }, { unique: true, sparse: true });
+
+// Accounts saved while `code` defaulted to null block every new account
+// (duplicate null in the unique index): clear those nulls once on start.
+mongoose.connection.on('connected', async () => {
+  try {
+    await mongoose.connection.collection('tradingaccounts').updateMany({ 'investor.code': null }, { $unset: { 'investor.code': '' } });
+  } catch (_err) {
+    // Collection may not exist yet on a fresh database -- nothing to clean.
+  }
+});
 
 module.exports = mongoose.model('TradingAccount', tradingAccountSchema);

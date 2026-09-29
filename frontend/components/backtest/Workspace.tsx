@@ -949,10 +949,13 @@ export default function Workspace() {
   const resetChartView = () => {
     const chart = chartRef.current; if (!chart) return;
     const ts = chart.timeScale();
-    ts.resetTimeScale();
-    // resetTimeScale scrolls to the very last slot -- the empty future ones -- so
-    // bring the current candle back to the right edge.
-    ts.scrollToPosition(RIGHT_PAD_BARS - futureSlotsRef.current, false);
+    // The default zoom (about 8px a candle), ending at the current replay
+    // candle. Set as a range: scrolling by the number of empty future slots
+    // drifted whenever that number changed.
+    const last = revealedCountRef.current - 1;
+    if (last < 0) return;
+    const bars = Math.max(60, Math.min(240, Math.round(chart.chartElement().clientWidth / 8)));
+    ts.setVisibleLogicalRange({ from: Math.max(-RIGHT_PAD_BARS, last - bars), to: last + RIGHT_PAD_BARS });
     chart.priceScale('right').applyOptions({ autoScale: true });
   };
   const fitAllCandles = () => fitRevealed();

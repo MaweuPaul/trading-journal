@@ -50,6 +50,13 @@ export default function ChartDrawingToolbar({ engine, extra, className = '' }: {
         className={`${btn} ${idle} tw:disabled:opacity-40`}>
         <Icon name="undo" className="tw:text-[20px]" />
       </button>
+      {engine.hiddenCount > 0 && (
+        <button type="button" onClick={engine.showHidden} title={`Show hidden drawings (${engine.hiddenCount})`} aria-label={`Show ${engine.hiddenCount} hidden drawing${engine.hiddenCount === 1 ? '' : 's'}`}
+          className={`${btn} tw:relative tw:text-primary tw:hover:bg-primary/15`}>
+          <Icon name="visibility" className="tw:text-[20px]" />
+          <span className="tw:absolute tw:-top-0.5 tw:-right-0.5 tw:min-w-4 tw:h-4 tw:px-1 tw:rounded-full tw:bg-primary tw:text-on-primary tw:text-[10px] tw:leading-4 tw:text-center">{engine.hiddenCount}</span>
+        </button>
+      )}
       <button type="button" onClick={engine.clearAll} disabled={!engine.count} title="Clear all drawings" aria-label="Clear all drawings"
         className={`${btn} tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:disabled:opacity-40`}>
         <Icon name="delete_sweep" className="tw:text-[20px]" />

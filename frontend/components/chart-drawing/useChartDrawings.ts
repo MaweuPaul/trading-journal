@@ -9,7 +9,7 @@ import type { IChartApi, ISeriesApi, SeriesType } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import type { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
-import { DRAWING_SWATCHES, applyDrawingProperties, drawingDisplayName, drawingFactory, setDrawingColor } from './drawingKit';
+import { DRAWING_SWATCHES, applyDrawingProperties, drawingDisplayName, drawingFactory, setDrawingColor, isUserHidden, unhideDrawing } from './drawingKit';
 
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 export interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
@@ -29,6 +29,9 @@ export interface ChartDrawings {
   undo: () => void;
   deleteSelected: () => void;
   clearAll: () => void;
+  /** Drawings the trader hid (Visibility tab), and a way to show them all again. */
+  hiddenCount: number;
+  showHidden: () => void;
   editSelected: () => void;
   editing: DrawingPropertiesEdit | null;
   saveProperties: (value: DrawingPropertiesValue) => void;
@@ -79,6 +82,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
   const [magnet, setMagnet] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [count, setCount] = useState(0);
+  const [hiddenCount, setHiddenCount] = useState(0);
   const [historyDepth, setHistoryDepth] = useState(0);
   const [editing, setEditing] = useState<DrawingPropertiesEdit | null>(null);
   const [revision, setRevision] = useState(0);
@@ -100,12 +104,15 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     }
     for (const id of [...hidden]) if (!m.getDrawing(id)) hidden.delete(id);
   }, []);
+  // Hidden by the trader (Visibility tab), not by the replay's reveal limit.
+  const userHidden = useCallback(() => (managerRef.current?.getAllDrawings() ?? []).filter(d => isUserHidden(d) || (d.options.visible === false && !revealHiddenRef.current.has(d.id))), []);
   const changed = useCallback(() => {
     const m = managerRef.current; if (!m || importingRef.current) return;
     setCount(m.getAllDrawings().length);
+    setHiddenCount(userHidden().length);
     setRevision(r => r + 1);
     onChangeRef.current?.(savedDrawings());
-  }, [savedDrawings]);
+  }, [savedDrawings, userHidden]);
   const pushHistory = useCallback(() => {
     const m = managerRef.current; if (!m) return;
     historyRef.current = [...historyRef.current.slice(-29), savedDrawings()];
@@ -141,6 +148,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     }
     applyReveal();
     setCount(manager.getAllDrawings().length);
+    setHiddenCount(userHidden().length);
     setAttached({ chart, series });
 
     // At most once a frame: the chart fires these while it repaints, and a
@@ -242,7 +250,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
       manager.detach();
       if (managerRef.current === manager) { managerRef.current = null; chartRef.current = null; seriesRef.current = null; setAttached(null); }
     };
-  }, [applyReveal, changed, pushHistory]);
+  }, [applyReveal, changed, pushHistory, userHidden]);
 
   // ── Placing a new drawing (on the capture layer while a tool is active) ───
   const anchorAt = (x: number, y: number): Anchor | null => {
@@ -338,6 +346,13 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     if (!window.confirm('Remove every drawing from this chart?')) return;
     pushHistory(); m.clearAll(); setSelectedId(null);
   };
+  const showHidden = () => {
+    const list = userHidden(); if (!list.length) return;
+    pushHistory();
+    for (const d of list) unhideDrawing(d);
+    applyReveal(); // one the replay hasn't reached yet stays hidden until it does
+    changed(); setRevision(r => r + 1);
+  };
   const pickColor = (c: string) => {
     setColor(c);
     const d = selectedId ? managerRef.current?.getDrawing(selectedId) : null;
@@ -371,8 +386,8 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
     importingRef.current = false;
     applyReveal();
     historyRef.current = []; setHistoryDepth(0); setSelectedId(null);
-    setCount(m.getAllDrawings().length); setRevision(r => r + 1);
-  }, [applyReveal, cancelPending]);
+    setCount(m.getAllDrawings().length); setHiddenCount(userHidden().length); setRevision(r => r + 1);
+  }, [applyReveal, cancelPending, userHidden]);
 
   const setRevealLimit = useCallback((time: number | null) => {
     if (revealLimitRef.current === time) return;
@@ -396,6 +411,7 @@ export function useChartDrawings({ onChange, getCandles }: Options = {}): ChartD
   return {
     attach, activeTool, activateTool, color, pickColor, magnet, setMagnet, selectedId, count,
     canUndo: historyDepth > 0, undo, deleteSelected, clearAll, editSelected,
+    hiddenCount, showHidden,
     editing, saveProperties, cancelProperties,
     getDrawing: id => managerRef.current?.getDrawing(id) ?? null,
     exportDrawings: savedDrawings,

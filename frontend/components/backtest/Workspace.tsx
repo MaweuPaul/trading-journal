@@ -26,7 +26,7 @@ import {
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
 import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
-import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, setDrawingColor } from '../chart-drawing/drawingKit';
+import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, isUserHidden, setDrawingColor, unhideDrawing } from '../chart-drawing/drawingKit';
 import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
 import SecondChart from './SecondChart';
 
@@ -258,6 +258,7 @@ export default function Workspace() {
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingCount, setDrawingCount] = useState(0);
   const [drawingRevision, setDrawingRevision] = useState(0);
+  const [hiddenDrawingCount, setHiddenDrawingCount] = useState(0);
   const [drawingPropertiesEdit, setDrawingPropertiesEdit] = useState<DrawingPropertiesEdit | null>(null);
   const drawingHistoryRef = useRef<SerializedDrawing[][]>([]);
   const [historyDepth, setHistoryDepth] = useState(0);
@@ -420,6 +421,7 @@ export default function Workspace() {
     setHistoryDepth(drawingHistoryRef.current.length);
     manager.clearAll();
     manager.importDrawings(last, drawingFactory);
+    setHiddenDrawingCount(hiddenOf(manager).length);
     setSelectedDrawingId(null);
   };
   const deleteSelectedDrawing = () => {
@@ -434,6 +436,15 @@ export default function Workspace() {
     pushHistorySnapshot();
     manager.clearAll();
     setSelectedDrawingId(null);
+  };
+  // Drawings hidden from the properties panel's Visibility tab.
+  const hiddenOf = (manager: DrawingManager | null) => (manager?.getAllDrawings() ?? []).filter(isUserHidden);
+  const showHiddenDrawings = () => {
+    const list = hiddenOf(managerRef.current); if (!list.length) return;
+    pushHistorySnapshot();
+    for (const d of list) unhideDrawing(d);
+    setHiddenDrawingCount(0);
+    setDrawingRevision(revision => revision + 1);
   };
   const pickColor = (color: string) => {
     setDrawColor(color);
@@ -485,6 +496,7 @@ export default function Workspace() {
     applyDrawingProperties(drawing, value);
     manager.selectDrawing(drawing.id);
     setSelectedDrawingId(drawing.id);
+    setHiddenDrawingCount(hiddenOf(manager).length);
     setDrawingRevision(revision => revision + 1);
   };
 
@@ -783,10 +795,12 @@ export default function Workspace() {
     if (restoring) {
       if (restoring.drawings.length) manager.importDrawings(snapDrawings(restoring.drawings, candlesRef.current, replayIdx, barMsOf(interval) / 1000), drawingFactory);
       pendingRestoreRef.current = null;
+      setHiddenDrawingCount(manager.getAllDrawings().filter(isUserHidden).length);
       refreshDrawingOverlay();
     }
     const recount = () => {
       setDrawingCount(manager.getAllDrawings().length);
+      setHiddenDrawingCount(manager.getAllDrawings().filter(isUserHidden).length);
       refreshDrawingOverlay();
     };
     const unsubscribers = [
@@ -810,6 +824,7 @@ export default function Workspace() {
       // stays exactly where you put it.
       manager.on('drawing:updated', event => {
         if (event.drawing?.type === 'rectangle' && event.drawing.options.extendRight) event.drawing.updateOptions({ extendRight: false });
+        setHiddenDrawingCount(manager.getAllDrawings().filter(isUserHidden).length);
         refreshDrawingOverlay();
       }),
       manager.on('drawing:removed', recount),
@@ -1028,10 +1043,11 @@ export default function Workspace() {
         const lastPoint = !times.length ? 0 : extending ? Math.min(...times) : Math.max(...times);
         drawingMadeAtRef.current.set(d.id, Math.min(lastPoint, revealedTime));
       }
-      const shouldShow = (drawingMadeAtRef.current.get(d.id) ?? 0) <= revealedTime;
+      // Shown once the replay reaches it, unless you hid it yourself.
+      const shouldShow = (drawingMadeAtRef.current.get(d.id) ?? 0) <= revealedTime && !isUserHidden(d);
       if ((d.options.visible !== false) !== shouldShow) { d.updateOptions({ visible: shouldShow }); d.requestUpdate(); }
     }
-  }, [candles, replayIdx, drawingCount]);
+  }, [candles, replayIdx, drawingCount, drawingRevision]);
 
   // ── Playback ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1997,6 +2013,13 @@ export default function Workspace() {
             className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-surface-container-high tw:hover:text-on-surface tw:disabled:opacity-40">
             <Icon name="undo" className="tw:text-[20px]" />
           </button>
+          {hiddenDrawingCount > 0 && (
+            <button type="button" onClick={showHiddenDrawings} title={`Show hidden drawings (${hiddenDrawingCount})`} aria-label={`Show ${hiddenDrawingCount} hidden drawing${hiddenDrawingCount === 1 ? '' : 's'}`}
+              className="tw:relative tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-primary tw:hover:bg-primary/15">
+              <Icon name="visibility" className="tw:text-[20px]" />
+              <span className="tw:absolute tw:-top-0.5 tw:-right-0.5 tw:min-w-4 tw:h-4 tw:px-1 tw:rounded-full tw:bg-primary tw:text-on-primary tw:text-[10px] tw:leading-4 tw:text-center">{hiddenDrawingCount}</span>
+            </button>
+          )}
           <button type="button" onClick={clearAllDrawings} disabled={!drawingCount} title="Clear canvas markups" aria-label="Clear all drawings"
             className="tw:w-9 tw:h-9 tw:rounded-lg tw:flex tw:items-center tw:justify-center tw:shrink-0 tw:transition-colors tw:text-on-surface-variant tw:hover:bg-error/20 tw:hover:text-error tw:disabled:opacity-40">
             <Icon name="delete_sweep" className="tw:text-[20px]" />
@@ -2036,7 +2059,7 @@ export default function Workspace() {
                 drawingName={drawingPropertiesEdit.drawingName}
                 isNew={drawingPropertiesEdit.isNew}
                 initialTab={drawing.type === 'text-annotation' ? 'text' : undefined}
-                capabilities={drawingCapabilities(drawing)}
+                capabilities={drawingCapabilities(drawing, { zonesExtend: true })}
                 value={drawingPropertiesValue(drawing)}
                 onSave={saveDrawingProperties}
                 onCancel={cancelDrawingProperties}

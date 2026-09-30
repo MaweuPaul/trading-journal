@@ -74,6 +74,10 @@ export function drawingFactory(type: string, data: SerializedDrawing) {
     ? { ...data.options, text: style?.drawingText ?? (data.options as { text?: string } | undefined)?.text ?? '' }
     : data.options;
   const drawing = getToolRegistry().createDrawing(type, data.id, data.anchors, data.style, options);
+  // Rectangles read `filled` once at creation and keep it out of their saved
+  // options; put it back there so it survives the next save.
+  const filled = (data.options as { filled?: boolean } | undefined)?.filled;
+  if (drawing && type === 'rectangle' && typeof filled === 'boolean') drawing.updateOptions({ filled } as Partial<IDrawing['options']>);
   syncTextNote(drawing);
   return drawing;
 }
@@ -109,7 +113,8 @@ export function drawingDisplayName(type: string) {
   return DRAWING_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
 }
 
-export function drawingCapabilities(drawing: IDrawing): DrawingPropertiesCapabilities {
+/** zonesExtend: the chart grows extending rectangles with the replay (Backtest workspace). */
+export function drawingCapabilities(drawing: IDrawing, { zonesExtend = false } = {}): DrawingPropertiesCapabilities {
   const textTypes = new Set(['rectangle', 'trend-line', 'ray', 'horizontal-line', 'parallel-channel', 'fib-retracement', 'fib-extension', 'arrow', 'text-annotation']);
   return {
     style: true,
@@ -117,10 +122,23 @@ export function drawingCapabilities(drawing: IDrawing): DrawingPropertiesCapabil
     text: textTypes.has(drawing.type),
     coordinates: true,
     visibility: true,
-    extendRight: drawing.type === 'rectangle' || drawing.type === 'trend-line' || drawing.type === 'ray',
+    // Trend lines extend both ways; rays always extend; rectangles only where the chart grows them.
+    extendRight: drawing.type === 'trend-line' || (zonesExtend && drawing.type === 'rectangle'),
+    extendLeft: drawing.type === 'trend-line',
     lineWidth: drawing.type !== 'text-annotation',
     placement: drawing.type !== 'text-annotation',
   };
+}
+
+const LINE_DASH: Record<DrawingPropertiesValue['lineStyle'], number[]> = { solid: [], dashed: [6, 4], dotted: [1.5, 3] };
+function lineStyleOf(dash: number[] | undefined): DrawingPropertiesValue['lineStyle'] {
+  if (!dash || !dash.length) return 'solid';
+  return dash[0] <= 2 ? 'dotted' : 'dashed';
+}
+function rectangleFilled(drawing: IDrawing) {
+  const own = (drawing as { rectangleOptions?: { filled?: boolean } }).rectangleOptions?.filled;
+  if (typeof own === 'boolean') return own;
+  return Boolean((drawing.options as { filled?: boolean }).filled);
 }
 
 export function drawingPropertiesValue(drawing: IDrawing): DrawingPropertiesValue {
@@ -130,18 +148,40 @@ export function drawingPropertiesValue(drawing: IDrawing): DrawingPropertiesValu
     lineWidth: drawing.style.lineWidth || 2,
     fillColor: withText.style.fillHex || (drawing.style.fillColor?.startsWith('#') ? drawing.style.fillColor : '') || drawing.style.lineColor || '#3b82f6',
     fillOpacity: typeof drawing.style.fillOpacity === 'number' ? drawing.style.fillOpacity : 0.12,
-    filled: Boolean(withText.options.filled),
+    filled: rectangleFilled(drawing),
+    lineStyle: lineStyleOf(drawing.style.lineDash),
     text: getDrawingText(drawing),
     textFontSize: withText.style.drawingTextFontSize || (drawing.type === 'text-annotation' ? 14 : 12),
     textBold: Boolean(withText.style.drawingTextBold),
     textItalic: Boolean(withText.style.drawingTextItalic),
     textPlacement: withText.style.drawingTextPlacement || 'inside',
     textAlign: withText.style.drawingTextAlign || 'center',
-    visible: drawing.options.visible !== false,
+    // hiddenByUser: hidden from this panel (a replay may also hide drawings for a while).
+    visible: (drawing.options as { hiddenByUser?: boolean }).hiddenByUser ? false : drawing.options.visible !== false,
     locked: Boolean(drawing.options.locked),
     extendRight: Boolean(drawing.options.extendRight),
-    anchors: drawing.anchors.map(anchor => ({ time: String(anchor.time), price: anchor.price })),
+    extendLeft: Boolean(drawing.options.extendLeft),
+    anchors: drawing.anchors.map(anchor => ({ time: Number(anchor.time), price: anchor.price })),
   };
+}
+
+/**
+ * Change a drawing's options so they're also saved: trend lines save a copy
+ * of their options taken when they were created, so it gets the change too.
+ */
+export function setDrawingOptions(drawing: IDrawing, options: Record<string, unknown>) {
+  drawing.updateOptions(options as Partial<IDrawing['options']>);
+  (drawing as { setTrendLineOptions?: (o: Record<string, unknown>) => void }).setTrendLineOptions?.(options);
+}
+
+/** Hidden by the trader (not by a replay that hasn't reached it yet). */
+export function isUserHidden(drawing: IDrawing) {
+  return Boolean((drawing.options as { hiddenByUser?: boolean }).hiddenByUser);
+}
+/** Show a drawing the trader hid. */
+export function unhideDrawing(drawing: IDrawing) {
+  setDrawingOptions(drawing, { visible: true, hiddenByUser: false });
+  drawing.requestUpdate();
 }
 
 export function applyDrawingProperties(drawing: IDrawing, value: DrawingPropertiesValue) {
@@ -149,6 +189,7 @@ export function applyDrawingProperties(drawing: IDrawing, value: DrawingProperti
   drawing.updateStyle({
     lineColor: value.lineColor,
     lineWidth: value.lineWidth,
+    lineDash: LINE_DASH[value.lineStyle],
     fillColor: fillWithOpacity(value.fillColor, value.fillOpacity),
     fillHex: value.fillColor,
     fillOpacity: value.fillOpacity,
@@ -159,12 +200,22 @@ export function applyDrawingProperties(drawing: IDrawing, value: DrawingProperti
     drawingTextPlacement: value.textPlacement,
     drawingTextAlign: value.textAlign,
   } as Partial<DrawingWithText['style']>);
-  drawing.updateOptions({
+  setDrawingOptions(drawing, {
     visible: value.visible,
+    hiddenByUser: !value.visible,
     locked: value.locked,
     extendRight: value.extendRight,
-    filled: value.filled,
-  } as Partial<DrawingWithText['options']>);
+    extendLeft: value.extendLeft,
+    ...(drawing.type === 'rectangle' ? { filled: value.filled } : {}),
+  });
+  // The rectangle paints from its own copy of `filled`.
+  (drawing as { setRectangleOptions?: (o: { filled: boolean }) => void }).setRectangleOptions?.({ filled: value.filled });
+  value.anchors.forEach((anchor, i) => {
+    const cur = drawing.anchors[i];
+    if (cur && Number.isFinite(anchor.time) && Number.isFinite(anchor.price) && (Number(cur.time) !== anchor.time || cur.price !== anchor.price)) {
+      drawing.updateAnchor(i, { ...cur, time: anchor.time as typeof cur.time, price: anchor.price });
+    }
+  });
   syncTextNote(drawing);
   drawing.requestUpdate();
 }

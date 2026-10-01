@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
+const { ipKey } = require('../lib/clientIp');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { safeSecretEqual } = require('../lib/credentialEncryption');
@@ -24,6 +25,7 @@ const router = express.Router();
 const credentialLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: Number(process.env.AUTH_RATE_LIMIT) || 10,
+  keyGenerator: ipKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait 15 minutes and try again.' },

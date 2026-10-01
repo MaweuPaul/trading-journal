@@ -25,8 +25,8 @@ const SCOPES = ['backtest', 'journal'];
 
 const sha256 = v => crypto.createHash('sha256').update(v).digest('hex');
 const random = bytes => crypto.randomBytes(bytes).toString('base64url');
-const clientIp = req => String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
-const limiter = rateLimit({ windowMs: 60_000, limit: 30, keyGenerator: clientIp, validate: false, standardHeaders: 'draft-8', legacyHeaders: false });
+const { ipKey } = require('../lib/clientIp');
+const limiter = rateLimit({ windowMs: 60_000, limit: 30, keyGenerator: ipKey, standardHeaders: 'draft-8', legacyHeaders: false });
 
 function oauthError(res, status, error, description) {
   return res.status(status).set('Cache-Control', 'no-store').json({ error, error_description: description });

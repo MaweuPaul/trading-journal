@@ -6,6 +6,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
+const { rateLimit } = require('express-rate-limit');
+const { ipKey } = require('./lib/clientIp');
 
 const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
@@ -22,6 +24,12 @@ const oauthRouter = require('./routes/oauth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Render puts one proxy in front of the app; trusting exactly that hop makes
+// req.ip the address that connected to Render (not one a caller wrote into
+// X-Forwarded-For). The web app's own visitors are told apart by
+// lib/clientIp.js. Set TRUST_PROXY_HOPS=0 when running without a proxy.
+app.set('trust proxy', Number.isFinite(Number(process.env.TRUST_PROXY_HOPS)) && process.env.TRUST_PROXY_HOPS !== '' ? Number(process.env.TRUST_PROXY_HOPS) : 1);
 
 // Middleware
 app.use(
@@ -52,6 +60,18 @@ app.use(morgan('dev'));
 
 // Serve offline screenshots as static files (for preview before Cloudinary upload)
 app.use('/public', express.static(path.join(__dirname, 'public')));
+
+// Overall per-visitor cap on the API (login, reset and the AI tools have
+// their own, tighter limits). API_RATE_LIMIT requests a minute, default 1200.
+app.use('/api', rateLimit({
+  windowMs: 60_000,
+  limit: Number(process.env.API_RATE_LIMIT) || 1200,
+  keyGenerator: ipKey,
+  skip: req => req.path === '/mcp' || req.path === '/health',
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Slow down and try again in a minute.' },
+}));
 
 // Routes
 app.use('/api/auth', authRouter);

@@ -31,6 +31,8 @@ function buildForwardHeaders(request: NextRequest) {
     const lowerKey = key.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(lowerKey)) continue;
     if (lowerKey === 'origin' || lowerKey === 'referer') continue;
+    // Only this proxy may say who the visitor is (see backend lib/clientIp.js).
+    if (lowerKey === 'x-tj-client-ip' || lowerKey === 'x-tj-proxy-secret') continue;
     headers.set(key, value);
   }
   return headers;
@@ -44,6 +46,14 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const headers = buildForwardHeaders(request);
   // The address the browser/app used, so the backend can point OAuth clients back here.
   headers.set('x-tj-public-origin', request.nextUrl.origin);
+  // The visitor's address for the backend's per-IP rate limits. Vercel sets
+  // x-real-ip / x-forwarded-for itself, so a browser can't fake them here.
+  const secret = process.env.PROXY_SHARED_SECRET;
+  const visitor = request.headers.get('x-real-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  if (secret && visitor) {
+    headers.set('x-tj-client-ip', visitor);
+    headers.set('x-tj-proxy-secret', secret);
+  }
   const response = await fetch(backendUrl, {
     method,
     headers,

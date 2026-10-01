@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
+const { ipKey } = require('../lib/clientIp');
 const auth = require('../middleware/auth');
 const TradingAccount = require('../models/TradingAccount');
 const Trade = require('../models/Trade');
@@ -22,6 +23,7 @@ const REPLAY_CACHE_TTL_MS = 30 * 60 * 1000;
 const investorLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
+  keyGenerator: ipKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait 15 minutes and try again.' },

@@ -12,7 +12,10 @@ function ownerOnly(req, res, next) {
   next();
 }
 
-const INTERVAL_MINUTES = { '1min': 1, '5min': 5, '15min': 15, '1h': 60, '4h': 240, '1day': 1440 };
+const INTERVAL_MINUTES = { '1min': 1, '5min': 5, '15min': 15, '1h': 60, '4h': 240, '1day': 1440, '1week': 10080, '1month': 43200 };
+// Full charts load this many candles back (cTrader returns fewer where history is shorter).
+const MAX_BARS = 20000;
+const EARLIEST_MS = Date.UTC(1990, 0, 1);
 const CHART_INTERVALS = new Set(Object.keys(INTERVAL_MINUTES));
 
 // GET /pre-trade-analyses/chart  candles for an arbitrary symbol -- no Trade
@@ -23,9 +26,16 @@ router.get('/pre-trade-analyses/chart', auth, ownerOnly, async (req, res) => {
     const symbol = String(req.query.symbol || '').trim();
     if (!symbol) return res.status(400).json({ error: 'symbol is required' });
     const interval = CHART_INTERVALS.has(String(req.query.interval || '')) ? String(req.query.interval) : '15min';
-    const days = Math.max(1, Math.min(30, Number(req.query.days) || 5));
+    // days: an explicit window (older clients); otherwise as many candles as cTrader has, up to MAX_BARS.
+    const days = req.query.days != null ? Math.max(1, Math.min(30, Number(req.query.days) || 5)) : null;
     const toMs = Date.now();
-    const fromMs = toMs - days * 24 * 60 * 60 * 1000;
+    // sinceMs: just the newest candles (the chart refreshing itself while open),
+    // from at most a day back; otherwise the whole lookback.
+    const since = Number(req.query.sinceMs);
+    const fromMs = Number.isFinite(since) && since > toMs - 24 * 60 * 60 * 1000 && since < toMs
+      ? since
+      : days != null ? toMs - days * 24 * 60 * 60 * 1000
+      : Math.max(EARLIEST_MS, toMs - MAX_BARS * INTERVAL_MINUTES[interval] * 60000);
 
     // Short intervals over several days exceed cTrader's 1500-bar page, so page
     // back far enough to cover the window (getTrendbars caps the page count).

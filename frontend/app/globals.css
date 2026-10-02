@@ -3736,3 +3736,11 @@ body:has(.manual-page.public) .main-content { margin-left: 0 !important; }
   .auth-showcase { display: none; }
   .auth-mobile-tagline { display: block; max-width: 440px; text-align: center; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
 }
+
+/* Pre-Trade chart: live refresh indicator */
+.pretrade-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--green, #10b981); margin-right: 10px; }
+.pretrade-live.stale { color: var(--text-muted, #8e9bb0); }
+.pretrade-live-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pretrade-live-pulse 2s ease-in-out infinite; }
+.pretrade-live.stale .pretrade-live-dot { animation: none; }
+@keyframes pretrade-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pretrade-live-dot { animation: none; } }

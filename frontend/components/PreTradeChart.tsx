@@ -21,6 +21,7 @@ export type ChartAnnotation = { type: string; id: string } & Record<string, unkn
 const CHART_INTERVALS = [
   { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
   { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
+  { value: '1week', label: '1W' }, { value: '1month', label: '1M' },
 ] as const;
 
 interface Props {
@@ -38,7 +39,6 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
 
   const [interval, setInterval_] = useState(initialInterval && CHART_INTERVALS.some(t => t.value === initialInterval) ? initialInterval : '15min');
-  const [days, setDays] = useState(5);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -64,7 +64,7 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
   });
   const { attach } = engine;
 
-  // ── Load candles for the current symbol/interval/days ──────────────────
+  // ── Load candles for the current symbol/interval: as far back as cTrader has (up to ~20k) ──
   useEffect(() => {
     const trimmed = symbol.trim();
     if (!trimmed) { setCandles(null); setError(''); return; }
@@ -75,7 +75,7 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
     const timer = setTimeout(() => {
       (async () => {
         try {
-          const res = await fetch(`${API}/pre-trade-analyses/chart?symbol=${encodeURIComponent(trimmed)}&interval=${interval}&days=${days}`, {
+          const res = await fetch(`${API}/pre-trade-analyses/chart?symbol=${encodeURIComponent(trimmed)}&interval=${interval}`, {
             headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
           });
           const data = await res.json();
@@ -88,7 +88,60 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
       })();
     }, 500);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [symbol, interval, days]);
+  }, [symbol, interval]);
+
+  // ── Live refresh: the newest candles every few seconds while the page is visible ──
+  // Updates the chart in place (no rebuild), so zoom, scroll and drawings stay put.
+  const [live, setLive] = useState<{ at: number; ok: boolean } | null>(null);
+  useEffect(() => {
+    const trimmed = symbol.trim();
+    if (!trimmed || !candles?.length) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const every = interval === '1min' ? 5000 : 10000;
+    let stopped = false, busy = false;
+    const tick = async () => {
+      if (stopped || busy || document.visibilityState !== 'visible') return;
+      const list = candlesRef.current, series = seriesRef.current, chart = chartRef.current;
+      if (!list?.length || !series || !chart) return;
+      busy = true;
+      try {
+        const lastTime = Number(list[list.length - 1].time);
+        const res = await fetch(`${API}/pre-trade-analyses/chart?symbol=${encodeURIComponent(trimmed)}&interval=${interval}&sinceMs=${lastTime * 1000}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (stopped) return;
+        if (!res.ok) { setLive(l => ({ at: l?.at ?? Date.now(), ok: res.status === 422 })); return; } // 422: nothing new (market closed)
+        const data = await res.json();
+        const fresh: Candle[] = (data.candles || []).map((c: Candle) => ({ ...c, time: Number(c.time) as UTCTimestamp }))
+          .filter((c: Candle) => Number(c.time) >= lastTime);
+        if (fresh.length && seriesRef.current === series) {
+          const before = list.length;
+          const merged = list.slice();
+          for (const c of fresh) {
+            if (Number(c.time) === Number(merged[merged.length - 1].time)) merged[merged.length - 1] = c;
+            else if (Number(c.time) > Number(merged[merged.length - 1].time)) merged.push(c);
+          }
+          candlesRef.current = merged;
+          const added = merged.length - before;
+          const range = chart.timeScale().getVisibleLogicalRange();
+          const times = merged.map(c => Number(c.time));
+          const slots = futureSlotTimes(times[times.length - 1], barSeconds(times), drawingsRef.current);
+          series.setData([...merged, ...slots.map(t => ({ time: t as UTCTimestamp }))]);
+          // Watching the latest candle: follow new ones; otherwise stay where you scrolled.
+          if (range) {
+            const atEdge = range.to >= before - 2;
+            chart.timeScale().setVisibleLogicalRange(atEdge && added ? { from: range.from + added, to: range.to + added } : range);
+          }
+        }
+        setLive({ at: Date.now(), ok: true });
+      } catch {
+        if (!stopped) setLive(l => ({ at: l?.at ?? Date.now(), ok: false }));
+      } finally { busy = false; }
+    };
+    const timer = window.setInterval(tick, every);
+    const onVisible = () => { if (document.visibilityState === 'visible') void tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [symbol, interval, candles]);
 
   // ── Chart creation (drawings re-attached on every rebuild) ─────────────
   useEffect(() => {
@@ -111,12 +164,13 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
       wickUpColor: '#10b981', wickDownColor: '#ef4444',
     });
     seriesRef.current = series;
-    const times = candles.map(c => Number(c.time));
+    const shown = candlesRef.current ?? candles; // includes candles added by the live refresh
+    const times = shown.map(c => Number(c.time));
     const slots = futureSlotTimes(times[times.length - 1], barSeconds(times), drawingsRef.current);
-    series.setData([...candles, ...slots.map(t => ({ time: t as UTCTimestamp }))]);
+    series.setData([...shown, ...slots.map(t => ({ time: t as UTCTimestamp }))]);
     // Fit the candles, not the empty slots after them.
-    chart.timeScale().setVisibleLogicalRange({ from: 0, to: candles.length + 4 });
-    const detach = attach(chart, series, el, snapToCandles(drawingsRef.current, candles.map(c => Number(c.time))));
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: shown.length + 4 });
+    const detach = attach(chart, series, el, snapToCandles(drawingsRef.current, times));
     const syncCanvas = () => { if (canvasRef.current) { canvasRef.current.width = el.clientWidth; canvasRef.current.height = el.clientHeight; } };
     syncCanvas();
     const redraw = () => requestAnimationFrame(() => redrawRef.current());
@@ -192,10 +246,10 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
         </div>
         <div className="replay-toolbar-divider" />
         <div className="replay-tool-group">
-          <span className="replay-tool-group-label">Lookback</span>
-          <select value={days} onChange={e => setDays(Number(e.target.value))} style={{ minHeight: 30, borderRadius: 6, border: '1px solid #303b55', background: '#151b26', color: '#c9d2e8', fontSize: 11.5, padding: '0 6px' }}>
-            {[2, 5, 10, 20, 30].map(d => <option key={d} value={d}>{d}d</option>)}
-          </select>
+          <span className="replay-tool-group-label">History</span>
+          <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono, monospace)' }} title="As many candles as cTrader has for this timeframe, up to about 20,000">
+            {candles ? `${candles.length.toLocaleString()} candles` : '…'}
+          </span>
         </div>
         {images.length > 0 && (
           <>
@@ -206,6 +260,10 @@ export default function PreTradeChart({ analysisId, symbol, initialInterval, ini
           </>
         )}
         <span className="replay-toolbar-spacer" />
+        <span className={`pretrade-live ${live && !live.ok ? 'stale' : ''}`} role="status"
+          title={live ? `Last update ${new Date(live.at).toLocaleTimeString()}${live.ok ? '' : ' · retrying'}` : 'Updates every few seconds while this page is open'}>
+          <span className="pretrade-live-dot" aria-hidden="true" />{live && !live.ok ? 'Reconnecting' : 'Live'}
+        </span>
         <span className={`replay-annotation-status ${saveState}`} role="status" title={saveError || 'Chart drawings save automatically'}>{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Saved'}</span>
       </div>
 

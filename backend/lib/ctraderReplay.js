@@ -14,6 +14,8 @@ const PERIOD_BY_LABEL = {
   '1h': 9,    // H1
   '4h': 10,   // H4
   '1day': 12, // D1
+  '1week': 13, // W1
+  '1month': 14, // MN1
 };
 
 function tokenContext(userId, field) {
@@ -322,7 +324,7 @@ const TRENDBARS_PER_REQUEST = 1500;
 // Upper bound on pages per call (~22k bars) so one chart request can't hammer
 // the cTrader connection.
 const MAX_TRENDBAR_PAGES = 16;
-const PERIOD_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3 };
+const PERIOD_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3, '1week': 7 * 86400e3, '1month': 30 * 86400e3 };
 // Each paged request covers a time window short enough to hold fewer bars than
 // one response carries, so it returns the whole window whichever end cTrader
 // counts from. (Asking for a long window and walking back from the newest bar

@@ -594,6 +594,13 @@ export default function ManualPage() {
             <ul className="manual-feature-list">
               <li>See and manage everything connected to your journal: claude.ai connections and access keys. Switch journal access (read-only access to your real trades) on or off per connection, and disconnect or revoke any of them instantly. Full setup steps are in <a href="#ai-agents">AI agent backtesting</a>.</li>
             </ul>
+            <div className="manual-sub" id="no-admin">There is no admin panel, not even for us</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 9 }}>TradeJournal was built without an admin panel, on purpose. Not even the people who made it can open your account, read your trades, notes or screenshots, or see your balance from inside the app. Your journal is only visible to you, and to people you choose to share it with (Investor access, or an AI connection you set up).</p>
+            <ul className="manual-feature-list">
+              <li><b>Your account is in your hands.</b> You change your password under <b>Accounts → Password</b>, and you connect or disconnect brokers and AI tools yourself. Nobody can do it for you from a control panel.</li>
+              <li><b>Forgot your password?</b> Use <b>Forgot password</b> on the sign-in page when it&apos;s shown. Because there&apos;s no admin panel, there&apos;s no one who can look your account up and unlock it from inside the app.</li>
+              <li><b>Keep your own copy.</b> No one can bring back trades, notes or drawings you delete. Download a backup regularly from <a href="#backup">Backup &amp; export</a>.</li>
+            </ul>
           </Chapter>
 
           <Chapter id="backup" num="13" route="/archive" title="Backup & export" purpose="Confirm your data is safe and pull a full export — this page reads and downloads, it doesn't restore.">

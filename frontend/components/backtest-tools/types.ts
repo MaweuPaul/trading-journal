@@ -33,6 +33,7 @@ export const DRAWING_COLORS = [
 export const CHART_INTERVALS = [
   { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
   { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
+  { value: '1week', label: '1W' },
 ] as const;
 export const SPEEDS = [0.5, 1, 3, 5, 10];
 
@@ -40,7 +41,7 @@ export const SPEEDS = [0.5, 1, 3, 5, 10];
 // (~1200 candles to step through); the trader can pick a finer one, up to the
 // MAX_CHART_BARS cap below.
 export const INTERVAL_DAYS: Record<string, number> = {
-  '1min': 1 / 1440, '5min': 5 / 1440, '15min': 15 / 1440, '1h': 1 / 24, '4h': 4 / 24, '1day': 1,
+  '1min': 1 / 1440, '5min': 5 / 1440, '15min': 15 / 1440, '1h': 1 / 24, '4h': 4 / 24, '1day': 1, '1week': 7,
 };
 export function suggestInterval(fromDate: string, toDate: string): string {
   const days = (new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000;

@@ -98,7 +98,7 @@ async function prefetchOtherTimeframes(symbol: string, current: string, clockMs:
     try { await getCandles(symbol, tf, clockMs - SWITCH_BACK_BARS * bar, clockMs + SWITCH_AHEAD_BARS * bar, authHeaders()); } catch { /* best effort */ }
   }
 }
-const FINER: Record<string, string> = { '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
+const FINER: Record<string, string> = { '1week': '1day', '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
 /**
  * Which level was reached first inside [startMs, endMs), walking smaller and
  * smaller candles (down to 1m) while a candle still spans both. If even 1m

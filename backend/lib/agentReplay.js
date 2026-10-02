@@ -18,9 +18,9 @@ const BacktestStrategy = require('../models/BacktestStrategy');
 const { getTrendbars, listAccountSymbols } = require('./ctraderReplay');
 const { normalizeTags, strategyAndTags } = require('./backtestTags');
 
-const TF_SEC = { '1min': 60, '5min': 300, '15min': 900, '1h': 3600, '4h': 14400, '1day': 86400 };
+const TF_SEC = { '1min': 60, '5min': 300, '15min': 900, '1h': 3600, '4h': 14400, '1day': 86400, '1week': 604800 };
 const INTERVALS = Object.keys(TF_SEC);
-const FINER = { '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
+const FINER = { '1week': '1day', '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
 const DAY = 86400;
 const WEEK = 7 * DAY;
 

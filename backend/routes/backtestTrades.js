@@ -32,14 +32,14 @@ function normalizeSnapshot(value) {
   return value.length <= MAX_SNAPSHOT_CHARS ? value : '';
 }
 
-const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day']);
+const CHART_INTERVALS = new Set(['1min', '5min', '15min', '1h', '4h', '1day', '1week']);
 // getTrendbars pages through cTrader 1500 bars at a time, so a window can span
 // up to MAX_CHART_BARS bars. A flat day-count cap doesn't fit every timeframe,
 // so the cap scales with the interval: a daily chart can go back decades, a
 // 1-minute chart about two weeks. Keep in sync with MAX_CHART_BARS in
 // frontend/components/backtest-tools/types.ts.
 const MAX_CHART_BARS = 20000;
-const INTERVAL_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3 };
+const INTERVAL_MS = { '1min': 60e3, '5min': 300e3, '15min': 900e3, '1h': 3600e3, '4h': 14400e3, '1day': 86400e3, '1week': 7 * 86400e3 };
 function maxRangeMsFor(interval) {
   return (INTERVAL_MS[interval] || INTERVAL_MS['15min']) * MAX_CHART_BARS;
 }

@@ -162,14 +162,15 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
     const series = seriesRef.current;
     if (!series || clockMs == null) return;
     const bar = barMs(interval), mainBar = barMs(mainInterval);
-    const start = Math.floor(clockMs / bar) * bar;
+    // Where the last closed candle ends (daily/weekly candles don't start on multiples of their length).
+    const start = closed.length ? Number(closed[closed.length - 1].time) * 1000 + bar : Math.floor(clockMs / bar) * bar;
     const shown: Candle[] = [...closed];
     const source = sameMarket ? mainCandles : needFine ? fine : null;
     if (mainBar < bar && source?.length) {
       const inBar = source.filter(c => Number(c.time) * 1000 >= start && Number(c.time) * 1000 + mainBar <= clockMs);
       if (inBar.length) {
         shown.push({
-          time: (start / 1000) as Candle['time'], open: inBar[0].open, close: inBar[inBar.length - 1].close,
+          time: inBar[0].time as Candle['time'], open: inBar[0].open, close: inBar[inBar.length - 1].close,
           high: Math.max(...inBar.map(c => c.high)), low: Math.min(...inBar.map(c => c.low)),
         } as Candle);
       }

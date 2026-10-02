@@ -60,7 +60,7 @@ export function fmtR(n: number, digits = 2) {
   return `${n > 0 ? '+' : n < 0 ? '-' : ''}${Math.abs(n).toFixed(digits)}R`;
 }
 export function intervalLabel(interval: string) {
-  const map: Record<string, string> = { '1min': '1M', '5min': '5M', '15min': '15M', '1h': '1H', '4h': '4H', '1day': '1D' };
+  const map: Record<string, string> = { '1min': '1M', '5min': '5M', '15min': '15M', '1h': '1H', '4h': '4H', '1day': '1D', '1week': '1W' };
   return map[interval] ?? (interval ? interval.toUpperCase() : '—');
 }
 export function fmtDate(iso: string | number) {

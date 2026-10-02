@@ -99,7 +99,7 @@ function toolResult(fn) {
 }
 
 const NO_HINDSIGHT = 'The replay never shows a candle that closes after the session clock, so decisions are made with only what a trader could have seen at that moment.';
-const timeframe = z.enum(['1min', '5min', '15min', '1h', '4h', '1day']);
+const timeframe = z.enum(['1min', '5min', '15min', '1h', '4h', '1day', '1week']);
 const sessionId = z.string().describe('Session id from start_session or list_sessions.');
 const timeInput = z.union([z.string(), z.number()]);
 

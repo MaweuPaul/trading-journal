@@ -304,8 +304,9 @@ function TradesPageContent() {
       ...(direction && { direction }),
       ...(accountTypeFilter && { accountType: accountTypeFilter }),
       ...(accountKeyFilter && { accountKey: accountKeyFilter }),
-      ...(from      && { from }),
-      ...(to        && { to }),
+      // Whole days in your own time zone: from the start of "From" to the end of "To".
+      ...(from      && { from: new Date(`${from}T00:00:00`).toISOString() }),
+      ...(to        && { to: new Date(`${to}T23:59:59.999`).toISOString() }),
     });
     try {
       const r = await fetch(`${API}/trades?${params}`, {

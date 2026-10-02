@@ -54,7 +54,7 @@ async function findTrades(userId, input = {}) {
   const from = parseDate(input.from, 'from');
   const to = parseDate(input.to, 'to');
   const query = { user: userId };
-  if (input.symbol) query.symbol = String(input.symbol).toUpperCase();
+  if (input.symbol) query.symbol = { $regex: `^${String(input.symbol).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
   if (input.direction) query.direction = String(input.direction).toUpperCase() === 'SHORT' || String(input.direction).toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
   if (input.accountType) query.accountType = String(input.accountType).toLowerCase();
   if (from || to) query.closeTime = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };

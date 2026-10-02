@@ -59,9 +59,11 @@ function memoryModel(Model) {
     if (want && typeof want === 'object' && !(want instanceof mongoose.Types.ObjectId)) {
       if ('$in' in want) return want.$in.some(x => (x === null ? val == null : String(val) === String(x)));
       if ('$ne' in want) return String(val) !== String(want.$ne);
-      if ('$gte' in want || '$lte' in want) {
+      if ('$regex' in want) return new RegExp(want.$regex, want.$options || '').test(String(val ?? ''));
+      if ('$gte' in want || '$lte' in want || '$lt' in want) {
         const v = new Date(val).getTime();
-        return (!('$gte' in want) || v >= new Date(want.$gte).getTime()) && (!('$lte' in want) || v <= new Date(want.$lte).getTime());
+        return (!('$gte' in want) || v >= new Date(want.$gte).getTime()) && (!('$lte' in want) || v <= new Date(want.$lte).getTime())
+          && (!('$lt' in want) || v < new Date(want.$lt).getTime());
       }
     }
     if (want === null) return val == null;
@@ -71,7 +73,7 @@ function memoryModel(Model) {
   const find = query => [...store.values()].filter(doc => matches(doc, query));
   const hydrate = doc => doc && Model.hydrate(JSON.parse(JSON.stringify(doc)));
   const chain = docs => {
-    const c = { sort: () => c, select: () => c, lean: () => c, limit: n => { docs = docs.slice(0, n); return c; }, then: (ok, fail) => Promise.resolve(docs).then(ok, fail) };
+    const c = { sort: () => c, select: () => c, lean: () => c, skip: n => { docs = docs.slice(n); return c; }, limit: n => { docs = docs.slice(0, n); return c; }, then: (ok, fail) => Promise.resolve(docs).then(ok, fail) };
     return c;
   };
   Model.prototype.save = async function save() {

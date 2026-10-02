@@ -751,7 +751,7 @@ setInterval(async () => {
     console.log(' [Scheduled] Running 24-hour auto-backup of MongoDB → local JSON...');
     await backupMongoToLocal();
   }
-}, 24 * 60 * 60 * 1000);
+}, 24 * 60 * 60 * 1000).unref(); // never keeps the process alive on its own
 
 // ── Offline Screenshot Auto-Upload ──────────────────────────────────────────
 // When we saved screenshots to disk because MongoDB was offline, this function
@@ -1949,6 +1949,23 @@ router.post('/trades/manual', auth, ownerOnly, async (req, res) => {
 });
 
 // GET /api/trades  all trades, newest frst, wth optonal flters
+// Symbols are matched whatever their capitals: cTrader names like "Nasdaq100"
+// are stored as the broker spells them.
+const escapeRegex = v => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const symbolQuery = symbol => ({ $regex: `^${escapeRegex(String(symbol).trim())}$`, $options: 'i' });
+const sameSymbol = (a, b) => String(a || '').toLowerCase() === String(b || '').trim().toLowerCase();
+// from/to: a date (YYYY-MM-DD, the whole day; "to" includes that day) or an
+// exact time (ISO, sent by the Trades page for the visitor's own time zone).
+function dateRange(from, to) {
+  const dayOnly = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const valid = d => (Number.isFinite(d.getTime()) ? d : null);
+  const start = from ? valid(new Date(from)) : null;
+  let end = to ? valid(new Date(to)) : null;
+  if (end && dayOnly(to)) end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+  else if (end) end = new Date(end.getTime() + 1); // inclusive of the exact time given
+  return { from: start, to: end };
+}
+
 router.get('/trades', auth, ownerOnly, async (req, res) => {
   try {
     const { symbol, direction, accountType, accountKey, from, to, page = 1, limit = 50 } = req.query;
@@ -1956,12 +1973,13 @@ router.get('/trades', auth, ownerOnly, async (req, res) => {
     // Database Offlne Fallback
     if (mongoose.connection.readyState !== 1) {
       let filtered = inMemoryTrades.filter(t => isOfflineTradeVisibleToUser(t, req.user.userId));
-      if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
+      if (symbol) filtered = filtered.filter(t => sameSymbol(t.symbol, symbol));
       if (direction) filtered = filtered.filter(t => t.direction === direction.toUpperCase());
       if (accountType) filtered = filtered.filter(t => t.accountType === String(accountType).toLowerCase());
       if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
-      if (from) filtered = filtered.filter(t => new Date(t.closeTime) >= new Date(from));
-      if (to) filtered = filtered.filter(t => new Date(t.closeTime) <= new Date(to));
+      const range = dateRange(from, to);
+      if (range.from) filtered = filtered.filter(t => new Date(t.closeTime) >= range.from);
+      if (range.to) filtered = filtered.filter(t => new Date(t.closeTime) < range.to);
 
       // Sort newest frst
       filtered.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
@@ -1978,15 +1996,16 @@ router.get('/trades', auth, ownerOnly, async (req, res) => {
     }
 
     const query = { user: req.user.userId };
-    if (symbol) query.symbol = symbol.toUpperCase();
+    if (symbol) query.symbol = symbolQuery(symbol);
     if (direction) query.direction = query.direction = direction.toUpperCase();
     if (accountType) query.accountType = String(accountType).toLowerCase();
     if (accountKey === '__unassigned__') query.$or = [{ accountKey: '' }, { accountKey: null }, { accountKey: { $exists: false } }];
     else if (accountKey) query.accountKey = String(accountKey).toLowerCase();
     if (from || to) {
+      const range = dateRange(from, to);
       query.closeTime = {};
-      if (from) query.closeTime.$gte = new Date(from);
-      if (to) query.closeTime.$lte = new Date(to);
+      if (range.from) query.closeTime.$gte = range.from;
+      if (range.to) query.closeTime.$lt = range.to;
     }
 
     const skp = (parseInt(page) - 1) * parseInt(limit);
@@ -3221,7 +3240,7 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
       const distinctAccountKeys = [...new Set(ownerTrades.map(t => String(t.accountKey || '')).filter(Boolean))];
       const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
       let filtered = ownerTrades;
-      if (symbol) filtered = filtered.filter(t => t.symbol === symbol.toUpperCase());
+      if (symbol) filtered = filtered.filter(t => sameSymbol(t.symbol, symbol));
       if (grade) filtered = filtered.filter(t => t.grade === grade.toUpperCase());
       if (accountKey) filtered = filtered.filter(t => tradeMatchesAccountFilter(t, accountKey));
 
@@ -3255,7 +3274,7 @@ router.get('/calendar', auth, ownerOnly, async (req, res) => {
     const mixedAccounts = !accountKey && distinctAccountKeys.length > 1;
 
     const query = { user: req.user.userId };
-    if (symbol) query.symbol = symbol.toUpperCase();
+    if (symbol) query.symbol = symbolQuery(symbol);
     if (grade) query.grade = grade.toUpperCase();
     if (accountKey) applyAccountKeyToMongoQuery(query, accountKey);
 

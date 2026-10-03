@@ -298,6 +298,31 @@ Nothing in the journal can be changed through these tools. Ask, e.g.: *"Review m
 - **Rate limit messages**: wait a minute. Agents should use `step` with `bars`, `untilPrice` or `stopOnTradeExit` rather than one call per candle.
 - **Claude Desktop shows no tools**: check its MCP log (`~/Library/Logs/Claude/mcp-server-tradejournal.log` on macOS, `%APPDATA%\Claude\logs\` on Windows). If `npx` isn't found, put the full path to `npx` in `command`.
 
+## Database Backups
+
+Every night a GitHub Action copies the **whole** live database (every collection: users, trades, journals, playbooks, backtests, accounts, encrypted credentials, everything) into a dated database on a **separate backup cluster**, `backup_YYYY-MM-DD`. Each copy is counted against the live database and only marked complete once every collection matches; the newest 7 complete copies are kept (`BACKUP_KEEP`).
+
+**Setup (once):**
+
+1. Create a second MongoDB Atlas cluster for backups, ideally in another Atlas project and region (the free M0 tier is enough for a small journal; 512 MB holds several nightly copies). Create a database user for it and allow network access from anywhere (`0.0.0.0/0`), since GitHub's runners have no fixed address.
+2. In the GitHub repository, **Settings → Secrets and variables → Actions**, add two secrets:
+   - `MONGODB_URI`: the live database's connection string (the same as on Render).
+   - `BACKUP_MONGODB_URI`: the backup cluster's connection string.
+   Optional variables: `MONGODB_DB_NAME` (when the live URI doesn't name the database) and `BACKUP_KEEP`.
+3. **Actions → Database backup → Run workflow** once to check it works. After that it runs at 02:17 UTC daily, and GitHub emails you if a run fails.
+
+**Restore:**
+
+```bash
+cd backend
+MONGODB_URI=... BACKUP_MONGODB_URI=... npm run restore:db -- --list
+MONGODB_URI=... BACKUP_MONGODB_URI=... npm run restore:db -- --from backup_2026-10-03 --confirm <live database name>
+```
+
+Before replacing anything, the restore saves the current live data as `backup_prerestore_<time>` on the backup cluster (never pruned), so a restore can itself be undone. Collections in the backup replace the live ones; anything only in the live database is left alone. Stop the backend while it runs if you can.
+
+The local `local_trades.json` mirror below is **not** a backup: on hosts like Render the disk is wiped on every deploy.
+
 ## Data Redundancy and Reconstruction
 
 The journal stores data across several recovery layers:

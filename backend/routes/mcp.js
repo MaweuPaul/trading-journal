@@ -329,7 +329,7 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     },
     ({ id, ...args }) => backtestLog.updateBacktest(userId, id, args));
 
-  tool('delete_backtest', 'Delete backtest', 'Delete a backtest that an agent logged. The owner\'s own backtests cannot be deleted from here.',
+  tool('delete_backtest', 'Delete backtest', 'Delete ONE backtest that an agent logged. The owner\'s own backtests cannot be deleted from here. To remove many, never loop over this: use delete_backtests (by strategy, run, symbol or dates) or delete_strategies (whole strategies with everything under them), each one call.',
     { id: z.string() },
     ({ id }) => backtestLog.deleteBacktest(userId, id));
 
@@ -344,7 +344,16 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
     },
     args => backtestLog.deleteBacktests(userId, args));
 
-  tool('delete_strategy', 'Delete strategy', 'Delete a strategy definition (its name and description). Backtests logged under it keep their tag.',
+  tool('delete_strategies', 'Delete strategies (bulk)',
+    'Delete strategies with everything filed under them: rules history, agent-logged backtests, run_strategy runs and agent replay sessions. Pick them by exact names or a name prefix. A strategy that holds any backtest the owner logged is skipped. First call without confirm to see what would go; then call again with confirm: true. At most 50 per call.',
+    {
+      names: z.array(z.string()).max(50).optional(),
+      prefix: z.string().optional().describe('Every strategy whose name starts with this (case-insensitive).'),
+      confirm: z.boolean().default(false),
+    },
+    args => backtestLog.deleteStrategies(userId, args));
+
+  tool('delete_strategy', 'Delete strategy', 'Delete only a strategy definition (its name and description); backtests logged under it keep their tag. To delete a strategy together with its backtests, runs and sessions, use delete_strategies.',
     { name: z.string() },
     ({ name }) => backtestLog.deleteStrategy(userId, name));
 

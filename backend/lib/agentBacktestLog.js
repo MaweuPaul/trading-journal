@@ -8,6 +8,8 @@
 const mongoose = require('mongoose');
 const BacktestTrade = require('../models/BacktestTrade');
 const BacktestStrategy = require('../models/BacktestStrategy');
+const StrategyRun = require('../models/StrategyRun');
+const AgentReplaySession = require('../models/AgentReplaySession');
 const { normalizeTags, strategyAndTags } = require('./backtestTags');
 const { AgentError } = require('./agentReplay');
 
@@ -234,6 +236,62 @@ async function deleteBacktests(userId, { strategy, runId, symbol, from, to, conf
   return { deleted: result.deletedCount ?? trades.length };
 }
 
+const MAX_STRATEGIES_PER_DELETE = 50;
+/**
+ * Delete strategies in bulk, with everything an agent filed under them: the
+ * definition and rules history, agent-logged backtests, run_strategy runs
+ * and agent replay sessions. A strategy holding any backtest the owner
+ * logged is skipped whole. Without confirm it only reports what would go.
+ */
+async function deleteStrategies(userId, { names, prefix, confirm = false } = {}) {
+  const wanted = (Array.isArray(names) ? names : []).map(n => String(n || '').trim().replace(/^#+/, '')).filter(Boolean);
+  const pre = String(prefix || '').trim().toLowerCase();
+  if (!wanted.length && !pre) throw new AgentError('Name the strategies (names) or a name prefix (prefix) to delete.');
+  const defined = await BacktestStrategy.find({ user: userId }).select('name').lean();
+  const tagged = await BacktestTrade.find({ user: userId }).select('strategy').lean();
+  const all = [...new Set([...defined.map(s => s.name), ...tagged.map(t => t.strategy).filter(Boolean)])];
+  const lc = v => v.toLowerCase();
+  const matches = all.filter(n => (wanted.length ? wanted.some(w => lc(w) === lc(n)) : true) && (!pre || lc(n).startsWith(pre))).sort();
+  const notFound = wanted.filter(w => !all.some(n => lc(n) === lc(w)));
+  if (!matches.length) return { deleted: [], skipped: [], notFound, note: 'No strategies match.' };
+
+  const plan = [];
+  for (const name of matches) {
+    const own = await BacktestTrade.countDocuments({ user: userId, source: { $ne: 'agent' }, $or: [{ strategy: name }, { tags: name }] });
+    if (own) { plan.push({ name, skip: `${own} backtest(s) logged by the owner` }); continue; }
+    const backtests = await BacktestTrade.countDocuments({ user: userId, source: 'agent', strategy: name });
+    const runIds = (await StrategyRun.find({ user: userId }).select('settings').lean()).filter(r => r.settings?.logAs === name).map(r => r._id);
+    const sessions = await AgentReplaySession.countDocuments({ user: userId, strategy: name });
+    const definition = defined.some(d => d.name === name);
+    plan.push({ name, backtests, runs: runIds.length, sessions, definition, runIds });
+  }
+  const toDelete = plan.filter(p => !p.skip);
+  const skipped = plan.filter(p => p.skip).map(p => ({ name: p.name, reason: p.skip }));
+  const batch = toDelete.slice(0, MAX_STRATEGIES_PER_DELETE);
+  const summary = p => ({ name: p.name, backtests: p.backtests, runs: p.runs, sessions: p.sessions, definition: p.definition });
+  if (!confirm) {
+    return {
+      wouldDelete: batch.map(summary), skipped, notFound,
+      ...(toDelete.length > batch.length ? { more: `${toDelete.length - batch.length} more match; at most ${MAX_STRATEGIES_PER_DELETE} per call.` } : {}),
+      next: batch.length ? `Call delete_strategies again with the same filters and confirm: true to delete these ${batch.length}.` : 'Nothing that can be deleted.',
+    };
+  }
+  const deleted = [];
+  for (const p of batch) {
+    await BacktestTrade.deleteMany({ user: userId, source: 'agent', strategy: p.name });
+    // Agent backtests filed under another strategy that also carry this tag keep their strategy.
+    const alsoTagged = await BacktestTrade.find({ user: userId, source: 'agent', tags: p.name }).select('tags strategy').lean();
+    if (alsoTagged.length) {
+      await BacktestTrade.bulkWrite(alsoTagged.map(t => ({ updateOne: { filter: { _id: t._id, user: userId }, update: { $set: strategyAndTags(t.strategy, (t.tags || []).filter(x => x !== p.name)) } } })));
+    }
+    if (p.runIds.length) await StrategyRun.deleteMany({ user: userId, _id: { $in: p.runIds } });
+    await AgentReplaySession.deleteMany({ user: userId, strategy: p.name });
+    await BacktestStrategy.deleteOne({ user: userId, name: p.name });
+    deleted.push(summary(p));
+  }
+  return { deleted, skipped, notFound, ...(toDelete.length > batch.length ? { more: `${toDelete.length - batch.length} more match; call again to continue.` } : {}) };
+}
+
 async function deleteStrategy(userId, name) {
   const clean = String(name || '').trim().replace(/^#+/, '');
   const result = await BacktestStrategy.deleteOne({ user: userId, name: clean });
@@ -440,7 +498,7 @@ async function evaluateHoldout(userId, { name, version }) {
 }
 
 module.exports = {
-  listBacktests, getBacktest, updateBacktest, deleteBacktest, deleteBacktests, deleteStrategy, getMetrics, GROUPS,
+  listBacktests, getBacktest, updateBacktest, deleteBacktest, deleteBacktests, deleteStrategy, deleteStrategies, getMetrics, GROUPS,
   getStrategy, updateStrategyRules, setHoldout, evaluateHoldout,
   statsOf, groupKeys, featureBuckets,
 };

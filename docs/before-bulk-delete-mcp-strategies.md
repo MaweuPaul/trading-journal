@@ -1,5 +1,9 @@
 # Before building bulk delete for MCP strategies
 
+> **Built (October 2026):** `delete_strategies` exists. Instead of a `source`
+> field (section 2), it skips any strategy holding a backtest you logged
+> yourself, so it never touches your work. Section 1 (backups) still applies.
+
 A checklist to finish before adding an MCP tool that deletes many strategies
 (and what's filed under them) at once. A bulk delete can wipe a lot in one
 call, so the safety net comes first.

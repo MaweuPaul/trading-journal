@@ -117,3 +117,39 @@ test('bulk delete: only agent trades, counted first, by strategy or run', async 
   assert.equal(H.models.Trade.store.has(ids[5]), true, "the owner's replay backtest stays");
   assert.equal(H.models.Trade.store.has(ids[6]), true, "the owner's quick log stays");
 });
+
+test('bulk strategy delete: everything an agent filed, never the owner\'s work', async () => {
+  const user = H.newUserId(), other = H.newUserId();
+  const mk = (u, strategy, extra = {}) => H.models.Trade.create({ ...base, user: u, source: 'agent', outcome: 'win', rMultiple: 1, entryTime: 1, exitTime: 2, strategy, tags: [strategy], ...extra });
+  await H.models.Strategy.create({ user, name: 'Midnight Open', description: 'x' });
+  await H.models.Strategy.create({ user, name: 'Midnight Close', description: 'y' });
+  await H.models.Strategy.create({ user, name: 'Mine', description: 'z' });
+  for (let i = 0; i < 3; i++) await mk(user, 'Midnight Open');
+  await mk(user, 'Midnight Close');
+  await mk(user, 'Mine');
+  await mk(user, 'Mine', { source: 'replay' });                        // the owner's own backtest
+  const shared = await mk(user, 'ORB', { tags: ['ORB', 'Midnight Open'] }); // filed elsewhere, also tagged
+  await mk(other, 'Midnight Open');                                     // another user's
+  await H.models.StrategyRun.create({ user, code: 'x', settings: { logAs: 'Midnight Open' } });
+  await H.models.Session.create({ user, symbol: 'XAUUSD', strategy: 'Midnight Close', interval: '15min', fromMs: 0, toMs: 1, clock: 0, expiresAt: new Date(Date.now() + 864e5) });
+
+  await assert.rejects(log.deleteStrategies(user, {}), /names|prefix/);
+  const preview = await log.deleteStrategies(user, { prefix: 'midnight' });
+  assert.deepEqual(preview.wouldDelete.map(p => [p.name, p.backtests, p.runs, p.sessions]), [['Midnight Close', 1, 0, 1], ['Midnight Open', 3, 1, 0]]);
+  assert.equal([...H.models.Strategy.store.values()].filter(s => String(s.user) === user).length, 3, 'a preview deletes nothing');
+
+  const mine = await log.deleteStrategies(user, { names: ['Mine', 'Nope'], confirm: true });
+  assert.deepEqual(mine.deleted, []);
+  assert.match(mine.skipped[0].reason, /1 backtest\(s\) logged by the owner/);
+  assert.deepEqual(mine.notFound, ['Nope']);
+
+  const done = await log.deleteStrategies(user, { prefix: 'Midnight', confirm: true });
+  assert.deepEqual(done.deleted.map(d => d.name), ['Midnight Close', 'Midnight Open']);
+  const left = [...H.models.Trade.store.values()].filter(t => String(t.user) === user);
+  assert.deepEqual(left.map(t => t.strategy).sort(), ['Mine', 'Mine', 'ORB']);
+  assert.deepEqual(H.models.Trade.store.get(String(shared._id)).tags, ['ORB'], 'kept, tag removed');
+  assert.deepEqual([...H.models.Strategy.store.values()].filter(s => String(s.user) === user).map(s => s.name), ['Mine']);
+  assert.equal([...H.models.StrategyRun.store.values()].filter(r => String(r.user) === user && r.settings?.logAs === 'Midnight Open').length, 0);
+  assert.equal([...H.models.Session.store.values()].filter(s => String(s.user) === user).length, 0);
+  assert.equal([...H.models.Trade.store.values()].filter(t => String(t.user) === other).length, 1, 'other users untouched');
+});

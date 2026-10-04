@@ -231,7 +231,8 @@ Ask your agent something like:
 | `log_trade`, `discard_trade` | Record the closed trade in the Backtest Log (with notes, lesson, quality scores and tags), or drop it |
 | `list_backtests`, `get_backtest` | Browse the whole Backtest Log (your own backtests and agent runs) with filters and paging; read one in full, including its chart snapshot image |
 | `update_backtest` | Edit journal fields on any backtest: name, strategy/tags, notes (or `appendNotes` to add a paragraph), lesson, plan followed, quality scores, mistakes. Prices and results can't be changed |
-| `delete_backtest`, `delete_strategy` | Delete a backtest **an agent logged** (your own can't be deleted over MCP); delete a strategy's definition (trades keep their tag) |
+| `delete_backtest`, `delete_backtests` | Delete one, or many in one call (by strategy, run, symbol or dates), of the backtests **an agent logged**; your own can't be deleted over MCP. The bulk call previews first and deletes on `confirm: true` |
+| `delete_strategies`, `delete_strategy` | Delete whole strategies in one call (by names or a name prefix, up to 50): rules, agent backtests, runs and replay sessions. A strategy holding any backtest you logged is skipped. `delete_strategy` removes a definition only |
 | `get_metrics` | The Metrics page's stats (win rate, expectancy, profit factor, max drawdown, streaks, SQN, half Kelly and more), filtered by source, strategy, symbol, direction and date, and broken down by strategy, symbol, direction, timeframe, source, outcome, weekday, hour or month |
 | `list_sessions`, `end_session` | Your sessions; finish one |
 | `get_strategy`, `update_strategy_rules` | A strategy's full history (every rules version, what changed and why, results per version, held-out evaluations); save a new version of its rules |

@@ -32,6 +32,8 @@ const tradingAccountSchema = new mongoose.Schema({
   lastError: { type: String, default: '', maxlength: 500 },
   lastConnectedAt: { type: Date, default: null },
   lastSyncAt: { type: Date, default: null },
+  // cTrader: set once stops have been read back for every trade synced before that existed.
+  stopsBackfilledAt: { type: Date, default: null },
   lastAgentSeenAt: { type: Date, default: null },
   lastBalance: { type: Number, default: null },
   actualAccountType: { type: String, enum: ['live', 'demo', ''], default: '' },

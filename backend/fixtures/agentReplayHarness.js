@@ -103,7 +103,8 @@ function memoryModel(Model) {
       await created.save();
       return created;
     }
-    Object.assign(doc, update.$set || {});
+    // Like Mongoose, an update with no operators is a $set.
+    Object.assign(doc, update.$set || (Object.keys(update).some(k => k.startsWith('$')) ? {} : update));
     return hydrate(doc);
   };
   Model.aggregate = async () => [];

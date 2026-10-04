@@ -4,10 +4,13 @@ const AccountEvent = require('../models/AccountEvent');
 const TradingAccount = require('../models/TradingAccount');
 const { loadConnection, listConnections, getAuthenticatedClient } = require('./ctraderReplay');
 const { PAYLOAD_TYPE } = require('./ctraderClient');
+const { isLossSideStop, moneyPerPricePerLotBySymbol, riskFromStop } = require('./tradeRisk');
 
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 const MAX_DEAL_PAGES = 50; // 50 * 1000 rows = plenty for a personal account's full history
 const DEFAULT_MONEY_DIGITS = 2;
+const MIN_ORDER_WINDOW_MS = 24 * 60 * 60 * 1000;
+const ORDER_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000; // positions can be opened well before the deals being synced
 const LOT_UNITS = 100000; // cTrader volume is in 1/100 of a unit; a standard lot is 100,000 units
 
 function scale(value, moneyDigits) {
@@ -92,6 +95,108 @@ async function fetchAllCashFlow(client, ctidTraderAccountId, fromMs, toMs) {
   return events;
 }
 
+// Order history (ProtoOAOrderListReq) is where the stop on a position's
+// opening order lives; deals don't carry it. The request has no row cap or
+// cursor, only hasMore, so a window that comes back with hasMore (or is
+// refused as too wide) is split in half until each piece fits.
+async function fetchAllOrders(client, ctidTraderAccountId, fromMs, toMs, depth = 0) {
+  let res;
+  try {
+    res = await client.request(PAYLOAD_TYPE.ORDER_LIST_REQ, {
+      ctidTraderAccountId: Number(ctidTraderAccountId),
+      fromTimestamp: Math.floor(fromMs),
+      toTimestamp: Math.floor(toMs),
+    });
+  } catch (err) {
+    if (toMs - fromMs <= MIN_ORDER_WINDOW_MS || depth > 12) throw err;
+    res = { hasMore: true, order: [] };
+  }
+  if (!res.hasMore || toMs - fromMs <= MIN_ORDER_WINDOW_MS || depth > 12) return res.order || [];
+  const mid = Math.floor((fromMs + toMs) / 2);
+  const older = await fetchAllOrders(client, ctidTraderAccountId, fromMs, mid, depth + 1);
+  const newer = await fetchAllOrders(client, ctidTraderAccountId, mid + 1, toMs, depth + 1);
+  return [...older, ...newer];
+}
+
+const ORDER_TYPE = { MARKET: 1, LIMIT: 2, STOP: 3, STOP_LOSS_TAKE_PROFIT: 4, MARKET_RANGE: 5, STOP_LIMIT: 6 };
+const price = value => (Number(value) > 0 ? Number(value) : null);
+const orderTime = order => Number(order.tradeData?.openTimestamp) || Number(order.utcLastUpdateTimestamp) || 0;
+
+/**
+ * The stop and target each position was opened with, keyed by positionId.
+ * The opening order's own stopLoss (or relativeStopLoss, in 1/100000 of
+ * price) comes first; failing that, the earliest stop-loss/take-profit order
+ * placed on the position. A stop on the profit side of the entry (already
+ * moved to break-even or beyond) isn't the risk taken, so it's skipped.
+ * `entries` maps positionId -> { direction, entryPrice }.
+ */
+function initialStopsByPosition(orders, entries) {
+  const byPosition = new Map();
+  for (const order of orders) {
+    const key = String(order.positionId || '');
+    if (!key || key === '0' || !entries.has(key)) continue;
+    if (!byPosition.has(key)) byPosition.set(key, []);
+    byPosition.get(key).push(order);
+  }
+  const out = new Map();
+  for (const [key, list] of byPosition) {
+    const { direction, entryPrice } = entries.get(key);
+    const sign = direction === 'SELL' ? -1 : 1;
+    list.sort((a, b) => orderTime(a) - orderTime(b));
+    const opening = list.filter(o => !o.closingOrder && Number(o.orderType) !== ORDER_TYPE.STOP_LOSS_TAKE_PROFIT);
+    const protective = list.filter(o => Number(o.orderType) === ORDER_TYPE.STOP_LOSS_TAKE_PROFIT);
+    const stopOf = o => price(o.stopLoss)
+      ?? (Number(o.relativeStopLoss) > 0 ? entryPrice - sign * Number(o.relativeStopLoss) / 100000 : null);
+    const targetOf = o => price(o.takeProfit)
+      ?? (Number(o.relativeTakeProfit) > 0 ? entryPrice + sign * Number(o.relativeTakeProfit) / 100000 : null);
+    const candidates = [
+      ...opening.map(stopOf),
+      ...protective.map(o => stopOf(o) ?? price(o.stopPrice)),
+    ];
+    const stopLoss = candidates.find(s => s != null && isLossSideStop(direction, entryPrice, s)) ?? null;
+    const takeProfit = [...opening, ...protective].map(targetOf).find(t => t != null && (t - entryPrice) * sign > 0) ?? null;
+    if (stopLoss != null || takeProfit != null) out.set(key, { stopLoss, takeProfit });
+  }
+  return out;
+}
+
+// The $set for each trade that gained a stop or target from `stops`, with
+// the risk the stop implies. `perLotBySymbol` prices trades that closed flat.
+function stopUpdates(trades, stops, perLotBySymbol = moneyPerPricePerLotBySymbol(trades)) {
+  const updates = [];
+  for (const t of trades) {
+    const found = stops.get(String(t.positionId));
+    if (!found) continue;
+    const risk = found.stopLoss != null ? riskFromStop(t, found.stopLoss, { perLotBySymbol }) : { riskUSD: null, riskPercent: null };
+    updates.push({ _id: t._id, dealId: t.dealId, set: { stopLoss: found.stopLoss, takeProfit: found.takeProfit, ...risk } });
+  }
+  return updates;
+}
+
+// Fill in the stop on this account's trades that have none: those closed
+// since `sinceMs`, or every one of them on the account's first pass (older
+// trades were synced before stops were read). A stop typed in by hand is
+// never touched, since only trades with no stop are looked at.
+async function fillMissingStops(client, ctidTraderAccountId, userId, accountKey, { sinceMs, nowMs }) {
+  const filter = { user: userId, accountKey, stopLoss: null, positionId: { $nin: [null, ''] } };
+  if (sinceMs != null) filter.closeTime = { $gte: new Date(sinceMs) };
+  const missing = await Trade.find(filter).lean();
+  if (!missing.length) return 0;
+  const entries = new Map(missing.map(t => [String(t.positionId), { direction: t.direction, entryPrice: Number(t.entryPrice) }]));
+  const earliestOpen = Math.min(...missing.map(t => new Date(t.openTime).getTime()).filter(Number.isFinite));
+  const orders = await fetchAllOrders(client, ctidTraderAccountId, Math.max(0, earliestOpen - ORDER_LOOKBACK_MS), nowMs);
+  const stops = initialStopsByPosition(orders, entries);
+  if (!stops.size) return 0;
+  const symbols = [...new Set(missing.map(t => t.symbol))];
+  const priced = await Trade.find({ user: userId, accountKey, symbol: { $in: symbols } }).select('symbol direction entryPrice exitPrice lotSize pnlUSD swap commission accountKey').lean();
+  let filled = 0;
+  for (const u of stopUpdates(missing, stops, moneyPerPricePerLotBySymbol(priced))) {
+    const res = await Trade.updateOne({ _id: u._id, stopLoss: null }, { $set: u.set });
+    filled += res.modifiedCount || 0;
+  }
+  return filled;
+}
+
 // Deals are individual executions, not closed trades — group by positionId so
 // a partial close still resolves against the position's real opening price
 // and open time instead of guessing from the closing deal alone.
@@ -144,9 +249,7 @@ function buildTradesFromDeals(deals, symbolNames, symbolLotSizes, accountIdentit
         closeTime: new Date(closeTimeMs).toISOString(),
         durationMinutes: Math.max(0, Math.round((closeTimeMs - openTimeMs) / 60000)),
         runningBalance,
-        // cTrader's historical deal/cash-flow APIs don't expose the SL/TP that
-        // was on the entry order, so these stay null like any MT5 trade with
-        // no recorded stop — R-multiple math already handles that gracefully.
+        // Deals don't carry the SL/TP; withStops fills them in from order history.
         stopLoss: null, takeProfit: null, riskUSD: null, riskPercent: null,
         exitTrigger: '', magic: 0, contractSize: null, tickValue: null,
         ...accountIdentity,
@@ -282,7 +385,18 @@ async function syncOneConnection(userId, connectionInfo) {
   const tradeResult = await upsertTrades(userId, trades);
   const eventResult = await upsertAccountEvents(userId, accountEvents);
 
-  await TradingAccount.updateOne({ _id: tradingAccount._id }, { $set: { lastSyncAt: new Date() } });
+  // Stops come from a separate history call; if it fails the trades are still synced.
+  const firstStopPass = !tradingAccount.stopsBackfilledAt;
+  let stopsFilled = 0, stopsError = '';
+  try {
+    stopsFilled = await fillMissingStops(client, connectionInfo.ctidTraderAccountId, userId, tradingAccount.accountKey, { sinceMs: firstStopPass ? null : fromMs, nowMs });
+  } catch (err) {
+    stopsError = err.message;
+  }
+
+  await TradingAccount.updateOne({ _id: tradingAccount._id }, {
+    $set: { lastSyncAt: new Date(), ...(firstStopPass && !stopsError ? { stopsBackfilledAt: new Date() } : {}) },
+  });
 
   return {
     ctidTraderAccountId: connectionInfo.ctidTraderAccountId,
@@ -290,6 +404,7 @@ async function syncOneConnection(userId, connectionInfo) {
     label: tradingAccount.label,
     inserted: tradeResult.inserted, skipped: tradeResult.skipped, total: trades.length,
     cashFlowInserted: eventResult.inserted, cashFlowSkipped: eventResult.skipped, cashFlowTotal: accountEvents.length,
+    stopsFilled, ...(stopsError ? { stopsError } : {}),
   };
 }
 
@@ -337,7 +452,8 @@ async function syncCTraderTrades(userId, ctidTraderAccountId) {
     skipped: accounts.reduce((sum, a) => sum + (a.skipped || 0), 0),
     cashFlowInserted: accounts.reduce((sum, a) => sum + (a.cashFlowInserted || 0), 0),
     cashFlowSkipped: accounts.reduce((sum, a) => sum + (a.cashFlowSkipped || 0), 0),
+    stopsFilled: accounts.reduce((sum, a) => sum + (a.stopsFilled || 0), 0),
   };
 }
 
-module.exports = { syncCTraderTrades, buildTradesFromDeals, buildAccountEventsFromCashFlow };
+module.exports = { syncCTraderTrades, buildTradesFromDeals, buildAccountEventsFromCashFlow, fetchAllOrders, initialStopsByPosition, stopUpdates };

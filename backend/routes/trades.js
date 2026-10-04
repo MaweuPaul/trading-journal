@@ -20,6 +20,7 @@ const {
   findTradesMissingAccountIdentity,
 } = require('../lib/tradeAccounts');
 const { calculateMissedProfit, summarizeRMultiples, realizedRMultiple } = require('../lib/tradeMath');
+const { isLossSideStop, riskFromStop } = require('../lib/tradeRisk');
 const { confidenceFor } = require('../lib/confidence');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 const { importMt5Statement } = require('../lib/mt5StatementImport');
@@ -2234,7 +2235,29 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
       primarySetup, setupConfirmations,
       executionChecklist,
       playbookId, playbookVersionId, playbookResponses,
+      stopLoss, takeProfit,
     } = req.body;
+
+    // A stop typed in by hand: blank clears it, anything else must be a price.
+    const priceInput = value => (value === null || value === '' ? null : Number(value));
+    for (const [label, value] of [['Stop loss', stopLoss], ['Take profit', takeProfit]]) {
+      if (value === undefined) continue;
+      const n = priceInput(value);
+      if (n !== null && !(Number.isFinite(n) && n > 0)) return res.status(400).json({ error: `${label} must be a price above 0.` });
+    }
+    // The stop's risk (and so the trade's R) is worked out from the trade itself.
+    const stopFields = t => {
+      const out = {};
+      if (takeProfit !== undefined) out.takeProfit = priceInput(takeProfit);
+      if (stopLoss === undefined) return out;
+      const stop = priceInput(stopLoss);
+      if (stop !== null && !isLossSideStop(t.direction, t.entryPrice, stop)) {
+        const err = new Error(`A ${t.direction === 'SELL' ? 'sell' : 'buy'}'s stop loss has to be ${t.direction === 'SELL' ? 'above' : 'below'} its entry price (${t.entryPrice}).`);
+        err.status = 400;
+        throw err;
+      }
+      return { ...out, stopLoss: stop, ...(stop === null ? { riskUSD: null, riskPercent: null } : riskFromStop(t, stop)) };
+    };
 
     let canonicalPlaybookSnapshot;
     let validatedPlaybookResponses;
@@ -2320,6 +2343,7 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
     if (mongoose.connection.readyState !== 1) {
       const tradeIdx = inMemoryTrades.findIndex(t => t._id === req.params.id);
       if (tradeIdx === -1) return res.status(404).json({ error: 'Trade not found' });
+      Object.assign(inMemoryTrades[tradeIdx], stopFields(inMemoryTrades[tradeIdx]));
       inMemoryTrades[tradeIdx] = applyFields(inMemoryTrades[tradeIdx]);
       saveLocalDatabase();
       return res.json(inMemoryTrades[tradeIdx]);
@@ -2359,6 +2383,13 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
       update.playbookResponses = validatedPlaybookResponses || {};
     }
 
+    if (stopLoss !== undefined || takeProfit !== undefined) {
+      const current = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
+        .select('direction entryPrice exitPrice lotSize pnlUSD swap commission runningBalance symbol accountKey').lean();
+      if (!current) return res.status(404).json({ error: 'Trade not found' });
+      Object.assign(update, stopFields(current));
+    }
+
     const updated = await Trade.findOneAndUpdate(
       { _id: req.params.id, user: req.user.userId },
       update,
@@ -2369,13 +2400,14 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
     // Mirror to inMemoryTrades and local JSON
     const tradeIdx = inMemoryTrades.findIndex(t => String(t._id) === String(req.params.id));
     if (tradeIdx !== -1) {
+      for (const key of ['stopLoss', 'takeProfit', 'riskUSD', 'riskPercent']) if (key in update) inMemoryTrades[tradeIdx][key] = update[key];
       inMemoryTrades[tradeIdx] = applyFields(inMemoryTrades[tradeIdx]);
       saveLocalDatabase();
     }
 
     res.json(updated);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

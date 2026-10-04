@@ -84,6 +84,8 @@ interface Trade {
   exitReason?: string;
   riskUSD?: number | null;
   stopLoss?: number | null;
+  takeProfit?: number | null;
+  riskPercent?: number | null;
   manuallyIntervened?: boolean | null;
   confidenceRating?: number | null;
   accountType?: string;
@@ -162,6 +164,28 @@ function hasPlaybookAnswer(value: unknown) {
   return value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
 }
 
+
+// A stop counts as the trade's risk only on the losing side of the entry.
+function stopLossProblem(trade: { direction: string; entryPrice: number }, draft: string) {
+  if (draft.trim() === '') return '';
+  const stop = Number(draft);
+  if (!Number.isFinite(stop) || stop <= 0) return 'Stop loss must be a price above 0.';
+  const sell = String(trade.direction).toUpperCase() === 'SELL';
+  if (sell ? stop <= trade.entryPrice : stop >= trade.entryPrice) {
+    return `A ${sell ? 'sell' : 'buy'}'s stop loss has to be ${sell ? 'above' : 'below'} its entry price (${trade.entryPrice}).`;
+  }
+  return '';
+}
+
+// R on price alone (before commission and swap), for a preview while typing.
+function priceR(trade: { direction: string; entryPrice: number; exitPrice: number }, stop: number) {
+  const risk = Math.abs(trade.entryPrice - stop);
+  if (!(risk > 0)) return null;
+  const sign = String(trade.direction).toUpperCase() === 'SELL' ? -1 : 1;
+  return ((trade.exitPrice - trade.entryPrice) * sign) / risk;
+}
+
+const fmtR = (r: number) => `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
 
 function formatDuration(mins: number) {
   if (mins < 60) return `${mins}m`;
@@ -267,6 +291,8 @@ function TradesPageContent() {
   const [draftAnalysisGrade, setDraftAnalysisGrade] = useState('');
   const [draftExecutionGrade, setDraftExecutionGrade] = useState('');
   const [draftPlannedRR, setDraftPlannedRR] = useState('');
+  const [draftStopLoss, setDraftStopLoss] = useState('');
+  const [draftTakeProfit, setDraftTakeProfit] = useState('');
   const [draftExitReason, setDraftExitReason] = useState('');
   const [draftManuallyIntervened, setDraftManuallyIntervened] = useState<boolean | null>(null);
   const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
@@ -409,6 +435,8 @@ function TradesPageContent() {
     setDraftAnalysisGrade(trade.analysisGrade || '');
     setDraftExecutionGrade(trade.executionGrade || '');
     setDraftPlannedRR(trade.plannedRR != null ? String(trade.plannedRR) : '');
+    setDraftStopLoss(trade.stopLoss != null ? String(trade.stopLoss) : '');
+    setDraftTakeProfit(trade.takeProfit != null ? String(trade.takeProfit) : '');
     setDraftExitReason(trade.exitReason || '');
     setDraftManuallyIntervened(trade.manuallyIntervened ?? null);
     setDraftConfidence(trade.confidenceRating ?? null);
@@ -482,6 +510,12 @@ function TradesPageContent() {
         return;
       }
     }
+    const stopProblem = stopLossProblem(selectedTrade, draftStopLoss);
+    if (stopProblem) { alert(stopProblem); return; }
+    // Only send the stop/target when they changed, so saving notes never
+    // replaces the risk a broker sync recorded.
+    const priceField = (draft: string, saved?: number | null) =>
+      draft.trim() === (saved != null ? String(saved) : '') ? undefined : (draft.trim() === '' ? null : Number(draft));
     const token = localStorage.getItem('token');
     if (!token) return;
     setSaving(true);
@@ -502,6 +536,8 @@ function TradesPageContent() {
           analysisGrade: draftAnalysisGrade,
           executionGrade: draftExecutionGrade,
           plannedRR: draftPlannedRR === '' ? null : parseFloat(draftPlannedRR),
+          stopLoss: priceField(draftStopLoss, selectedTrade.stopLoss),
+          takeProfit: priceField(draftTakeProfit, selectedTrade.takeProfit),
           exitReason: draftExitReason,
           manuallyIntervened: draftManuallyIntervened,
           confidenceRating: draftConfidence,
@@ -1241,6 +1277,37 @@ function TradesPageContent() {
                 </div>
 
                 </>}
+
+                {/* Stop loss + take profit: the stop is what R is measured against */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  {([
+                    ['Stop loss', draftStopLoss, setDraftStopLoss, 'trade-stop-loss'],
+                    ['Take profit', draftTakeProfit, setDraftTakeProfit, 'trade-take-profit'],
+                  ] as const).map(([label, value, setValue, id]) => (
+                    <div key={id}>
+                      <label htmlFor={id} style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>{label}</label>
+                      <input
+                        id={id}
+                        type="number" step="any" min="0" inputMode="decimal"
+                        placeholder={label === 'Stop loss' ? (selectedTrade.direction === 'SELL' ? `above ${selectedTrade.entryPrice}` : `below ${selectedTrade.entryPrice}`) : 'optional'}
+                        value={value}
+                        onChange={e => setValue(e.target.value)}
+                        style={{
+                          width: '100%', padding: '7px 10px', borderRadius: 8,
+                          background: 'var(--bg-surface)', border: `1px solid ${label === 'Stop loss' && stopLossProblem(selectedTrade, value) ? '#ef4444' : 'var(--border)'}`,
+                          color: 'var(--text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <div style={{ gridColumn: '1 / -1', fontSize: 11, color: stopLossProblem(selectedTrade, draftStopLoss) ? '#ef4444' : 'var(--text-muted)' }}>
+                    {stopLossProblem(selectedTrade, draftStopLoss)
+                      || (draftStopLoss.trim() !== '' && priceR(selectedTrade, Number(draftStopLoss)) != null
+                        ? `Entry ${selectedTrade.entryPrice} → exit ${selectedTrade.exitPrice}: about ${fmtR(priceR(selectedTrade, Number(draftStopLoss)) as number)} on price. Saving works out the risk in money and counts it in Avg R.`
+                        : selectedTrade.stopLoss == null ? 'No stop recorded. Add the stop you had at entry to count this trade in Avg R.' : '')}
+                  </div>
+                </div>
 
                 {/* Planned R:R + Confidence */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>

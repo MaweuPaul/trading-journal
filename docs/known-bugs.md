@@ -11,10 +11,14 @@ trades through it (September 2026). Newest first within each section.
   (stores `null` when the EA sends 0).
 - **Symptom:** 0 of 312 trades have a stop, so `r`, `riskUSD` and every
   R-based metric are empty.
-- **Status:** the cTrader case is a known limitation per the code comment.
-  Worth checking whether the entry order's SL can be read from
-  `ProtoOAOrderListReq` history. For MT5, check whether the EA sends the
-  position's SL.
+- **Status:** partly fixed (October 2026).
+  - **cTrader:** the sync now reads each position's opening stop from order
+    history (`ProtoOAOrderListReq`), works out `riskUSD`/`riskPercent`, and on
+    its first run fills in every trade synced before this. Not yet checked
+    against the live account's real order history.
+  - **Any trade:** a stop loss can be typed in on the Trades page; the risk is
+    worked out from it.
+  - **MT5:** still open. Check whether the EA sends the position's SL.
 
 ## Fixed
 

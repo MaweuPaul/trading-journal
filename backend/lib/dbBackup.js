@@ -1,8 +1,8 @@
 // Database-to-database backups: the live MongoDB database is copied, every
 // collection and index, into a dated database on a separate backup cluster
 // (backup_YYYY-MM-DD). Each copy is counted against the source and marked
-// complete only once it checks out; older copies beyond the retention count
-// are dropped. Used by scripts/backup-to-database.js (nightly, from GitHub
+// complete only once it checks out; older copies the retention doesn't keep
+// (7 daily, 8 weekly, 12 monthly by default) are dropped. Used by scripts/backup-to-database.js (nightly, from GitHub
 // Actions) and scripts/restore-from-backup.js.
 
 const PREFIX = 'backup_';
@@ -75,15 +75,49 @@ async function listBackups(backupClient) {
   return out;
 }
 
-/** Drop dated backups beyond the newest `keep` complete ones (incomplete leftovers too). Returns dropped names. */
-async function pruneBackups(backupClient, keep, { today = backupName(), log = () => {} } = {}) {
+// Retention: the newest `daily` complete backups, plus the newest complete
+// backup of each of the last `weekly` weeks (Monday to Sunday) and of each of
+// the last `monthly` calendar months. "Newest of a past week/month" never
+// changes once that period is over, so a kept backup stays kept.
+const DEFAULT_RETENTION = { daily: 7, weekly: 8, monthly: 12 };
+const dayOf = name => name.slice(PREFIX.length);                       // 'YYYY-MM-DD'
+function weekOf(day) {                                                 // the Monday that starts its week
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+const monthOf = day => day.slice(0, 7);
+
+/** Which of the complete dated backups (newest first) the retention keeps, and why. */
+function backupsToKeep(names, retention = DEFAULT_RETENTION) {
+  const r = { ...DEFAULT_RETENTION, ...retention };
+  const keep = new Map(); // name -> reasons
+  const mark = (name, why) => keep.set(name, [...(keep.get(name) || []), why]);
+  names.slice(0, Math.max(1, r.daily)).forEach(n => mark(n, 'daily'));
+  const newestPer = (period, count, label) => {
+    const seen = new Set();
+    for (const n of names) {
+      const key = period(dayOf(n));
+      if (seen.has(key)) continue;
+      if (seen.size >= count) break;
+      seen.add(key);
+      mark(n, label);
+    }
+  };
+  newestPer(weekOf, Math.max(0, r.weekly), 'weekly');
+  newestPer(monthOf, Math.max(0, r.monthly), 'monthly');
+  return keep;
+}
+
+/** Drop dated backups the retention doesn't keep (incomplete leftovers too). Returns dropped names. */
+async function pruneBackups(backupClient, retention = DEFAULT_RETENTION, { today = backupName(), log = () => {} } = {}) {
   const all = await listBackups(backupClient);
   const dated = all.filter(b => DAY_NAME.test(b.name));
-  const complete = dated.filter(b => b.marker?.completedAt);
-  const keepNames = new Set(complete.slice(0, Math.max(1, keep)).map(b => b.name));
+  const complete = dated.filter(b => b.marker?.completedAt).map(b => b.name); // newest first
+  const keep = backupsToKeep(complete, retention);
   const dropped = [];
   for (const b of dated) {
-    if (keepNames.has(b.name) || b.name === today) continue;
+    if (keep.has(b.name) || b.name === today) continue;
     await backupClient.db(b.name).dropDatabase();
     dropped.push(b.name);
     log(`  dropped ${b.name}${b.marker?.completedAt ? '' : ' (incomplete)'}`);
@@ -95,7 +129,7 @@ async function pruneBackups(backupClient, keep, { today = backupName(), log = ()
  * Back up `sourceDb` into `backupClient`'s database `name`. An earlier
  * incomplete (or, with force, complete) copy of the same name is replaced.
  */
-async function runBackup({ sourceDb, backupClient, name = backupName(), keep = 7, force = false, log = () => {} }) {
+async function runBackup({ sourceDb, backupClient, name = backupName(), retention = DEFAULT_RETENTION, prune = true, force = false, log = () => {} }) {
   const started = Date.now();
   const target = backupClient.db(name);
   const existing = await target.collection(MARKER).findOne({}).catch(() => null);
@@ -118,7 +152,7 @@ async function runBackup({ sourceDb, backupClient, name = backupName(), keep = 7
     collections: counts, documents, seconds: Math.round((Date.now() - started) / 1000),
   });
   log(`${name}: ${Object.keys(counts).length} collections, ${documents} documents, checked.`);
-  const dropped = await pruneBackups(backupClient, keep, { today: name, log });
+  const dropped = prune ? await pruneBackups(backupClient, retention, { today: name, log }) : [];
   return { name, counts, documents, dropped };
 }
 
@@ -146,4 +180,4 @@ async function restoreBackup({ backupClient, name, liveDb, log = () => {} }) {
   return counts;
 }
 
-module.exports = { PREFIX, MARKER, backupName, sourceDbName, collectionNames, copyCollections, verifyCopy, listBackups, pruneBackups, runBackup, restoreBackup };
+module.exports = { PREFIX, MARKER, DEFAULT_RETENTION, backupName, sourceDbName, collectionNames, copyCollections, verifyCopy, listBackups, backupsToKeep, pruneBackups, runBackup, restoreBackup };

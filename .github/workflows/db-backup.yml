@@ -1,11 +1,12 @@
 # Nightly database backup: copies the whole live MongoDB database into a dated
 # database (backup_YYYY-MM-DD) on a separate backup cluster, checks the copy and
-# keeps the newest BACKUP_KEEP. See backend/scripts/backup-to-database.js.
+# keeps 7 daily, 8 weekly and 12 monthly copies. See backend/scripts/backup-to-database.js.
 #
 # Needs these repository secrets (Settings -> Secrets and variables -> Actions):
 #   MONGODB_URI         the live database (same value as on Render)
 #   BACKUP_MONGODB_URI  the backup cluster (a separate Atlas cluster/project)
-# Optional repository variables: MONGODB_DB_NAME, BACKUP_KEEP (default 7).
+# Optional repository variables: MONGODB_DB_NAME, BACKUP_KEEP (daily, default 7),
+# BACKUP_KEEP_WEEKLY (default 8), BACKUP_KEEP_MONTHLY (default 12).
 # GitHub emails the repository owner when a scheduled run fails.
 name: Database backup
 
@@ -47,6 +48,8 @@ jobs:
           BACKUP_MONGODB_URI: ${{ secrets.BACKUP_MONGODB_URI }}
           MONGODB_DB_NAME: ${{ vars.MONGODB_DB_NAME }}
           BACKUP_KEEP: ${{ vars.BACKUP_KEEP }}
+          BACKUP_KEEP_WEEKLY: ${{ vars.BACKUP_KEEP_WEEKLY }}
+          BACKUP_KEEP_MONTHLY: ${{ vars.BACKUP_KEEP_MONTHLY }}
         run: node scripts/backup-to-database.js ${{ inputs.force && '--force' || '' }}
       - name: List backups
         if: always()

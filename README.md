@@ -301,7 +301,7 @@ Nothing in the journal can be changed through these tools. Ask, e.g.: *"Review m
 
 ## Database Backups
 
-Every night a GitHub Action copies the **whole** live database (every collection: users, trades, journals, playbooks, backtests, accounts, encrypted credentials, everything) into a dated database on a **separate backup cluster**, `backup_YYYY-MM-DD`. Each copy is counted against the live database and only marked complete once every collection matches; the newest 7 complete copies are kept (`BACKUP_KEEP`).
+Every night a GitHub Action copies the **whole** live database (every collection: users, trades, journals, playbooks, backtests, accounts, encrypted credentials, everything) into a dated database on a **separate backup cluster**, `backup_YYYY-MM-DD`. Each copy is counted against the live database and only marked complete once every collection matches. Kept: the last **7 days**, the newest copy of each of the last **8 weeks** (Sundays) and of each of the last **12 months** (month-ends), about 25 copies reaching back a year. Change the counts with the repository variables `BACKUP_KEEP`, `BACKUP_KEEP_WEEKLY` and `BACKUP_KEEP_MONTHLY`.
 
 **Setup (once):**
 
@@ -309,7 +309,7 @@ Every night a GitHub Action copies the **whole** live database (every collection
 2. In the GitHub repository, **Settings → Secrets and variables → Actions**, add two secrets:
    - `MONGODB_URI`: the live database's connection string (the same as on Render).
    - `BACKUP_MONGODB_URI`: the backup cluster's connection string.
-   Optional variables: `MONGODB_DB_NAME` (when the live URI doesn't name the database) and `BACKUP_KEEP`.
+   Optional variables: `MONGODB_DB_NAME` (when the live URI doesn't name the database), `BACKUP_KEEP`, `BACKUP_KEEP_WEEKLY` and `BACKUP_KEEP_MONTHLY`.
 3. **Actions → Database backup → Run workflow** once to check it works. After that it runs at 02:17 UTC daily, and GitHub emails you if a run fails.
 
 **Restore:**

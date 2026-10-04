@@ -39,7 +39,7 @@ const { MONGODB_URI, BACKUP_MONGODB_URI, MONGODB_DB_NAME } = process.env;
       }
       const safety = `backup_prerestore_${new Date().toISOString().replace(/[-:]/g, '').slice(0, 13)}`;
       console.log(`Saving the current live data as ${safety} first...`);
-      await runBackup({ sourceDb: liveDb, backupClient: backup, name: safety, keep: Number.MAX_SAFE_INTEGER, force: true, log: m => console.log(m) });
+      await runBackup({ sourceDb: liveDb, backupClient: backup, name: safety, prune: false, force: true, log: m => console.log(m) });
       const counts = await restoreBackup({ backupClient: backup, name: from, liveDb, log: m => console.log(m) });
       console.log(`Restored ${from}: ${Object.values(counts).reduce((a, b) => a + b, 0)} documents. To undo, restore ${safety}.`);
     } finally { await live.close(); }

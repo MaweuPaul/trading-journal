@@ -2385,7 +2385,7 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
 
     if (stopLoss !== undefined || takeProfit !== undefined) {
       const current = await Trade.findOne({ _id: req.params.id, user: req.user.userId })
-        .select('direction entryPrice exitPrice lotSize pnlUSD swap commission runningBalance symbol accountKey').lean();
+        .select('direction entryPrice exitPrice lotSize pnlUSD swap commission runningBalance symbol accountKey grossPnl').lean();
       if (!current) return res.status(404).json({ error: 'Trade not found' });
       Object.assign(update, stopFields(current));
     }

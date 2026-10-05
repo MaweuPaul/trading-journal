@@ -4,6 +4,7 @@ const AccountEvent = require('../models/AccountEvent');
 const TradingAccount = require('../models/TradingAccount');
 const { loadConnection, listConnections, getAuthenticatedClient } = require('./ctraderReplay');
 const { PAYLOAD_TYPE } = require('./ctraderClient');
+const { convertCTraderPnlToGross } = require('./ctraderPnl');
 const { isLossSideStop, moneyPerPricePerLotBySymbol, riskFromStop } = require('./tradeRisk');
 
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -188,7 +189,7 @@ async function fillMissingStops(client, ctidTraderAccountId, userId, accountKey,
   const stops = initialStopsByPosition(orders, entries);
   if (!stops.size) return 0;
   const symbols = [...new Set(missing.map(t => t.symbol))];
-  const priced = await Trade.find({ user: userId, accountKey, symbol: { $in: symbols } }).select('symbol direction entryPrice exitPrice lotSize pnlUSD swap commission accountKey').lean();
+  const priced = await Trade.find({ user: userId, accountKey, symbol: { $in: symbols } }).select('symbol direction entryPrice exitPrice lotSize pnlUSD swap commission accountKey grossPnl').lean();
   let filled = 0;
   for (const u of stopUpdates(missing, stops, moneyPerPricePerLotBySymbol(priced))) {
     const res = await Trade.updateOne({ _id: u._id, stopLoss: null }, { $set: u.set });
@@ -224,9 +225,11 @@ function buildTradesFromDeals(deals, symbolNames, symbolLotSizes, accountIdentit
       const swap = scale(detail.swap, moneyDigits);
       const closeCommission = scale(detail.commission, moneyDigits);
       const commission = closeCommission + (deal.dealId === openDeal.dealId ? 0 : openCommission);
-      const pnlUSD = grossProfit + swap + commission;
+      // Like an MT5 trade: pnlUSD is the price profit, with commission and
+      // swap kept separately (every stat adds them back to get the net).
+      const pnlUSD = grossProfit;
       const runningBalance = scale(detail.balance, moneyDigits);
-      const balanceBeforeTrade = runningBalance - pnlUSD;
+      const balanceBeforeTrade = runningBalance - (grossProfit + swap + commission);
       const pnlPct = balanceBeforeTrade > 0 ? (pnlUSD / balanceBeforeTrade) * 100 : 0;
       const unitsPerLot = symbolLotSizes.get(String(deal.symbolId)) || LOT_UNITS * 100;
       const lotSize = Number(detail.closedVolume ?? deal.filledVolume ?? deal.volume ?? 0) / unitsPerLot;
@@ -310,7 +313,7 @@ async function upsertTrades(userId, trades) {
       await Trade.create({
         dealId: t.dealId, positionId: t.positionId, symbol: t.symbol, direction: t.direction,
         entryPrice: t.entryPrice, exitPrice: t.exitPrice, lotSize: t.lotSize,
-        pnlUSD: t.pnlUSD, pnlPct: t.pnlPct, commission: t.commission, swap: t.swap,
+        pnlUSD: t.pnlUSD, pnlPct: t.pnlPct, commission: t.commission, swap: t.swap, grossPnl: true,
         openTime: new Date(t.openTime), closeTime: new Date(t.closeTime),
         durationMinutes: t.durationMinutes, runningBalance: t.runningBalance,
         stopLoss: t.stopLoss, takeProfit: t.takeProfit, riskUSD: t.riskUSD, riskPercent: t.riskPercent,
@@ -382,6 +385,7 @@ async function syncOneConnection(userId, connectionInfo) {
   const trades = buildTradesFromDeals(deals, symbolNames, symbolLotSizes, accountIdentity);
   const accountEvents = buildAccountEventsFromCashFlow(cashFlowEvents, accountIdentity);
 
+  await convertCTraderPnlToGross({ userId }); // older trades first, so the account never mixes net and gross
   const tradeResult = await upsertTrades(userId, trades);
   const eventResult = await upsertAccountEvents(userId, accountEvents);
 

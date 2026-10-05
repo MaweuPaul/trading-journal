@@ -165,6 +165,12 @@ function hasPlaybookAnswer(value: unknown) {
 }
 
 
+// What the trade did to the balance: pnlUSD is the price profit, and
+// commission and swap are stored separately (as the Stats pages count them).
+const netPnl = (t: { pnlUSD: number; commission?: number; swap?: number }) => t.pnlUSD + (t.commission || 0) + (t.swap || 0);
+// pnlPct is the price profit over the balance before the trade; scaled to the net.
+const netPct = (t: { pnlUSD: number; pnlPct: number; commission?: number; swap?: number }) => (t.pnlUSD ? (t.pnlPct * netPnl(t)) / t.pnlUSD : 0);
+
 // A stop counts as the trade's risk only on the losing side of the entry.
 function stopLossProblem(trade: { direction: string; entryPrice: number }, draft: string) {
   if (draft.trim() === '') return '';
@@ -376,8 +382,8 @@ function TradesPageContent() {
     for (const t of trades) buckets[sessionForTrade(t.closeTime)].push(t);
     return SESSION_ORDER.map(key => {
       const group = buckets[key];
-      const netPnL = group.reduce((s, t) => s + t.pnlUSD, 0);
-      const wins = group.filter(t => t.pnlUSD >= 0).length;
+      const netPnL = group.reduce((s, t) => s + netPnl(t), 0);
+      const wins = group.filter(t => netPnl(t) >= 0).length;
       return { key, label: SESSION_LABELS[key], trades: group, netPnL, winRate: group.length ? (wins / group.length) * 100 : 0 };
     }).filter(g => g.trades.length > 0);
   }, [trades]);
@@ -871,7 +877,7 @@ function TradesPageContent() {
                 </thead>
                 <tbody>
                   {displayTrades.map(({ trade: t, nested }, i) => {
-                    const isProfit = t.pnlUSD >= 0;
+                    const isProfit = netPnl(t) >= 0;
                     // Color-coded grouping: tradeGroup takes priority over shared positionId
                     const groupKey = t.tradeGroup || (t.positionId || '');
                     const prevGroupKey = i > 0 ? (displayTrades[i-1].trade.tradeGroup || displayTrades[i-1].trade.positionId || '') : '';
@@ -963,7 +969,7 @@ function TradesPageContent() {
                         <td className="hide-sm">{t.exitPrice.toFixed(5)}</td>
                         <td className="hide-sm">{t.lotSize.toFixed(2)}</td>
                         <td className={`pnl ${isProfit ? 'positive' : 'negative'}`}>
-                          {isProfit ? '+' : ''}${Math.abs(t.pnlUSD).toFixed(2)}
+                          {isProfit ? '+' : ''}${Math.abs(netPnl(t)).toFixed(2)}
                         </td>
                         <td className={`pnl ${isProfit ? 'positive' : 'negative'} hide-sm`}>
                           {t.pnlPct >= 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
@@ -1071,8 +1077,8 @@ function TradesPageContent() {
                   </div>
                   <div className="detail-tile">
                     <span className="detail-tile-lbl">Net P&L</span>
-                    <span className={`detail-tile-val pnl ${selectedTrade.pnlUSD >= 0 ? 'positive' : 'negative'}`}>
-                      {selectedTrade.pnlUSD >= 0 ? '+' : ''}${selectedTrade.pnlUSD.toFixed(2)} ({selectedTrade.pnlPct >= 0 ? '+' : ''}{selectedTrade.pnlPct.toFixed(2)}%)
+                    <span className={`detail-tile-val pnl ${netPnl(selectedTrade) >= 0 ? 'positive' : 'negative'}`}>
+                      {netPnl(selectedTrade) >= 0 ? '+' : ''}${netPnl(selectedTrade).toFixed(2)} ({netPct(selectedTrade) >= 0 ? '+' : ''}{netPct(selectedTrade).toFixed(2)}%)
                     </span>
                   </div>
                   <div className="detail-tile">

@@ -71,3 +71,12 @@ test('order history is split into smaller windows while cTrader says there is mo
   assert.equal(orders.length, 4);
   assert.equal(calls.length, 7);
 });
+
+test('a converted cTrader trade holds gross P&L and gives the same risk', () => {
+  const { grossFromNet } = require('../lib/ctraderPnl');
+  const converted = { ...gold, ...grossFromNet(gold), grossPnl: true };
+  assert.equal(converted.pnlUSD, 1000);
+  assert.equal(converted.pnlPct, 10); // 1000 over the $10,000 before the trade
+  assert.equal(converted.pnlUSD + converted.commission + converted.swap, 993, 'net is unchanged');
+  assert.deepEqual(riskFromStop(converted, 1995), riskFromStop(gold, 1995));
+});

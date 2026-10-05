@@ -520,7 +520,8 @@ export default function CalendarPage() {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {dailyTrades.map((t) => {
-                      const isProfit = t.pnlUSD >= 0;
+                      const net = t.pnlUSD + (t.commission || 0) + (t.swap || 0); // after commission and swap, like the day total
+                      const isProfit = net >= 0;
                       return (
                         <div 
                           key={t._id} 
@@ -539,7 +540,7 @@ export default function CalendarPage() {
                           
                           <div className="session-stats-group" style={{ alignItems: 'flex-end', flexDirection: 'column', gap: 6 }}>
                             <span className={`pnl ${isProfit ? 'positive' : 'negative'}`} style={{ fontSize: 14, fontWeight: 700 }}>
-                              {isProfit ? '+' : ''}${t.pnlUSD.toFixed(2)}
+                              {isProfit ? '+' : ''}${net.toFixed(2)}
                             </span>
                             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                               {t.durationMinutes} mins duration

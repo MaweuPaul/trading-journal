@@ -41,7 +41,9 @@ test('folds both the opening and closing deal commission into net P&L, and reads
   assert.equal(trade.direction, 'SELL');
   assert.equal(trade.commission, -8); // -3.00 (close) + -5.00 (open)
   assert.equal(trade.swap, -2);
-  assert.equal(trade.pnlUSD, 90); // 100 (gross) + -2 (swap) + -8 (commission)
+  assert.equal(trade.pnlUSD, 100); // gross, like MT5: commission and swap are kept separately
+  assert.equal(trade.pnlUSD + trade.commission + trade.swap, 90, 'net matches the balance change');
+  assert.equal(trade.pnlPct, 100 / (200 - 90) * 100); // over the balance before the trade
 });
 
 test('emits one trade per closing deal on a partially closed position, sharing the same open time', () => {

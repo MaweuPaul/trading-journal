@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const path = require('path');
 const { rateLimit } = require('express-rate-limit');
 const { ipKey } = require('./lib/clientIp');
+const { convertCTraderPnlToGross } = require('./lib/ctraderPnl');
 
 const tradesRouter = require('./routes/trades');
 const authRouter = require('./routes/auth');
@@ -245,6 +246,8 @@ if (!process.env.MONGODB_URI) {
           { user: 1, accountKey: 1, externalId: 1 },
           { unique: true, partialFilterExpression: { source: 'mt5' }, name: 'user_1_accountKey_1_externalId_1' },
         );
+        const converted = await convertCTraderPnlToGross();
+        if (converted) console.log(` Converted ${converted} cTrader trades to gross P&L (commission was counted twice).`);
       } catch (e) {
         console.error(' Owner setup or migration failed:', e.message);
       }

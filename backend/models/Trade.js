@@ -10,7 +10,11 @@ const tradeSchema = new mongoose.Schema({
   // volume / unitsPerLot leaves float noise (0.09999999999999999); 6 decimals
   // keeps micro crypto lots exact while making 0.1 compare equal to 0.1.
   lotSize: { type: Number, required: true, set: v => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 1e6) / 1e6 : v) },
-  pnlUSD: { type: Number, required: true },         // profit in USD
+  pnlUSD: { type: Number, required: true },         // price profit in USD, before commission and swap
+  // cTrader trades synced before October 2026 held net P&L (after commission
+  // and swap) in pnlUSD, so every stat took those off twice. true once a
+  // cTrader trade holds gross P&L like an MT5 one (see lib/ctraderPnl.js).
+  grossPnl: { type: Boolean, default: undefined },
   pnlPct: { type: Number, default: 0 },             // P&L as % of balance at close
   commission: { type: Number, default: 0 },
   swap: { type: Number, default: 0 },

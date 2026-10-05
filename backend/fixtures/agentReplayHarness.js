@@ -56,6 +56,7 @@ function memoryModel(Model) {
   const matches = (doc, query) => Object.entries(query).every(([key, want]) => {
     if (key === '$or') return want.some(q => matches(doc, q));
     const val = doc[key];
+    if (want instanceof RegExp) return want.test(String(val ?? ''));
     if (want && typeof want === 'object' && !(want instanceof mongoose.Types.ObjectId)) {
       if ('$in' in want) return want.$in.some(x => (x === null ? val == null : String(val) === String(x)));
       if ('$ne' in want) return String(val) !== String(want.$ne);

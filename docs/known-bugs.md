@@ -22,6 +22,17 @@ trades through it (September 2026). Newest first within each section.
 
 ## Fixed
 
+### cTrader commission and swap counted twice
+- **Where:** `backend/lib/ctraderSync.js` stored net P&L in `pnlUSD`, while
+  every stat (`netTradeAmount` in `lib/tradeMath.js`, the `netAmount` helpers
+  in `routes/trades.js`) adds `commission` and `swap` to `pnlUSD`, as for MT5.
+- **Symptom:** net P&L, wins/losses near break-even, profit factor and
+  expectancy were understated for cTrader accounts.
+- **Fix (October 2026):** cTrader trades now store gross `pnlUSD` and
+  `pnlPct` like MT5. Older trades are converted once (`lib/ctraderPnl.js`, at
+  startup and before each sync) and marked `grossPnl: true`. The Trades page
+  and calendar show each trade's net P&L.
+
 ### `npm test` ran a script that needs a real database
 - **Where:** `backend/scripts/test-orb-ny-open-mcp.js`
 - **Symptom:** `node --test` picked it up by name and it always failed without

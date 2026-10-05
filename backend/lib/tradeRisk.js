@@ -3,12 +3,13 @@
 // (realizedRMultiple in tradeMath.js) need this riskUSD; MT5 sends it, but a
 // cTrader trade or a stop typed in by hand only gives the stop price.
 
-const isCTrader = trade => String(trade?.accountKey || '').startsWith('ctrader:');
+// A cTrader trade not yet converted by lib/ctraderPnl.js still holds net P&L.
+const holdsNetPnl = trade => String(trade?.accountKey || '').startsWith('ctrader:') && trade?.grossPnl !== true;
 
-/** Price P&L before swap and commission (cTrader's pnlUSD already includes them; MT5's doesn't). */
+/** Price P&L before swap and commission. */
 function grossPriceProfit(trade) {
   const pnl = Number(trade?.pnlUSD || 0);
-  return isCTrader(trade) ? pnl - Number(trade?.swap || 0) - Number(trade?.commission || 0) : pnl;
+  return holdsNetPnl(trade) ? pnl - Number(trade?.swap || 0) - Number(trade?.commission || 0) : pnl;
 }
 
 const sideSign = direction => (String(direction).toUpperCase() === 'SELL' ? -1 : 1);
@@ -53,8 +54,7 @@ function moneyPerPricePerLotBySymbol(trades) {
 function balanceBefore(trade) {
   const bal = Number(trade?.runningBalance);
   if (!Number.isFinite(bal)) return null;
-  const net = isCTrader(trade) ? Number(trade.pnlUSD || 0) : Number(trade.pnlUSD || 0) + Number(trade.commission || 0) + Number(trade.swap || 0);
-  const before = bal - net;
+  const before = bal - (grossPriceProfit(trade) + Number(trade.commission || 0) + Number(trade.swap || 0));
   return before > 0 ? before : null;
 }
 

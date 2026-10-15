@@ -471,6 +471,9 @@ export default function PerformancePage() {
                       <Tooltip
                         formatter={(v: any) => [fmt(Number(v)), 'P&L']}
                         contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10 }}
+                        labelStyle={{ color: 'var(--text-primary)' }}
+                        itemStyle={{ color: 'var(--text-primary)' }}
+                        cursor={{ fill: 'var(--bg-hover)' }}
                         labelFormatter={fmtDate}
                       />
                       <ReferenceLine y={0} stroke="var(--border)" />

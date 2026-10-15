@@ -312,6 +312,8 @@ function TradesPageContent() {
   const [draftReEntryReason, setDraftReEntryReason] = useState('');
   const [parentSearchQuery, setParentSearchQuery] = useState('');
   const [showParentDropdown, setShowParentDropdown] = useState(false);
+  // Every trade on the symbol, not just this page: a parent can be pages back.
+  const [symbolTrades, setSymbolTrades] = useState<{ symbol: string; trades: Trade[] } | null>(null);
   const [copied, setCopied] = useState(false);
   const [draftPlaybookSnapshot, setDraftPlaybookSnapshot] = useState<PlaybookSnapshot | null>(null);
   const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
@@ -455,6 +457,7 @@ function TradesPageContent() {
         : rulesFor('execution', DEFAULT_EXECUTION_CHECKLIST)
     );
     setDraftIsReEntry(trade.isReEntry ?? false);
+    setSymbolTrades(null); // picks up trades synced since the last look
     setDraftTradeGroup(trade.tradeGroup || '');
     setDraftParentTradeId(trade.parentTradeId || '');
     setDraftReEntryReason(trade.reEntryReason || '');
@@ -462,6 +465,18 @@ function TradesPageContent() {
     setDraftPlaybookResponses(trade.playbookResponses || {});
     setActivePlaybookPhase('plan');
   };
+
+  const reEntrySymbol = draftIsReEntry ? selectedTrade?.symbol : undefined;
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!reEntrySymbol || !token || symbolTrades?.symbol === reEntrySymbol) return;
+    let cancelled = false;
+    fetch(`${API}/trades?${new URLSearchParams({ symbol: reEntrySymbol, limit: '2000' })}`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : { trades: [] }))
+      .then(data => { if (!cancelled) setSymbolTrades({ symbol: reEntrySymbol, trades: data.trades || [] }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [reEntrySymbol, symbolTrades?.symbol]);
 
   useEffect(() => {
     const requestedId = searchParams.get('replay') || searchParams.get('trade');
@@ -969,7 +984,7 @@ function TradesPageContent() {
                         <td className="hide-sm">{t.exitPrice.toFixed(5)}</td>
                         <td className="hide-sm">{t.lotSize.toFixed(2)}</td>
                         <td className={`pnl ${isProfit ? 'positive' : 'negative'}`}>
-                          {isProfit ? '+' : ''}${Math.abs(netPnl(t)).toFixed(2)}
+                          {isProfit ? '+' : '-'}${Math.abs(netPnl(t)).toFixed(2)}
                         </td>
                         <td className={`pnl ${isProfit ? 'positive' : 'negative'} hide-sm`}>
                           {t.pnlPct >= 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
@@ -1458,24 +1473,29 @@ function TradesPageContent() {
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10, position: 'relative' }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Select Parent Trade (Same Symbol)</div>
                     {(() => {
-                      // Filter trades to find potential parents: same symbol, closed before current trade
-                      const potentialParents = trades.filter(t => 
-                        t.symbol === selectedTrade.symbol && 
-                        t._id !== selectedTrade._id && 
-                        new Date(t.closeTime) <= new Date(selectedTrade.closeTime)
-                      );
+                      // Potential parents: same symbol, opened before this trade (it may
+                      // still have been open when this one started), from any page.
+                      const loaded = symbolTrades?.symbol === selectedTrade.symbol;
+                      const sameSymbolTrades = (loaded ? symbolTrades.trades : trades.filter(t => t.symbol === selectedTrade.symbol))
+                        .filter(t => t._id !== selectedTrade._id);
+                      const openedBefore = (t: Trade) => new Date(t.openTime) < new Date(selectedTrade.openTime);
+                      const potentialParents = sameSymbolTrades.filter(openedBefore);
 
                       if (potentialParents.length === 0) {
-                        return <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>No previous trades found for {selectedTrade.symbol} on this page.</div>;
+                        return <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{loaded ? `No earlier ${selectedTrade.symbol} trades.` : `Loading ${selectedTrade.symbol} trades…`}</div>;
                       }
 
-                      // Filter based on search query
-                      const filteredParents = potentialParents.filter(p => 
-                        !parentSearchQuery || 
-                        p.dealId.includes(parentSearchQuery) || 
-                        p.direction.toLowerCase().includes(parentSearchQuery.toLowerCase()) || 
-                        (p.notes || '').toLowerCase().includes(parentSearchQuery.toLowerCase())
-                      );
+                      // Filter based on search query (ticket, position, direction or notes)
+                      const q = parentSearchQuery.trim().toLowerCase();
+                      const matches = (p: Trade) => !q ||
+                        String(p.dealId).toLowerCase().includes(q) ||
+                        String(p.positionId || '').toLowerCase().includes(q) ||
+                        p.direction.toLowerCase().includes(q) ||
+                        (p.notes || '').toLowerCase().includes(q);
+                      const filteredParents = potentialParents.filter(matches);
+                      // A ticket that exists but opened later can't be this trade's parent -- say so
+                      // rather than "no match", since it's the other way round.
+                      const laterMatch = q && filteredParents.length === 0 ? sameSymbolTrades.find(p => !openedBefore(p) && matches(p)) : undefined;
 
                       const selectedParentObj = potentialParents.find(p => p._id === draftParentTradeId);
 
@@ -1531,7 +1551,9 @@ function TradesPageContent() {
                               }}>
                                 {filteredParents.length === 0 ? (
                                   <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                    No matching trades found
+                                    {laterMatch
+                                      ? `Ticket #${laterMatch.dealId} opened after this trade, so it can't be its parent. Open #${laterMatch.dealId} and mark it as a re-entry of this one.`
+                                      : 'No matching trades found'}
                                   </div>
                                 ) : (
                                   filteredParents.map(p => {

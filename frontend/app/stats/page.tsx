@@ -611,6 +611,7 @@ export default function StatsPage() {
                     formatter={(v: any) => [`$${Number(v).toFixed(2)}`, 'Volume']}
                     contentStyle={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:10 }}
                     itemStyle={{ color:'var(--text-primary)' }}
+                    labelStyle={{ color:'var(--text-primary)' }}
                   />
                 </PieChart>
               </ResponsiveContainer>

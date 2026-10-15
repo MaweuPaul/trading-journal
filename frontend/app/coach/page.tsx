@@ -647,7 +647,7 @@ export default function CoachPage() {
                   <BarChart data={data!.confidenceVsWinRate} barCategoryGap="30%">
                     <XAxis dataKey="confidence" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} label={{ value: 'Confidence', position: 'insideBottom', offset: -2, fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
-                    <Tooltip formatter={(v: any) => [`${v}%`, 'Win Rate']} contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
+                    <Tooltip formatter={(v: any) => [`${v}%`, 'Win Rate']} contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} labelStyle={{ color: 'var(--text-primary)' }} itemStyle={{ color: 'var(--text-primary)' }} cursor={{ fill: 'var(--bg-hover)' }} />
                     <Bar dataKey="winRate" radius={[6, 6, 0, 0]}>
                       {data!.confidenceVsWinRate.map((entry, i) => (
                         <Cell key={i} fill={entry.winRate >= 60 ? '#10b981' : entry.winRate >= 45 ? '#f59e0b' : '#ef4444'} />

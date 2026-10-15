@@ -191,7 +191,14 @@ function priceR(trade: { direction: string; entryPrice: number; exitPrice: numbe
   return ((trade.exitPrice - trade.entryPrice) * sign) / risk;
 }
 
-const fmtR = (r: number) => `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
+// Trades on the same symbol and side opened this close together count as one trade on several accounts.
+const TWIN_WINDOW_MS = 15 * 60 * 1000;
+/** Anything journaled worth copying (matches hasJournal in backend/lib/journalCopy.js). */
+const hasJournal = (t: Trade) => Boolean(
+  (t.notes || '').trim() || t.analysisGrade || t.executionGrade || t.grade || t.playbookSnapshot || t.primarySetup || t.emotion
+  || (t.tags || []).length || (t.setupConfirmations || []).length || (t.screenshots || []).length,
+);
+const fmtR = (r: number) =>`${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
 
 function formatDuration(mins: number) {
   if (mins < 60) return `${mins}m`;
@@ -314,6 +321,9 @@ function TradesPageContent() {
   const [showParentDropdown, setShowParentDropdown] = useState(false);
   // Every trade on the symbol, not just this page: a parent can be pages back.
   const [symbolTrades, setSymbolTrades] = useState<{ symbol: string; trades: Trade[] } | null>(null);
+  // The same trade taken on other accounts (same symbol and side, opened within minutes).
+  const [twinTrades, setTwinTrades] = useState<{ id: string; trades: Trade[] } | null>(null);
+  const [copyingJournal, setCopyingJournal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [draftPlaybookSnapshot, setDraftPlaybookSnapshot] = useState<PlaybookSnapshot | null>(null);
   const [draftPlaybookResponses, setDraftPlaybookResponses] = useState<Record<string, unknown>>({});
@@ -477,6 +487,58 @@ function TradesPageContent() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [reEntrySymbol, symbolTrades?.symbol]);
+
+  const twinSource = selectedTrade && twinTrades?.id !== selectedTrade._id ? selectedTrade : null;
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!twinSource || !token) return;
+    const day = 24 * 60 * 60 * 1000;
+    const opened = new Date(twinSource.openTime).getTime();
+    const params = new URLSearchParams({
+      symbol: twinSource.symbol, direction: twinSource.direction, limit: '100',
+      from: new Date(opened - day).toISOString(), to: new Date(new Date(twinSource.closeTime).getTime() + day).toISOString(),
+    });
+    let cancelled = false;
+    fetch(`${API}/trades?${params}`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : { trades: [] }))
+      .then(data => {
+        if (cancelled) return;
+        const twins = (data.trades || []).filter((t: Trade) =>
+          t._id !== twinSource._id && Math.abs(new Date(t.openTime).getTime() - opened) <= TWIN_WINDOW_MS);
+        setTwinTrades({ id: twinSource._id, trades: twins });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [twinSource]);
+
+  const copyJournal = async (fromTradeId: string, toTradeIds: string[]) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    setCopyingJournal(true);
+    try {
+      const copied: Trade[] = [];
+      for (const id of toTradeIds) {
+        const res = await fetch(`${API}/trades/${id}/copy-journal`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ fromTradeId }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Could not copy the journal');
+        copied.push(body);
+      }
+      const byId = new Map(copied.map(t => [t._id, t]));
+      setTrades(prev => prev.map(t => byId.get(t._id) || t));
+      setTwinTrades(prev => prev && { ...prev, trades: prev.trades.map(t => byId.get(t._id) || t) });
+      // Copied onto the open trade: show what came across.
+      const open = selectedTrade && byId.get(selectedTrade._id);
+      if (open) handleRowClick(open);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not copy the journal');
+    } finally {
+      setCopyingJournal(false);
+    }
+  };
 
   useEffect(() => {
     const requestedId = searchParams.get('replay') || searchParams.get('trade');
@@ -1110,6 +1172,53 @@ function TradesPageContent() {
                   </div>
                 </div>
               </div>
+
+              {/* Same trade on other accounts: copy the journal across instead of redoing it. */}
+              {twinTrades?.id === selectedTrade._id && twinTrades.trades.length > 0 && (() => {
+                const twins = twinTrades.trades;
+                const thisHasJournal = hasJournal(selectedTrade);
+                const accountOf = (t: Trade) => t.accountName || t.accountKey || 'Unassigned account';
+                return (
+                  <div className="drawer-section" style={{ padding: '12px 16px', borderRadius: 10, border: '1px solid var(--border)' }}>
+                    <span className="drawer-section-title"><Copy size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Same trade on other accounts</span>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                      {selectedTrade.symbol} {selectedTrade.direction.toLowerCase()} opened within 15 minutes. Copy the grades, notes, playbook answers and screenshots across; stops and P&L stay each account&apos;s own.
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {twins.map(t => (
+                        <div key={t._id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border)', fontSize: 11 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{accountOf(t)}</div>
+                            <div style={{ color: 'var(--text-muted)' }}>
+                              #{t.dealId} · {t.lotSize.toFixed(2)} lots · {formatDate(t.openTime)} ·{' '}
+                              <span style={{ color: hasJournal(t) ? '#10b981' : 'var(--text-muted)' }}>{hasJournal(t) ? 'journaled' : 'no journal'}</span>
+                            </div>
+                          </div>
+                          {hasJournal(t) && (
+                            <button type="button" className="btn btn-ghost" disabled={copyingJournal} style={{ fontSize: 11, padding: '4px 10px', whiteSpace: 'nowrap' }}
+                              onClick={() => {
+                                if (thisHasJournal && !confirm(`Replace this trade's journal with the one from #${t.dealId}?`)) return;
+                                copyJournal(t._id, [selectedTrade._id]);
+                              }}>
+                              Copy from this
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {thisHasJournal && (
+                      <button type="button" className="btn btn-ghost" disabled={copyingJournal} style={{ marginTop: 8, fontSize: 11, padding: '5px 10px' }}
+                        onClick={() => {
+                          const replacing = twins.filter(hasJournal).length;
+                          if (!confirm(`Copy this trade's saved journal to ${twins.length === 1 ? 'the other trade' : `all ${twins.length} trades`}?${replacing ? ` ${replacing} already ${replacing === 1 ? 'has a journal that' : 'have journals that'} will be replaced.` : ''} Unsaved changes here aren't included.`)) return;
+                          copyJournal(selectedTrade._id, twins.map(t => t._id));
+                        }}>
+                        {copyingJournal ? 'Copying…' : `Copy this journal to ${twins.length === 1 ? 'it' : `all ${twins.length}`}`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Re-entries roll their PnL up into the parent's journal instead of
                   keeping their own -- nothing to fill in, so the whole Edge Coach /

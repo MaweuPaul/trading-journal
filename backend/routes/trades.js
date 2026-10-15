@@ -21,6 +21,7 @@ const {
 } = require('../lib/tradeAccounts');
 const { calculateMissedProfit, summarizeRMultiples, realizedRMultiple } = require('../lib/tradeMath');
 const { isLossSideStop, riskFromStop } = require('../lib/tradeRisk');
+const { hasJournal, journalCopyUpdate } = require('../lib/journalCopy');
 const { confidenceFor } = require('../lib/confidence');
 const { getTrendbars: getCTraderTrendbars } = require('../lib/ctraderReplay');
 const { importMt5Statement } = require('../lib/mt5StatementImport');
@@ -2411,6 +2412,38 @@ router.put('/trades/:id', auth, ownerOnly, async (req, res) => {
   }
 });
 
+// POST /api/trades/:id/copy-journal  { fromTradeId }
+// Copies another trade's journal (grades, notes, playbook answers,
+// screenshots...) onto this one -- the same trade taken on another account.
+router.post('/trades/:id/copy-journal', auth, ownerOnly, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'Copying a journal requires the database to be connected.' });
+    }
+    const fromTradeId = String(req.body?.fromTradeId || '');
+    if (!mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(fromTradeId)) {
+      return res.status(400).json({ error: 'Both trades are required.' });
+    }
+    if (fromTradeId === req.params.id) return res.status(400).json({ error: 'Pick a different trade to copy from.' });
+    const [source, target] = await Promise.all([
+      Trade.findOne({ _id: fromTradeId, user: req.user.userId }).lean(),
+      Trade.findOne({ _id: req.params.id, user: req.user.userId }).lean(),
+    ]);
+    if (!source || !target) return res.status(404).json({ error: 'Trade not found' });
+    if (!hasJournal(source)) return res.status(400).json({ error: 'That trade has no journal to copy yet.' });
+
+    const updated = await Trade.findOneAndUpdate(
+      { _id: target._id, user: req.user.userId },
+      { $set: journalCopyUpdate(source, target) },
+      { new: true },
+    );
+    syncLocalTrade(updated);
+    res.json(updated);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // POST /api/trades/:id/screenshots  upload a manually captured chart screenshot
 router.post('/trades/:id/screenshots', auth, ownerOnly, async (req, res) => {
   try {
@@ -2604,7 +2637,11 @@ router.delete('/trades/:id/screenshots/:screenshotId', auth, ownerOnly, async (r
       return res.status(404).json({ error: 'Screenshot not found' });
     }
 
-    if (CLOUDINARY_READY && screenshot.publicId) {
+    // A copied journal shares the image with another trade: keep the file until no trade uses it.
+    const sharedElsewhere = screenshot.publicId && await Trade.exists({
+      _id: { $ne: trade._id }, user: req.user.userId, 'screenshots.publicId': screenshot.publicId,
+    });
+    if (CLOUDINARY_READY && screenshot.publicId && !sharedElsewhere) {
       await cloudinary.uploader.destroy(screenshot.publicId, { resource_type: 'image' });
     }
 

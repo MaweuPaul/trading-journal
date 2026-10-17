@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../backtest/BacktestShell';
 
 export interface DrawingPropertiesCapabilities {
@@ -68,6 +68,9 @@ function clampPercent(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+// Where the panel was last dragged to (offset from its centred spot), so it reopens there.
+let lastOffset = { x: 0, y: 0 };
+
 export default function DrawingPropertiesPanel({
   drawingName,
   isNew = false,
@@ -86,6 +89,42 @@ export default function DrawingPropertiesPanel({
   const [activeTab, setActiveTab] = useState<TabId>(tabs.some(tab => tab.id === initialTab) ? initialTab! : tabs[0]?.id ?? 'style');
   const [draft, setDraft] = useState(value);
   const textRef = useRef<HTMLTextAreaElement>(null);
+
+  // Drag by the title bar, kept inside the chart so it can't be lost off-screen.
+  // The position is written straight onto the form, so moving doesn't re-render the panel.
+  const formRef = useRef<HTMLFormElement>(null);
+  const offset = useRef(lastOffset);
+  const drag = useRef<{ pointerId: number; startX: number; startY: number; from: { x: number; y: number } } | null>(null);
+  const moveTo = (next: { x: number; y: number }) => {
+    const form = formRef.current, area = form?.parentElement;
+    if (!form || !area) return;
+    const a = area.getBoundingClientRect(), f = form.getBoundingClientRect();
+    // Where the form sits with no offset: its current box minus the current offset.
+    const baseLeft = f.left - offset.current.x, baseTop = f.top - offset.current.y;
+    offset.current = {
+      x: Math.min(Math.max(next.x, a.left - baseLeft), a.right - f.width - baseLeft),
+      y: Math.min(Math.max(next.y, a.top - baseTop), Math.max(a.top - baseTop, a.bottom - f.height - baseTop)),
+    };
+    form.style.transform = `translate(${offset.current.x}px, ${offset.current.y}px)`;
+  };
+  // A remembered spot may not fit a smaller chart (or the dual-chart pane): pull it back in.
+  useLayoutEffect(() => { moveTo(offset.current); }, []);
+  const onDragStart = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, from: offset.current };
+  };
+  const onDragMove = (event: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d || d.pointerId !== event.pointerId) return;
+    moveTo({ x: d.from.x + event.clientX - d.startX, y: d.from.y + event.clientY - d.startY });
+  };
+  const onDragEnd = (event: PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    lastOffset = offset.current;
+  };
 
   useEffect(() => {
     if (activeTab !== 'text') return;
@@ -177,9 +216,13 @@ export default function DrawingPropertiesPanel({
         onSubmit={submit}
         onMouseDown={stopChartInteraction}
         onClick={stopChartInteraction}
+        ref={formRef}
         className="tw:relative tw:w-full tw:max-w-[420px] tw:overflow-hidden tw:rounded-xl tw:border tw:border-outline-variant tw:bg-surface-container-lowest tw:shadow-2xl"
       >
-        <div className="tw:flex tw:items-center tw:justify-between tw:gap-3 tw:px-5 tw:pt-4">
+        <div
+          onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}
+          title="Drag to move"
+          className="tw:flex tw:items-center tw:justify-between tw:gap-3 tw:px-5 tw:pt-4 tw:pb-1 tw:cursor-move tw:select-none tw:touch-none">
           <h3 id="drawing-properties-title" className="tw:truncate tw:text-base tw:font-semibold tw:text-on-surface">
             {drawingName}
           </h3>

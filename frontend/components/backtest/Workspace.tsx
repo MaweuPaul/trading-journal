@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
-  createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
+  createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, MouseEventParams, Time } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, MouseEventParams, SeriesMarker, Time } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
@@ -124,7 +124,16 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // A drawing being placed: `placed` anchors are fixed, the rest follow the
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
-interface Indicators { ema: boolean; rsi: boolean; volume: boolean }
+interface Indicators { ema: boolean; rsi: boolean; volume: boolean; news: boolean }
+/** An economic calendar release from /api/news (high or medium impact). */
+interface NewsEvent { currency: string; name: string; impact: 'High' | 'Medium'; time: string; actual: string | number | null; forecast: string | number | null; previous: string | number | null }
+const newsValue = (v: string | number | null) => (v == null ? '—' : String(v));
+/** Index of the last candle opening at or before `sec`, or -1. */
+function candleIndexAt(list: { time: unknown }[], sec: number, last = list.length - 1) {
+  let lo = 0, hi = last, found = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (Number(list[mid].time) <= sec) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+  return found;
+}
 interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
 function drawingDisplayName(type: string) {
   return WORKSPACE_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
@@ -186,6 +195,7 @@ export default function Workspace() {
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const emaRefs = useRef<ISeriesApi<'Line'>[]>([]);
   const rsiRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const newsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const managerRef = useRef<DrawingManager | null>(null);
 
   // ── Session autosave ─────────────────────────────────────────────────────
@@ -270,7 +280,7 @@ export default function Workspace() {
 
   // ── Chart view extras ──────────────────────────────────────────────────────
   // EMAs only by default; RSI and volume stay available in the Indicators menu.
-  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false });
+  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false, news: true });
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -663,6 +673,7 @@ export default function Workspace() {
       priceLineColor: down, priceLineStyle: LineStyle.Dotted,
     });
     seriesRef.current = series;
+    newsMarkersRef.current = createSeriesMarkers(series, []);
     lineRef.current = chart.addSeries(LineSeries, { color: up, lineWidth: 2, visible: false, priceLineVisible: false, lastValueVisible: false });
     volumeRef.current = chart.addSeries(HistogramSeries, { priceScaleId: 'bt-volume', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
     chart.priceScale('bt-volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -864,6 +875,7 @@ export default function Workspace() {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
+      newsMarkersRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt per chartEpoch; replayIdx/interval are read as of that rebuild
   }, [chartEpoch, resolvedTheme]);
@@ -957,6 +969,58 @@ export default function Workspace() {
       else ts.setVisibleLogicalRange({ from: 0, to: span });
     }
   }, [candles, replayIdx, partial, indicatorData, resolvedTheme, indicators.rsi, interval, drawingCount]);
+
+  // ── Economic calendar ──────────────────────────────────────────────────────
+  // Events for the loaded candles (and a week past them, for "next up").
+  const [news, setNews] = useState<{ key: string; events: (NewsEvent & { ms: number })[]; configured: boolean } | null>(null);
+  const newsSymbol = symbol.trim().toUpperCase();
+  const newsFrom = candles?.length ? Number(candles[0].time) * 1000 : null;
+  const newsTo = candles?.length ? Number(candles[candles.length - 1].time) * 1000 + 7 * DAY : null;
+  const newsKey = newsFrom != null && newsTo != null ? `${newsSymbol}|${newsFrom}|${newsTo}` : '';
+  useEffect(() => {
+    if (!newsKey || news?.key === newsKey) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ symbol: newsSymbol, from: new Date(newsFrom!).toISOString(), to: new Date(newsTo!).toISOString() });
+    fetch(`/api/news?${params}`, { headers: authHeaders() })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data) return;
+        const events = (data.events as NewsEvent[]).map(e => ({ ...e, ms: new Date(e.time).getTime() }));
+        setNews({ key: newsKey, events, configured: Boolean(data.status?.configured) });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [newsKey, newsSymbol, newsFrom, newsTo, news?.key]);
+
+  // The replay clock: the end of the latest revealed candle. Nothing past it
+  // is known yet -- a release's actual number stays hidden until then.
+  const clockMs = candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null;
+  // Released events, grouped by the candle they landed in.
+  const newsByCandle = useMemo(() => {
+    const out = new Map<number, (NewsEvent & { ms: number })[]>();
+    if (!candles || !news || clockMs == null) return out;
+    for (const e of news.events) {
+      if (e.ms >= clockMs) break; // sorted by time
+      const i = candleIndexAt(candles, e.ms / 1000, replayIdx);
+      if (i < 0) continue;
+      out.set(i, [...(out.get(i) || []), e]);
+    }
+    return out;
+  }, [candles, news, clockMs, replayIdx]);
+  useEffect(() => {
+    const plugin = newsMarkersRef.current;
+    if (!plugin || !candles) return;
+    if (!indicators.news) { plugin.setMarkers([]); return; }
+    const markers: SeriesMarker<Time>[] = [...newsByCandle.entries()].sort((a, b) => a[0] - b[0]).map(([i, list]) => {
+      const high = list.filter(e => e.impact === 'High');
+      return {
+        time: candles[i].time as Time, position: 'aboveBar', shape: 'circle', size: high.length ? 1 : 0.6,
+        color: high.length ? '#ef4444' : '#f59e0b',
+        text: [...new Set(high.map(e => e.currency))].join(' '),
+      };
+    });
+    plugin.setMarkers(markers);
+  }, [newsByCandle, candles, indicators.news, chartEpoch]);
 
   // Right-click menu on the chart.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
@@ -1477,6 +1541,12 @@ export default function Workspace() {
   const sessionChangePct = candles && current && candles[analysisStartIdx] ? ((current.close - candles[analysisStartIdx].open) / candles[analysisStartIdx].open) * 100 : 0;
   const emaValues = indicatorData && legendIdx >= 0 ? indicatorData.emas.map(v => v[legendIdx]) : [];
   const rsiValue = indicatorData && legendIdx >= 0 ? indicatorData.rsi[legendIdx] : null;
+  // News for the legend: what was released in the candle under the cursor, or else what's next.
+  const legendNews = indicators.news && legendIdx >= 0 ? newsByCandle.get(legendIdx) ?? [] : [];
+  const nextNews = indicators.news && !legendNews.length && news && clockMs != null
+    ? news.events.find(e => e.ms >= clockMs && e.ms - clockMs <= DAY && e.impact === 'High') ?? null
+    : null;
+  const untilText = (ms: number) => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
   const rr = openTrade?.takeProfit != null ? Math.abs(openTrade.takeProfit - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss) : 0;
   const up = (n: number) => (n >= 0 ? 'tw:text-secondary' : 'tw:text-error');
   const tradeLocked = Boolean(openTrade || closedTrade);
@@ -1583,11 +1653,11 @@ export default function Workspace() {
             <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
               className="tw:flex tw:items-center tw:gap-1 tw:px-2 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:text-on-surface-variant tw:hover:text-on-surface tw:transition">
               <Icon name="tune" className="tw:text-[15px] tw:text-primary" />
-              <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0)})</span>
+              <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0)})</span>
             </button>
             {showIndicatorMenu && (
               <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-40 tw:w-52 tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume']] as const).map(([k, label]) => (
+                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News (high / medium)']] as const).map(([k, label]) => (
                   <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                     <span>{label}</span>
                     <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
@@ -1726,6 +1796,26 @@ export default function Workspace() {
               </div>
             ))}
           </div>
+        )}
+        {legendNews.length > 0 && (
+          <div className="tw:flex tw:items-center tw:gap-1.5 tw:text-[10px] tw:pl-2 tw:border-l tw:border-outline-variant tw:min-w-0 tw:overflow-hidden tw:text-ellipsis" title={legendNews.map(e => `${e.currency} ${e.name} (${e.impact}) · Actual ${newsValue(e.actual)} · Forecast ${newsValue(e.forecast)} · Previous ${newsValue(e.previous)}`).join(' | ')}>
+            <span className="tw:w-2 tw:h-2 tw:rounded-full tw:shrink-0" style={{ background: legendNews.some(e => e.impact === 'High') ? '#ef4444' : '#f59e0b' }} />
+            {legendNews.slice(0, 2).map((e, k) => (
+              <span key={k} className="tw:text-on-surface">
+                {e.currency} {e.name} <span className="tw:text-on-surface-variant">A {newsValue(e.actual)} · F {newsValue(e.forecast)} · P {newsValue(e.previous)}</span>
+              </span>
+            ))}
+            {legendNews.length > 2 && <span className="tw:text-on-surface-variant">+{legendNews.length - 2} more</span>}
+          </div>
+        )}
+        {nextNews && clockMs != null && (
+          <div className="tw:flex tw:items-center tw:gap-1.5 tw:text-[10px] tw:pl-2 tw:border-l tw:border-outline-variant tw:text-on-surface-variant" title={`Forecast ${newsValue(nextNews.forecast)} · Previous ${newsValue(nextNews.previous)}`}>
+            <span className="tw:w-2 tw:h-2 tw:rounded-full tw:border tw:border-[#ef4444] tw:shrink-0" />
+            Next: <span className="tw:text-on-surface">{nextNews.currency} {nextNews.name}</span> in {untilText(nextNews.ms - clockMs)}
+          </div>
+        )}
+        {indicators.news && news && !news.configured && !news.events.length && (
+          <span className="tw:text-[10px] tw:text-on-surface-variant tw:pl-2 tw:border-l tw:border-outline-variant">News calendar not set up</span>
         )}
       </div>
     </div>
@@ -1948,11 +2038,11 @@ export default function Workspace() {
                 <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
                   className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-high tw:hover:bg-surface-bright tw:px-space-sm tw:py-1 tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action">
                   <Icon name="tune" className="tw:text-[15px] tw:text-primary" />
-                  <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0)})</span>
+                  <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0)})</span>
                 </button>
                 {showIndicatorMenu && (
                   <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-30 tw:w-52 tw:bg-surface-container-high tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume']] as const).map(([k, label]) => (
+                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News (high / medium)']] as const).map(([k, label]) => (
                       <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                         <span>{label}</span>
                         <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />

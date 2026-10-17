@@ -396,6 +396,7 @@ export default function ManualPage() {
               <li>Pick a <b>symbol</b>, a past <b>date range</b>, and a <b>timeframe</b>, then Load Chart. The Historical Bar Replay bar steps candle-by-candle (or auto-plays at 0.5x–10x) up to that point in history.</li>
               <li><b>+ Long</b> / <b>+ Short</b> places a hypothetical position at a clicked price with a risk amount you set; <b>Log Setup</b> saves the outcome once it&apos;s closed.</li>
               <li><b>Indicators</b> — EMA 20/50/200, RSI (14), and Volume, toggled independently — plus a candlestick/line chart-type switch and price alerts.</li>
+              <li><b>News</b> — high-impact (red) and medium-impact (orange) economic releases from the Forex Factory calendar, marked on the candle they landed in, for the currencies that move the symbol (both sides of a pair; USD for US indices, gold and oil). Hover a marked candle to read the event with its actual, forecast and previous numbers; the legend also shows the next high-impact release coming up. Nothing leaks ahead of the replay: a release appears only once replay passes its time. Turn it off under Indicators.</li>
               <li>Full drawing toolset: trend line, ray, horizontal line, rectangle/zone, parallel channel, Fibonacci retracement/extension, arrow, measure, and text notes, with undo/clear and a color picker.</li>
               <li>A session — chart position, drawings, and any open hypothetical trade — <b>autosaves</b> locally; leaving mid-backtest offers to resume it next time.</li>
             </ul>

@@ -11,6 +11,8 @@ const { ipKey } = require('./lib/clientIp');
 const { convertCTraderPnlToGross } = require('./lib/ctraderPnl');
 
 const tradesRouter = require('./routes/trades');
+const newsRouter = require('./routes/news');
+const { startNewsSync } = require('./lib/newsSync');
 const authRouter = require('./routes/auth');
 const tradingAccountsRouter = require('./routes/tradingAccounts');
 const ctraderRouter = require('./routes/ctrader');
@@ -87,6 +89,7 @@ app.use('/api', apiKeysRouter);
 app.use('/api', mcpRouter);
 app.use('/api', oauthRouter);
 app.use('/api', tradesRouter);
+app.use('/api', newsRouter);
 
 // Desktop Sync Agent download — serves the newest built .zip from
 // desktop-py/release, which (unlike the git-ignored dist/build folders) is
@@ -163,6 +166,9 @@ if (!process.env.MONGODB_URI) {
     .connect(process.env.MONGODB_URI, dbName ? { dbName } : {})
     .then(async () => {
       console.log(` MongoDB connected — using database "${mongoose.connection.name}"${useTestDatabase ? ' (TEST -- USE_TEST_DATABASE is set)' : ''}`);
+
+      // Economic calendar for the charts (only with JBLANKED_API_KEY set).
+      startNewsSync();
 
       // Optionally seed the very first account from environment variables
       // (useful for a scripted first deploy); otherwise the database starts

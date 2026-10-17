@@ -214,7 +214,7 @@ export default function ManualPage() {
             </aside>
             <div className="manual-sub">How trades get in</div>
             <ul className="manual-feature-list">
-              <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history.</li>
+              <li><b>MT5</b> — via the free <b>Desktop Sync App</b>, a small Windows program that logs into your MT5 terminal in the background and pushes closed trades to your journal. It never places trades; it only reads history. On Linux, a setup script does the same job (beta, see Accounts &amp; syncing).</li>
               <li><b>cTrader</b> — via an official OAuth connection. You approve access on cTrader&apos;s own site, and the journal pulls trade history, balances, and candlestick data directly from cTrader&apos;s API — no desktop app needed. Trade Replay, AI backtesting, and the Pre-Trade chart use cTrader candles, even when your trade history comes from MT5.</li>
               <li><b>MT5 statement import</b> — for MT5 on a Mac, or without the Windows app. Save a report in MT5 (History → right-click → Report → HTML) and upload it on the Trades page. Import again whenever you want newer trades; the ones already in your journal are skipped.</li>
             </ul>
@@ -573,6 +573,12 @@ export default function ManualPage() {
               <li><b>Generate your sync key</b><span className="d">Under &quot;Your personal sync key,&quot; click Generate / rotate. It&apos;s shown once — copy it immediately.</span></li>
               <li><b>Install the Desktop Sync App</b><span className="d">Download it, paste in your sync key, and click Start Sync. The account record alone doesn&apos;t sync anything by itself.</span></li>
             </ol>
+            <div className="manual-sub">MT5 on Linux (beta)</div>
+            <ul className="manual-feature-list">
+              <li>MetaTrader 5 runs on Linux through Wine (MetaQuotes&apos; Linux installer sets it up). On the Accounts page, <b>Download for Linux (beta)</b> gives you a setup script, <code>tradejournal-linux.sh</code>.</li>
+              <li>Run <code>bash tradejournal-linux.sh</code> in a terminal and paste your sync key when asked. It installs Windows Python into MT5&apos;s Wine setup and runs the same sync as the Windows app as a background service, so trades keep syncing whenever you&apos;re logged in and MT5 is open.</li>
+              <li>Other commands: <code>status</code> (is it running?), <code>logs</code> (watch it sync), <code>update</code> (get the newest sync), <code>stop</code> / <code>start</code>, and <code>uninstall</code>. Without systemd, <code>run</code> syncs in that terminal for as long as it&apos;s open.</li>
+            </ul>
             <div className="manual-sub">MT5 without Windows (statement import)</div>
             <ul className="manual-feature-list">
               <li>On a Mac, the Desktop Sync App can&apos;t run. Use <b>Import MT5 statement</b> on the Trades page instead: the first import creates an account card marked <b>MT5 · statement import</b>, and later imports of the same account number add only new trades.</li>

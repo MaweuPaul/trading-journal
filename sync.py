@@ -38,6 +38,8 @@ API_BASE      = os.getenv("API_BASE", "http://localhost:4000/api")
 API_TIMEOUT   = int(os.getenv("API_TIMEOUT", "60"))
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
 SYNC_SECRET   = os.getenv("SYNC_SECRET", "")
+# terminal64.exe to attach to (set by the Linux/Wine setup); blank finds the running terminal.
+MT5_PATH      = os.getenv("MT5_PATH", "").strip()
 LEGACY_SYMBOL_ALIASES = os.getenv("MT5_SYMBOL_ALIASES", "")
 
 JWT_TOKEN = None
@@ -91,7 +93,7 @@ def connect_mt5(account=None):
     password = ACTIVE_ACCOUNT.get("password", "")
     server = ACTIVE_ACCOUNT.get("server", "")
     with MT5_LOCK:
-        if not mt5.initialize():
+        if not (mt5.initialize(path=MT5_PATH) if MT5_PATH else mt5.initialize()):
             log.error("[MT5] mt5.initialize() failed -- is MetaTrader 5 running? Error: %s", mt5.last_error())
             return False
 

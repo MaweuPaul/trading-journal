@@ -112,6 +112,16 @@ app.get('/api/downloads/sync-agent', (req, res) => {
   res.download(path.join(distDir, installerFile), installerFile);
 });
 
+// Linux (beta): MT5 runs under Wine there, so instead of an app this setup
+// script installs Windows Python into MT5's Wine prefix and runs sync.py as a
+// background user service. The script downloads sync.py from the route below.
+app.get('/api/downloads/sync-linux', (req, res) => {
+  res.download(path.join(__dirname, '..', 'desktop-linux', 'tradejournal-linux.sh'), 'tradejournal-linux.sh');
+});
+app.get('/api/downloads/sync-script', (req, res) => {
+  res.type('text/x-python').sendFile(path.join(__dirname, '..', 'sync.py'));
+});
+
 // Lets the installed Sync Agent check whether a newer build exists, so it
 // can show an "Update available" banner instead of silently going stale.
 app.get('/api/downloads/sync-agent-version', (req, res) => {

@@ -458,7 +458,17 @@ export default function TradingAccountsPage() {
             <DownloadCloud size={14} /> Download for Windows
           </a>
           <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
-            <strong style={{ color: 'var(--text-secondary)' }}>On a Mac?</strong> The app only runs on Windows. Instead, save a report in MT5 (History → right-click → Report → HTML) and upload it with <strong>Import MT5 statement</strong> on the Trades page. Import again whenever you want new trades; ones already in your journal are skipped.
+            <strong style={{ color: 'var(--text-secondary)' }}>On Linux? (beta)</strong> With MetaTrader 5 installed through Wine (MetaQuotes&apos; Linux installer), download the setup script, then in a terminal run <code>bash tradejournal-linux.sh</code> and paste your sync key when asked. It keeps syncing in the background while MT5 is open; <code>bash tradejournal-linux.sh status</code> shows whether it&apos;s running.
+          </p>
+          <a
+            href="/api/downloads/sync-linux"
+            className="btn-ghost"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 8, textDecoration: 'none' }}
+          >
+            <DownloadCloud size={14} /> Download for Linux (beta)
+          </a>
+          <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+            <strong style={{ color: 'var(--text-secondary)' }}>On a Mac?</strong> The app doesn&apos;t run on a Mac. Instead, save a report in MT5 (History → right-click → Report → HTML) and upload it with <strong>Import MT5 statement</strong> on the Trades page. Import again whenever you want new trades; ones already in your journal are skipped.
           </p>
         </div>
       </section>

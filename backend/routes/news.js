@@ -14,12 +14,13 @@ const DAY = 24 * 60 * 60 * 1000;
 // `symbol` (or `currencies=USD,EUR`), plus how far the calendar reaches.
 router.get('/news', auth, async (req, res) => {
   try {
-    const from = new Date(String(req.query.from || ''));
+    let from = new Date(String(req.query.from || ''));
     const to = new Date(String(req.query.to || ''));
     if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to < from) {
       return res.status(400).json({ error: 'from and to dates are required.' });
     }
-    if (to - from > 4 * 366 * DAY) return res.status(400).json({ error: 'Ask for at most four years at a time.' });
+    // A zoomed-out weekly chart can span many years: send the latest four.
+    if (to - from > 4 * 366 * DAY) from = new Date(to.getTime() - 4 * 366 * DAY);
     const currencies = req.query.currencies
       ? String(req.query.currencies).toUpperCase().split(',').map(s => s.trim()).filter(Boolean).slice(0, 10)
       : currenciesForSymbol(req.query.symbol);

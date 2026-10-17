@@ -125,6 +125,8 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean; news: boolean }
+/** How far the server's calendar has got (from /api/news). */
+interface NewsStatus { configured?: boolean; lastError?: string; months?: number; earliest?: string | null; latest?: string | null }
 /** An economic calendar release from /api/news (high or medium impact). */
 interface NewsEvent { currency: string; name: string; impact: 'High' | 'Medium'; time: string; actual: string | number | null; forecast: string | number | null; previous: string | number | null }
 const newsValue = (v: string | number | null) => (v == null ? '—' : String(v));
@@ -972,7 +974,7 @@ export default function Workspace() {
 
   // ── Economic calendar ──────────────────────────────────────────────────────
   // Events for the loaded candles (and a week past them, for "next up").
-  const [news, setNews] = useState<{ key: string; events: (NewsEvent & { ms: number })[]; configured: boolean } | null>(null);
+  const [news, setNews] = useState<{ key: string; events: (NewsEvent & { ms: number })[]; status: NewsStatus } | null>(null);
   const newsSymbol = symbol.trim().toUpperCase();
   const newsFrom = candles?.length ? Number(candles[0].time) * 1000 : null;
   const newsTo = candles?.length ? Number(candles[candles.length - 1].time) * 1000 + 7 * DAY : null;
@@ -986,7 +988,7 @@ export default function Workspace() {
       .then(data => {
         if (cancelled || !data) return;
         const events = (data.events as NewsEvent[]).map(e => ({ ...e, ms: new Date(e.time).getTime() }));
-        setNews({ key: newsKey, events, configured: Boolean(data.status?.configured) });
+        setNews({ key: newsKey, events, status: data.status || {} });
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -1814,8 +1816,13 @@ export default function Workspace() {
             Next: <span className="tw:text-on-surface">{nextNews.currency} {nextNews.name}</span> in {untilText(nextNews.ms - clockMs)}
           </div>
         )}
-        {indicators.news && news && !news.configured && !news.events.length && (
-          <span className="tw:text-[10px] tw:text-on-surface-variant tw:pl-2 tw:border-l tw:border-outline-variant">News calendar not set up</span>
+        {indicators.news && news && !news.events.length && (
+          <span className="tw:text-[10px] tw:text-on-surface-variant tw:pl-2 tw:border-l tw:border-outline-variant tw:truncate" title={news.status.lastError || undefined}>
+            {!news.status.configured ? 'News calendar not set up'
+              : news.status.lastError ? `News calendar error: ${news.status.lastError}`
+              : news.status.months ? `News calendar still loading: has ${news.status.earliest} to ${news.status.latest}`
+              : 'News calendar loading…'}
+          </span>
         )}
       </div>
     </div>

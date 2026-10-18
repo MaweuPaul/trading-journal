@@ -73,8 +73,8 @@ router.post('/news/import', auth, async (req, res) => {
     const csv = String(req.body?.csv || '');
     if (!csv.trim()) return res.status(400).json({ error: 'Choose the CSV file NewsExport.mq5 saved.' });
     const { events, clock, rows } = eventsFromExport(csv);
-    for (let i = 0; i < events.length; i += 1000) {
-      await NewsEvent.bulkWrite(events.slice(i, i + 1000).map(e => ({ updateOne: { filter: { key: e.key }, update: { $set: e }, upsert: true } })), { ordered: false });
+    for (let i = 0; i < events.length; i += 5000) { // ten years is ~56k events: few round trips
+      await NewsEvent.bulkWrite(events.slice(i, i + 5000).map(e => ({ updateOne: { filter: { key: e.key }, update: { $set: e }, upsert: true } })), { ordered: false });
     }
     const times = events.map(e => e.time.getTime());
     res.json({

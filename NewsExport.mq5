@@ -42,6 +42,34 @@ string CsvField(string text)
   }
 
 //+------------------------------------------------------------------+
+//| One currency's events in [from, to). MT5 loads its calendar on    |
+//| demand and times out (error 5401) on big or early requests, so    |
+//| ask a month at a time and retry a timeout after a pause.          |
+//| Returns the count, or -1 when the month couldn't be loaded.       |
+//+------------------------------------------------------------------+
+int LoadMonth(MqlCalendarValue &values[], const datetime from, const datetime to, const string currency)
+  {
+   for(int attempt = 1; attempt <= 6 && !IsStopped(); attempt++)
+     {
+      ResetLastError();
+      int count = CalendarValueHistory(values, from, to, NULL, currency);
+      int error = GetLastError();
+      if(count > 0)
+         return count;
+      if(error == 0 || error == ERR_CALENDAR_NO_DATA)
+         return 0;                                   // genuinely nothing that month
+      if(error != ERR_CALENDAR_TIMEOUT)
+        {
+         PrintFormat("⚠ %s %s: error %d", currency, TimeToString(from, TIME_DATE), error);
+         return -1;
+        }
+      Sleep(2000 * attempt);                         // calendar still downloading
+     }
+   PrintFormat("⚠ %s %s: calendar kept timing out", currency, TimeToString(from, TIME_DATE));
+   return -1;
+  }
+
+//+------------------------------------------------------------------+
 //| Script program start function                                    |
 //+------------------------------------------------------------------+
 void OnStart()
@@ -63,8 +91,9 @@ void OnStart()
    // Times are the broker's server time; TradeJournal works out the broker's clock on import.
    FileWriteString(file, "time,currency,importance,name,actual,forecast,previous\r\n");
 
-   int written = 0;
-   for(int c = 0; c < currencyCount; c++)
+   int written = 0, failedMonths = 0;
+   datetime until = TimeTradeServer() + 14 * 86400;   // and the next two weeks' schedule
+   for(int c = 0; c < currencyCount && !IsStopped(); c++)
      {
       string currency = currencies[c];
       StringTrimLeft(currency);
@@ -73,39 +102,56 @@ void OnStart()
       if(currency == "")
          continue;
 
-      MqlCalendarValue values[];
-      int count = CalendarValueHistory(values, InpFrom, 0, NULL, currency);
-      if(count <= 0)
-        {
-         Print("⚠ No calendar events for ", currency, " | Error: ", GetLastError());
-         continue;
-        }
-
       int kept = 0;
-      for(int i = 0; i < count; i++)
+      MqlDateTime start;
+      TimeToStruct(InpFrom, start);
+      start.day = 1; start.hour = 0; start.min = 0; start.sec = 0;
+      for(datetime monthFrom = StructToTime(start); monthFrom < until && !IsStopped(); )
         {
-         MqlCalendarEvent event;
-         if(!CalendarEventById(values[i].event_id, event))
-            continue;
-         if(event.importance != CALENDAR_IMPORTANCE_HIGH && event.importance != CALENDAR_IMPORTANCE_MODERATE)
-            continue;
+         MqlDateTime next;
+         TimeToStruct(monthFrom, next);
+         next.mon++;
+         if(next.mon > 12) { next.mon = 1; next.year++; }
+         datetime monthTo = StructToTime(next);
 
-         string line = TimeToString(values[i].time, TIME_DATE | TIME_MINUTES) + ","
-                       + currency + ","
-                       + (event.importance == CALENDAR_IMPORTANCE_HIGH ? "HIGH" : "MODERATE") + ","
-                       + CsvField(event.name) + ","
-                       + (values[i].HasActualValue()   ? CsvField(FormatValue(values[i].GetActualValue(), event))   : "") + ","
-                       + (values[i].HasForecastValue() ? CsvField(FormatValue(values[i].GetForecastValue(), event)) : "") + ","
-                       + (values[i].HasPreviousValue() ? CsvField(FormatValue(values[i].GetPreviousValue(), event)) : "");
-         FileWriteString(file, line + "\r\n");
-         kept++;
+         MqlCalendarValue values[];
+         int count = LoadMonth(values, monthFrom, monthTo, currency);
+         if(count < 0)
+            failedMonths++;
+         for(int i = 0; i < count; i++)
+           {
+            MqlCalendarEvent event;
+            if(!CalendarEventById(values[i].event_id, event))
+               continue;
+            if(event.importance != CALENDAR_IMPORTANCE_HIGH && event.importance != CALENDAR_IMPORTANCE_MODERATE)
+               continue;
+
+            string line = TimeToString(values[i].time, TIME_DATE | TIME_MINUTES) + ","
+                          + currency + ","
+                          + (event.importance == CALENDAR_IMPORTANCE_HIGH ? "HIGH" : "MODERATE") + ","
+                          + CsvField(event.name) + ","
+                          + (values[i].HasActualValue()   ? CsvField(FormatValue(values[i].GetActualValue(), event))   : "") + ","
+                          + (values[i].HasForecastValue() ? CsvField(FormatValue(values[i].GetForecastValue(), event)) : "") + ","
+                          + (values[i].HasPreviousValue() ? CsvField(FormatValue(values[i].GetPreviousValue(), event)) : "");
+            FileWriteString(file, line + "\r\n");
+            kept++;
+           }
+         monthFrom = monthTo;
         }
       written += kept;
       Print("📰 ", currency, ": ", kept, " high/medium events");
      }
 
    FileClose(file);
+   if(written == 0)
+     {
+      FileDelete(InpFile);
+      Print("❌ No events exported. Open the Calendar tab in the Toolbox (Ctrl+T), let it load, then run NewsExport again.");
+      return;
+     }
    Print("✅ Exported ", written, " events to ", TerminalInfoString(TERMINAL_DATA_PATH), "\\MQL5\\Files\\", InpFile);
+   if(failedMonths > 0)
+      Print("⚠ ", failedMonths, " currency-months couldn't be loaded (see above). Run it again to fill them in; importing twice never duplicates.");
    Print("   Upload it in TradeJournal: Backtest -> Indicators -> Import MT5 news history.");
   }
 //+------------------------------------------------------------------+

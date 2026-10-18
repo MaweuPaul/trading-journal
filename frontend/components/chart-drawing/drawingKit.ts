@@ -2,7 +2,7 @@
 // every chart with drawing tools (Backtest workspace, Pre-Trade Analysis,
 // Trade Replay), all on lightweight-charts-drawing so a drawing looks and
 // behaves the same everywhere. React wiring lives in useChartDrawings.ts.
-import { Drawing, getToolRegistry } from 'lightweight-charts-drawing';
+import { Drawing, TextAnnotation, getToolRegistry } from 'lightweight-charts-drawing';
 import type { IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import type { DrawingPropertiesCapabilities, DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
 
@@ -10,6 +10,74 @@ import type { DrawingPropertiesCapabilities, DrawingPropertiesValue } from '../b
 // auto-fit, so one old line far from price (even hidden or off screen)
 // squashes the candles. Like TradingView, fit the price scale to candles only.
 (Drawing.prototype as unknown as { autoscaleInfo: () => null }).autoscaleInfo = () => null;
+
+// The library draws a text note on one line (line breaks vanish) and sizes
+// its click area for one line. Draw each line of the note and hit-test the
+// whole block. The note's anchor is the middle of its first line.
+type Point = { x: number; y: number };
+type NoteInternals = {
+  textOptions: { text?: string; fontSize?: number; fontFamily?: string; fontWeight?: string; backgroundColor?: string; borderColor?: string; padding?: number };
+  style: { labelColor?: string; lineColor?: string };
+  options: { visible?: boolean };
+  state: string;
+  anchors: { time: unknown; price: number }[];
+  isValid(): boolean;
+  getViewport(): unknown;
+  anchorToPixel(anchor: unknown, viewport: unknown): Point | null;
+};
+const noteLines = (note: NoteInternals) => String(note.textOptions.text ?? '').split(/\r?\n/);
+/** The note's box in CSS pixels, measured with `ctx` when given (else estimated). */
+function noteBox(note: NoteInternals, anchor: Point, ctx?: CanvasRenderingContext2D) {
+  const o = note.textOptions, size = o.fontSize ?? 14, pad = o.padding ?? 8, lineH = size * 1.3;
+  const lines = noteLines(note);
+  const width = Math.max(...lines.map(line => (ctx ? ctx.measureText(line).width : line.length * size * 0.6)), size);
+  return { left: anchor.x - pad, top: anchor.y - lineH / 2 - pad, width: width + pad * 2, height: lines.length * lineH + pad * 2, lineH, lines };
+}
+const noteProto = TextAnnotation.prototype as unknown as {
+  paneViews(this: NoteInternals): unknown[];
+  testHit(this: NoteInternals, point: Point, viewport: unknown): boolean;
+};
+type PaneTarget = { useBitmapCoordinateSpace(fn: (scope: { context: CanvasRenderingContext2D; horizontalPixelRatio: number; verticalPixelRatio: number }) => void): void };
+function drawNote(note: NoteInternals, target: PaneTarget) {
+  target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+    const viewport = note.getViewport();
+    if (!viewport || note.options.visible === false || !note.isValid()) return;
+    const anchor = note.anchorToPixel(note.anchors[0], viewport);
+    if (!anchor) return;
+    const o = note.textOptions;
+    ctx.save();
+    ctx.scale(hr, vr); // draw in CSS pixels
+    ctx.font = `${o.fontWeight ?? 'normal'} ${o.fontSize ?? 14}px ${o.fontFamily ?? 'sans-serif'}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const box = noteBox(note, anchor, ctx);
+    ctx.beginPath();
+    ctx.roundRect(box.left, box.top, box.width, box.height, 4);
+    if (o.backgroundColor) { ctx.fillStyle = o.backgroundColor; ctx.fill(); }
+    if (o.borderColor) { ctx.strokeStyle = o.borderColor; ctx.lineWidth = 1; ctx.stroke(); }
+    ctx.fillStyle = note.style.labelColor ?? '#000000';
+    box.lines.forEach((line, i) => ctx.fillText(line, anchor.x, anchor.y + i * box.lineH));
+    if (note.state === 'selected' || note.state === 'editing') {
+      // The anchor handle (the note moves by dragging it, or its box).
+      ctx.beginPath();
+      ctx.arc(anchor.x, anchor.y, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.strokeStyle = o.borderColor || note.style.lineColor || '#3b82f6'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    ctx.restore();
+  });
+}
+noteProto.paneViews = function paneViews(this: NoteInternals) {
+  const renderer = { draw: (target: PaneTarget) => drawNote(this, target) };
+  return [{ zOrder: () => 'top', renderer: () => renderer }];
+};
+noteProto.testHit = function testHit(this: NoteInternals, point: Point, viewport: unknown) {
+  if (!this.isValid()) return false;
+  const anchor = this.anchorToPixel(this.anchors[0], viewport);
+  if (!anchor) return false;
+  const box = noteBox(this, anchor);
+  return point.x >= box.left && point.x <= box.left + box.width && point.y >= box.top && point.y <= box.top + box.height;
+};
 
 /** Drawing tools, in toolbar order. `icon` is a Material Symbols name. */
 export const DRAWING_TOOLS: { id: string; icon: string; label: string }[] = [

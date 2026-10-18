@@ -22,6 +22,7 @@ import {
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, sizeTrade,
   findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
+  rAt, totalR, openFraction, bankedR, outcomeForR,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
@@ -1244,11 +1245,9 @@ export default function Workspace() {
     const trade = openTrade;
     const close = (which: 'sl' | 'tp') => {
       const exitPrice = which === 'sl' ? trade.stopLoss : trade.takeProfit!;
-      const outcome: ClosedTrade['outcome'] = which === 'tp' ? 'win'
-        : (trade.direction === 'long' ? trade.stopLoss >= trade.entryPrice : trade.stopLoss <= trade.entryPrice) ? 'breakeven' : 'loss';
-      const riskPerUnit = trade.direction === 'long' ? trade.entryPrice - trade.stopLoss : trade.stopLoss - trade.entryPrice;
-      const gainPerUnit = trade.direction === 'long' ? exitPrice - trade.entryPrice : trade.entryPrice - exitPrice;
-      const rMultiple = riskPerUnit !== 0 ? gainPerUnit / riskPerUnit : 0;
+      // The whole position: profit already banked by partials plus the rest at this exit.
+      const rMultiple = totalR(trade, exitPrice);
+      const outcome = outcomeForR(rMultiple);
       setPlaying(false);
       setClosedTrade(prev => prev ?? { ...trade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * trade.riskAmount });
       setShowCloseout(true);
@@ -1277,19 +1276,45 @@ export default function Workspace() {
   const unrealizedR = useMemo(() => {
     if (!openTrade || !candles) return 0;
     const px = (partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx])?.close ?? openTrade.entryPrice;
-    const risk = Math.abs(openTrade.entryPrice - openTrade.stopLoss);
-    const gain = openTrade.direction === 'long' ? px - openTrade.entryPrice : openTrade.entryPrice - px;
-    return risk ? gain / risk : 0;
+    return totalR(openTrade, px);
   }, [openTrade, candles, replayIdx, partial]);
+
+  // The trade is live once replay has moved past its entry candle: its size
+  // and 1R are fixed from then on, and it can be managed -- partial profits,
+  // the stop moved to break-even or trailed.
+  const liveCandle = openTrade && !closedTrade ? barAt(Math.min(replayIdx, (candles?.length ?? 1) - 1)) : null;
+  const tradeLive = Boolean(openTrade && liveCandle && Number(liveCandle.time) > openTrade.entryTime);
+  const livePrice = tradeLive ? liveCandle!.close : undefined;
+  useEffect(() => {
+    if (!tradeLive || !openTrade || openTrade.initialStop != null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fix 1R the moment the trade goes live
+    setOpenTrade({ ...openTrade, initialStop: openTrade.stopLoss });
+  }, [tradeLive, openTrade]);
 
   const closeTradeNow = () => {
     if (!candles || !openTrade) return;
     const candle = barAt(replayIdx); if (!candle) return;
     const exitPrice = candle.close;
-    const outcome: ClosedTrade['outcome'] = Math.abs(exitPrice - openTrade.entryPrice) < 1e-9 ? 'breakeven' : unrealizedR > 0 ? 'win' : 'loss';
+    const rMultiple = totalR(openTrade, exitPrice);
     setPlaying(false);
-    setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome, rMultiple: unrealizedR, pnlUSD: unrealizedR * openTrade.riskAmount });
+    setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome: outcomeForR(rMultiple), rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
     setShowCloseout(true);
+  };
+  /** Take `fraction` of the original position off at the current candle's close. */
+  const takePartial = (fraction: number) => {
+    if (!openTrade || !tradeLive || livePrice == null) return;
+    const left = openFraction(openTrade);
+    if (fraction >= left - 1e-9) { closeTradeNow(); return; }
+    const candle = barAt(replayIdx); if (!candle) return;
+    setPlaying(false);
+    setOpenTrade({ ...openTrade, initialStop: openTrade.initialStop ?? openTrade.stopLoss, partials: [...(openTrade.partials ?? []), { time: Number(candle.time), price: livePrice, fraction }] });
+    setToast(`Closed ${Math.round(fraction * 100)}% at ${fmtPrice(livePrice)} (${fmtR(rAt(openTrade, livePrice))})`);
+  };
+  const stopToBreakeven = () => {
+    if (!openTrade || !tradeLive || livePrice == null) return;
+    const inProfit = openTrade.direction === 'long' ? livePrice > openTrade.entryPrice : livePrice < openTrade.entryPrice;
+    if (!inProfit) { setToast('Price is not past entry yet, so a break-even stop would be hit straight away'); return; }
+    setOpenTrade({ ...openTrade, initialStop: openTrade.initialStop ?? openTrade.stopLoss, stopLoss: openTrade.entryPrice });
   };
   const removePosition = () => {
     if (window.confirm('Remove this simulated position? Nothing is logged.')) resetTrade();
@@ -1330,18 +1355,18 @@ export default function Workspace() {
     return () => { cancelled = true; };
   }, [chartEpoch]);
   useEffect(() => {
-    if (!openTrade || closedTrade) return;
+    if (!openTrade || closedTrade || tradeLive) return;
     const sized = sizeTrade(openTrade, spec, sizingMode, Number(riskAmountInput) || 0, Number(lotsInput) || 0);
     if (sized.riskAmount === openTrade.riskAmount && (sized.lots ?? null) === (openTrade.lots ?? null)) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- keep the open trade's size in sync with the stop, inputs and specs
     setOpenTrade(sized);
-  }, [openTrade, closedTrade, spec, sizingMode, riskAmountInput, lotsInput]);
+  }, [openTrade, closedTrade, tradeLive, spec, sizingMode, riskAmountInput, lotsInput]);
 
   const placeTradeAt = (direction: 'long' | 'short', time: number, price: number) => {
     setOpenTrade(placeTradeAtPure(direction, time, price, Number(riskAmountInput) || 0));
     setPlacingDirection(null);
   };
-  const updateHandlePrice = (handle: TradeHandle, price: number) => setOpenTrade(cur => (cur ? updateHandlePricePure(cur, handle, price) : cur));
+  const updateHandlePrice = (handle: TradeHandle, price: number) => setOpenTrade(cur => (cur ? updateHandlePricePure(cur, handle, price, livePrice) : cur));
   const startPlacing = (direction: 'long' | 'short') => {
     if (!candles || openTrade || closedTrade) return;
     const next = placingDirection === direction ? null : direction;
@@ -1398,6 +1423,7 @@ export default function Workspace() {
           entryTime: closedTrade.entryTime, entryPrice: closedTrade.entryPrice,
           exitTime: closedTrade.exitTime, exitPrice: closedTrade.exitPrice,
           stopLoss: closedTrade.stopLoss, takeProfit: closedTrade.takeProfit,
+          initialStopLoss: closedTrade.initialStop ?? closedTrade.stopLoss, partials: closedTrade.partials ?? [],
           outcome: closedTrade.outcome, riskAmount: closedTrade.riskAmount, lots: closedTrade.lots ?? null,
           pnlUSD: closedTrade.pnlUSD, rMultiple: closedTrade.rMultiple,
           notes, chartAnnotations: managerRef.current?.exportDrawings() ?? [], snapshot,
@@ -1615,7 +1641,7 @@ export default function Workspace() {
     ? news.events.find(e => e.ms >= clockMs && e.ms - clockMs <= DAY && e.impact === 'High') ?? null
     : null;
   const untilText = (ms: number) => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
-  const rr = openTrade?.takeProfit != null ? Math.abs(openTrade.takeProfit - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss) : 0;
+  const rr = openTrade?.takeProfit != null ? rAt(openTrade, openTrade.takeProfit) : 0;
   const up = (n: number) => (n >= 0 ? 'tw:text-secondary' : 'tw:text-error');
   const tradeLocked = Boolean(openTrade || closedTrade);
 
@@ -1686,7 +1712,7 @@ export default function Workspace() {
   // ── Desktop terminal layout (Stitch "Backtest Workspace", >= 900px) ─────────
   const nextCandle = candles?.[replayIdx + 1] ?? null;
   const analysisPct = analysisTotal ? (Math.max(0, analysisBars) / analysisTotal) * 100 : 0;
-  const rrFor = (price: number) => openTrade ? Math.abs(price - openTrade.entryPrice) / Math.abs(openTrade.entryPrice - openTrade.stopLoss || 1) : 0;
+  const rrFor = (price: number) => (openTrade ? Math.abs(rAt(openTrade, price)) : 0);
   const exitKind = closedTrade
     ? Math.abs(closedTrade.exitPrice - closedTrade.stopLoss) < 1e-9 ? 'SL HIT'
       : closedTrade.takeProfit != null && Math.abs(closedTrade.exitPrice - closedTrade.takeProfit) < 1e-9 ? 'TP HIT' : 'MANUAL CLOSE'
@@ -1773,10 +1799,19 @@ export default function Workspace() {
                 </span>
                 <span className="tw:text-on-surface-variant">Entry:</span><span className="tw:text-on-surface tw:font-semibold">{fmtPrice(openTrade.entryPrice)}</span>
                 <span className="tw:text-outline-variant">•</span>
-                <span className="tw:text-tertiary">SL: {fmtPrice(openTrade.stopLoss)} (-1.0R / -${openTrade.riskAmount.toFixed(0)})</span>
+                <span className={rAt(openTrade, openTrade.stopLoss) >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}>
+                  SL: {fmtPrice(openTrade.stopLoss)} ({fmtR(rAt(openTrade, openTrade.stopLoss), 1)} / {fmtUSD(rAt(openTrade, openTrade.stopLoss) * openTrade.riskAmount)})
+                </span>
                 {openTrade.takeProfit != null && <>
                   <span className="tw:text-outline-variant">•</span>
                   <span className="tw:text-secondary">TP: {fmtPrice(openTrade.takeProfit)} (+{rrFor(openTrade.takeProfit).toFixed(1)}R / +${(rrFor(openTrade.takeProfit) * openTrade.riskAmount).toFixed(0)})</span>
+                </>}
+                <span className="tw:text-outline-variant">•</span>
+                {(openTrade.partials?.length ?? 0) > 0 && <>
+                  <span className="tw:text-outline-variant">•</span>
+                  <span className="tw:text-on-surface-variant tw:text-[10px]" title={(openTrade.partials ?? []).map(pc => `${Math.round(pc.fraction * 100)}% at ${fmtPrice(pc.price)} (${fmtR(rAt(openTrade, pc.price))})`).join('\n')}>
+                    Banked {fmtR(bankedR(openTrade))} · {Math.round(openFraction(openTrade) * 100)}% open
+                  </span>
                 </>}
                 <span className="tw:text-outline-variant">•</span>
                 <span className="tw:text-on-surface-variant tw:text-[10px]">{closedTrade ? 'Result:' : 'Unrealized:'}</span>
@@ -1790,10 +1825,28 @@ export default function Workspace() {
                   <Icon name="bookmark_added" className="tw:text-[14px]" /><span>Log Outcome</span>
                 </button>
               ) : (
-                <button type="button" onClick={closeTradeNow} title="Close at the current candle's close"
+                <>
+                {tradeLive && (
+                  <div className="tw:flex tw:items-center tw:overflow-hidden tw:rounded tw:border tw:border-outline-variant" role="group" aria-label="Manage trade">
+                    {[0.25, 0.5].map(f => (
+                      <button key={f} type="button" onClick={() => takePartial(f)} disabled={openFraction(openTrade) <= f + 1e-9}
+                        title={`Take ${f * 100}% of the original position off at the current candle's close`}
+                        className="tw:px-2 tw:py-1 tw:text-[11px] tw:font-semibold tw:text-on-surface tw:hover:bg-surface-container-high tw:disabled:opacity-40 tw:border-r tw:border-outline-variant">
+                        Close {f * 100}%
+                      </button>
+                    ))}
+                    <button type="button" onClick={stopToBreakeven} disabled={openTrade.stopLoss === openTrade.entryPrice}
+                      title="Move the stop to the entry price (you can also drag the stop line, past entry to lock in profit)"
+                      className="tw:px-2 tw:py-1 tw:text-[11px] tw:font-semibold tw:text-on-surface tw:hover:bg-surface-container-high tw:disabled:opacity-40 tw:whitespace-nowrap">
+                      SL → BE
+                    </button>
+                  </div>
+                )}
+                <button type="button" onClick={closeTradeNow} title="Close what's left at the current candle's close"
                   className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container/20 tw:hover:bg-primary-container/30 tw:text-primary-container tw:border tw:border-primary-container/50 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap">
                   <Icon name="flag" className="tw:text-[14px]" /><span>Close at Current Candle</span>
                 </button>
+                </>
               )}
               <button type="button" onClick={resetTrade}
                 className="tw:flex tw:items-center tw:gap-1 tw:bg-tertiary/10 tw:hover:bg-tertiary/20 tw:text-tertiary tw:border tw:border-tertiary/30 tw:px-2 tw:py-1 tw:rounded tw:transition tw:active:scale-95">
@@ -2102,7 +2155,7 @@ export default function Workspace() {
                   <div className="tw:flex tw:items-baseline tw:gap-space-xs tw:font-mono-metric-md tw:text-mono-metric-md">
                     <span className="tw:text-on-surface-variant">Entry:</span><span className="tw:text-on-surface tw:font-semibold">{fmtPrice(openTrade.entryPrice)}</span>
                   </div>
-                  <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-tertiary">SL: {fmtPrice(openTrade.stopLoss)} (-1.0R)</span>
+                  <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-tertiary">SL: {fmtPrice(openTrade.stopLoss)} ({fmtR(rAt(openTrade, openTrade.stopLoss), 1)})</span>
                   {openTrade.takeProfit != null && <span className="tw:font-mono-metric-md tw:text-mono-metric-md tw:text-secondary tw:font-semibold">TP: {fmtPrice(openTrade.takeProfit)} (+{rr.toFixed(1)}R)</span>}
                   <span className="tw:font-label-caps tw:text-label-caps tw:text-primary">R:R 1:{rr.toFixed(1)}</span>
                 </div>
@@ -2112,9 +2165,15 @@ export default function Workspace() {
                       Log Outcome ({fmtR(closedTrade.rMultiple, 1)})
                     </button>
                   ) : (
+                    <>
+                    {tradeLive && <>
+                      <button type="button" onClick={() => takePartial(0.5)} disabled={openFraction(openTrade) <= 0.5 + 1e-9} className="tw:bg-surface-variant tw:px-space-sm tw:py-0.5 tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action tw:disabled:opacity-40">50%</button>
+                      <button type="button" onClick={stopToBreakeven} disabled={openTrade.stopLoss === openTrade.entryPrice} className="tw:bg-surface-variant tw:px-space-sm tw:py-0.5 tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action tw:disabled:opacity-40">BE</button>
+                    </>}
                     <button type="button" onClick={closeTradeNow} title="Close at the current candle's close" className="tw:bg-primary tw:px-space-md tw:py-0.5 tw:rounded tw:text-on-primary tw:font-label-action tw:text-label-action tw:font-semibold tw:shadow-sm tw:hover:brightness-110 tw:active:scale-95">
                       Close Now ({fmtR(unrealizedR, 1)})
                     </button>
+                    </>
                   )}
                   <button type="button" onClick={resetTrade} className="tw:bg-surface-variant tw:px-space-sm tw:py-0.5 tw:rounded tw:text-on-surface-variant tw:font-label-action tw:text-label-action tw:hover:text-on-surface">Cancel</button>
                 </div>

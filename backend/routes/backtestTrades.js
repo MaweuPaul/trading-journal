@@ -130,13 +130,22 @@ router.get('/backtest-trades/strategies', auth, ownerOnly, async (req, res) => {
 
 // A backtest trade is logged once it's already resolved (hit SL/TP or was
 // manually closed) -- there's no draft/open state, unlike Pre-Trade Analysis.
+/** Partial closes from a managed trade: at most 20, each a share (0-1] of the original size. */
+function normalizePartials(input) {
+  if (!Array.isArray(input) || !input.length) return undefined;
+  const out = input.slice(0, 20)
+    .map(p => ({ time: Number(p?.time), price: Number(p?.price), fraction: Number(p?.fraction) }))
+    .filter(p => Number.isFinite(p.time) && Number.isFinite(p.price) && p.fraction > 0 && p.fraction <= 1);
+  return out.length ? out : undefined;
+}
+
 router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
   if (isOffline(req)) return offlineResponse(res);
   try {
     const {
       name, strategy, tags, source, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
       stopLoss, takeProfit, outcome, riskAmount, lots, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
-      planFollowed, setupQuality, executionQuality, mistakes, lesson,
+      planFollowed, setupQuality, executionQuality, mistakes, lesson, initialStopLoss, partials,
     } = req.body;
     // Quick logs (from the Backtest Log's "New Backtest" form) carry only a
     // label, symbol, direction, P&L and R -- no chart, prices or times.
@@ -177,6 +186,8 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
       exitTime: optionalNumber(exitTime), exitPrice: optionalNumber(exitPrice),
       stopLoss: optionalNumber(stopLoss),
       takeProfit: takeProfit === '' || takeProfit == null ? null : Number(takeProfit),
+      initialStopLoss: optionalNumber(initialStopLoss) ?? null,
+      partials: normalizePartials(partials),
       outcome,
       riskAmount: Number.isFinite(Number(riskAmount)) ? Number(riskAmount) : 0,
       lots: lots != null && Number.isFinite(Number(lots)) && Number(lots) > 0 ? Number(lots) : null,

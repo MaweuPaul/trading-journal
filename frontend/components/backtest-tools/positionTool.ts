@@ -4,6 +4,23 @@
 import type { IChartApi, ISeriesApi, Logical, UTCTimestamp } from 'lightweight-charts';
 import { ClosedTrade, OpenTrade, SizingMode, SymbolSpec, TradeHandle, fmtPrice } from './types';
 
+// R is always measured against the stop the trade went live with, so moving
+// the stop to break-even doesn't turn a winner into 0R.
+export const riskPerUnit = (t: OpenTrade) => Math.abs(t.entryPrice - (t.initialStop ?? t.stopLoss));
+/** R of the position at `price`. */
+export function rAt(t: OpenTrade, price: number) {
+  const risk = riskPerUnit(t);
+  const gain = t.direction === 'long' ? price - t.entryPrice : t.entryPrice - price;
+  return risk ? gain / risk : 0;
+}
+/** Share of the original position still open. */
+export const openFraction = (t: OpenTrade) => Math.max(0, 1 - (t.partials ?? []).reduce((sum, p) => sum + p.fraction, 0));
+/** R already banked by partial closes. */
+export const bankedR = (t: OpenTrade) => (t.partials ?? []).reduce((sum, p) => sum + p.fraction * rAt(t, p.price), 0);
+/** The whole trade's R if what's left closes at `exitPrice`. */
+export const totalR = (t: OpenTrade, exitPrice: number) => bankedR(t) + openFraction(t) * rAt(t, exitPrice);
+export const outcomeForR = (r: number): 'win' | 'loss' | 'breakeven' => (Math.abs(r) < 0.005 ? 'breakeven' : r > 0 ? 'win' : 'loss');
+
 export function placeTradeAt(direction: 'long' | 'short', time: number, price: number, riskAmount: number): OpenTrade {
   const riskDistance = Math.max(price * 0.005, 1e-6);
   const stopLoss = direction === 'long' ? price - riskDistance : price + riskDistance;
@@ -35,7 +52,14 @@ export function sizeTrade(trade: OpenTrade, spec: SymbolSpec | null, mode: Sizin
   return { ...trade, lots, riskAmount: clean(lots * perLot) };
 }
 
-export function updateHandlePrice(trade: OpenTrade, handle: TradeHandle, price: number): OpenTrade {
+export function updateHandlePrice(trade: OpenTrade, handle: TradeHandle, price: number, livePrice?: number): OpenTrade {
+  if (livePrice != null) {
+    if (handle === 'entry') return trade;
+    if (handle === 'sl') {
+      const clamped = trade.direction === 'long' ? Math.min(price, livePrice - 1e-6) : Math.max(price, livePrice + 1e-6);
+      return { ...trade, stopLoss: clamped };
+    }
+  }
   if (handle === 'entry') {
     // Dragging the entry line moves the whole position -- SL and TP shift
     // with it so the risk distance and R:R stay exactly what they were.
@@ -129,9 +153,8 @@ export function drawTradeOverlay(params: {
   right = Math.min(right, paneRight - 2);
   if (right <= left) return;
 
-  const riskDistance = Math.abs(trade.entryPrice - trade.stopLoss);
-  const rewardDistance = trade.takeProfit != null ? Math.abs(trade.takeProfit - trade.entryPrice) : 0;
-  const rewardR = riskDistance > 0 ? rewardDistance / riskDistance : 0;
+  const rewardR = trade.takeProfit != null ? rAt(trade, trade.takeProfit) : 0;
+  const stopR = rAt(trade, trade.stopLoss);
   const riskUSD = trade.riskAmount;
 
   // Zones: reward fades toward entry, risk deepens toward the stop (as in the design).
@@ -168,7 +191,8 @@ export function drawTradeOverlay(params: {
     drawTag(ctx, tag, labelX, tpY + (tpY < entryY ? 12 : -12), palette.win, palette.labelBg, right);
   }
   drawTag(ctx, `Entry: ${fmtPrice(trade.entryPrice)} (${trade.direction === 'long' ? 'Long' : 'Short'}${trade.lots != null ? ` · ${trade.lots} lots` : ''})`, labelX, entryY, palette.accent, palette.labelBg, right);
-  drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (-1.00R${riskUSD > 0 ? ` / -$${riskUSD.toFixed(riskUSD < 1000 ? 2 : 0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
+  const stopUSD = riskUSD * stopR;
+  drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (${stopR >= 0 ? '+' : ''}${stopR.toFixed(2)}R${riskUSD > 0 ? ` / ${stopUSD >= 0 ? '+' : '-'}$${Math.abs(stopUSD).toFixed(Math.abs(stopUSD) < 1000 ? 2 : 0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
 
   if (closedTrade && exitX != null) {
     const exitY = series.priceToCoordinate(closedTrade.exitPrice);

@@ -9,6 +9,8 @@ export interface Candle { time: UTCTimestamp; open: number; high: number; low: n
 
 export interface MeasureRange { time1: number; price1: number; time2: number; price2: number; }
 
+/** Part of a position closed early, at `price`: `fraction` of the original size. */
+export interface PartialClose { time: number; price: number; fraction: number }
 export interface OpenTrade {
   direction: 'long' | 'short';
   entryTime: number; entryPrice: number;
@@ -16,6 +18,10 @@ export interface OpenTrade {
   riskAmount: number;
   /** Position size in lots, from the symbol's contract size; null when the symbol spec isn't known. */
   lots?: number | null;
+  /** The stop when the trade went live: 1R. Moving the stop later (to break-even, trailing) doesn't change it. */
+  initialStop?: number;
+  /** Profit taken along the way; what's left runs to the stop, target or a manual close. */
+  partials?: PartialClose[];
 }
 export interface ClosedTrade extends OpenTrade {
   exitTime: number; exitPrice: number;

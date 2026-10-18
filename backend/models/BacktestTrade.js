@@ -38,6 +38,14 @@ const backtestTradeSchema = new mongoose.Schema({
   exitPrice: { type: Number, required: isReplay },
   stopLoss: { type: Number, required: isReplay },
   takeProfit: { type: Number, default: null },
+  // Managed trades: the stop the trade went live with (1R) -- stopLoss above is
+  // where it ended, after a move to break-even or trailing -- and profit
+  // taken along the way. rMultiple/pnlUSD already include the partials.
+  initialStopLoss: { type: Number, default: null },
+  partials: {
+    type: [{ _id: false, time: Number, price: Number, fraction: Number }],
+    default: undefined,
+  },
 
   outcome: { type: String, enum: ['win', 'loss', 'breakeven'], required: true },
   riskAmount: { type: Number, default: 0 },

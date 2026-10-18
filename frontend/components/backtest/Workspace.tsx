@@ -300,10 +300,16 @@ export default function Workspace() {
     } catch { /* storage blocked */ }
   }, []);
   const changeBalance = (v: string) => { setBalanceInput(v); try { localStorage.setItem('backtest-initial-balance', v); } catch { /* storage blocked */ } };
+  // Once a backtest starts its starting balance is fixed; the account then
+  // moves by the outcomes logged in the session.
+  const [startBalance, setStartBalance] = useState<number | null>(null);
+  const [realizedPnl, setRealizedPnl] = useState(0);
+  const currentBalance = startBalance != null ? startBalance + realizedPnl : null;
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   // Against the trade's real (sized) risk once one is open.
   const riskForPct = openTrade ? openTrade.riskAmount : Number(riskAmountInput);
-  const riskPct = Number(balanceInput) > 0 && riskForPct > 0 ? (riskForPct / Number(balanceInput)) * 100 : null;
+  const balanceForRisk = currentBalance ?? Number(balanceInput);
+  const riskPct = balanceForRisk > 0 && riskForPct > 0 ? (riskForPct / balanceForRisk) * 100 : null;
   const draggingHandleRef = useRef<TradeHandle | null>(null);
   const [hoveredHandle, setHoveredHandle] = useState<TradeHandle | null>(null);
   const [closedTrade, setClosedTrade] = useState<ClosedTrade | null>(null);
@@ -344,12 +350,14 @@ export default function Workspace() {
     setSymbol(draft.symbol); setFromDate(draft.fromDate); setToDate(draft.toDate);
     intervalTouchedRef.current = true; setInterval_(draft.interval);
     setDrawColor(draft.drawColor);
+    setStartBalance(draft.startBalance ?? (Number(balanceInput) || 10000)); setRealizedPnl(draft.realizedPnl ?? 0);
     loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
   };
   const discardDraft = () => { if (draftAvailable) clearDraft(draftAvailable.id ?? sessionIdFor(draftAvailable.strategy)); setDraftAvailable(null); };
   const endSession = () => {
     if (!window.confirm(`End the ${symbol.trim().toUpperCase()} session? Drawings and any open hypothetical trade are discarded. Saved backtests are not affected.`)) return;
     setPlaying(false); resetTrade(); setCandles(null); setChartEpoch(e => e + 1); sessionRef.current = null;
+    setStartBalance(null); setRealizedPnl(0);
     clearDraft(sessionSlotRef.current); setDraftAvailable(null);
   };
 
@@ -364,12 +372,13 @@ export default function Workspace() {
         replayTime: Number(candles[replayIdx]?.time ?? 0) || undefined, strategy: sessionStrategyRef.current, id: sessionSlotRef.current,
         backtestName, notes, tags, drawColor,
         drawings: managerRef.current?.exportDrawings() ?? [],
+        startBalance: startBalance ?? undefined, realizedPnl,
         savedAt: Date.now(),
       });
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision]);
+  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision, startBalance, realizedPnl]);
 
   // Re-suggest the timeframe when the range changes (cTrader caps a request
   // at 1500 bars) unless the trader picked one explicitly.
@@ -569,7 +578,7 @@ export default function Workspace() {
   // already revealed -- so switching never shows the future. Drawings and an
   // open trade carry over.
   const switchInterval = (tf: string) => {
-    if (tf === interval || closedTrade) return;
+    if (tf === interval) return;
     intervalTouchedRef.current = true;
     if (!candles || loading) { setInterval_(tf); return; }
     const oldSec = (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400;
@@ -648,6 +657,8 @@ export default function Workspace() {
   useEffect(() => {
     if (autoLoadedRef.current || !params.get('symbol')) return;
     autoLoadedRef.current = true;
+    // A new backtest starts its account at the balance chosen on the setup page.
+    setStartBalance(Number(params.get('balance')) || Number(balanceInput) || 10000); setRealizedPnl(0);
     loadChart();
   }, [params, loadChart]);
 
@@ -1372,6 +1383,7 @@ export default function Workspace() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Could not save backtest trade');
       addTrade(body as BacktestTrade);
+      setRealizedPnl(p => p + (Number(closedTrade.pnlUSD) || 0));
       resetTrade();
       setToast('Saved to Backtest Log — keep replaying for the next setup');
     } catch (e) {
@@ -1586,9 +1598,9 @@ export default function Workspace() {
   // ── Shared pieces ──────────────────────────────────────────────────────────
   const timeframeChips = (activeCls: string) => (
     <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:gap-0.5 tw:shrink-0" role="group" aria-label="Timeframe"
-      title={closedTrade ? 'Log or discard the closed trade before changing timeframe' : undefined}>
+      >
       {VIEW_INTERVALS.map(tf => (
-        <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={(Boolean(closedTrade) || loading) && interval !== tf.value} onClick={() => switchInterval(tf.value)}
+        <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={loading && interval !== tf.value} onClick={() => switchInterval(tf.value)}
           className={`tw:px-space-sm tw:py-0.5 tw:rounded tw:font-label-caps tw:text-label-caps tw:disabled:opacity-40 ${interval === tf.value ? activeCls : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>
           {tf.label}
         </button>
@@ -1714,9 +1726,9 @@ export default function Workspace() {
       <section className="tw:h-10 tw:bg-surface-container-low/90 tw:border-b tw:border-outline-variant tw:px-3 tw:flex tw:items-center tw:justify-between tw:gap-3 tw:shrink-0 tw:text-[11px]">
         <div className="tw:flex tw:items-center tw:gap-2 tw:min-w-0">
           <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:rounded tw:p-0.5 tw:border tw:border-outline-variant tw:font-mono-metric-md" role="group" aria-label="Timeframe"
-            title={closedTrade ? 'Log or discard the closed trade before changing timeframe' : undefined}>
+            >
             {VIEW_INTERVALS.map(tf => (
-              <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={(Boolean(closedTrade) || loading) && interval !== tf.value} onClick={() => switchInterval(tf.value)}
+              <button key={tf.value} type="button" aria-pressed={interval === tf.value} disabled={loading && interval !== tf.value} onClick={() => switchInterval(tf.value)}
                 className={`tw:px-2 tw:py-0.5 tw:rounded tw:transition tw:disabled:opacity-40 ${interval === tf.value ? 'tw:bg-primary-container tw:text-on-primary tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{tf.label}</button>
             ))}
           </div>
@@ -1793,12 +1805,27 @@ export default function Workspace() {
             )}
             {!spec && specNote && <span className="tw:text-error tw:text-[10px]" title={specNote}>!</span>}
           </label>
+          {currentBalance != null && startBalance != null ? (
+          <div className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5 tw:whitespace-nowrap"
+            title={`Started at $${startBalance.toLocaleString()} (fixed for this backtest). Moves with each outcome you log; the risk is shown as a % of it.`}>
+            <Icon name="lock" className="tw:text-[11px] tw:text-on-surface-variant" />
+            <span className="tw:text-on-surface-variant tw:text-[10px]">Balance:</span>
+            <span className="tw:text-on-surface tw:font-bold">${currentBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            {realizedPnl !== 0 && (
+              <span className={`tw:text-[10px] tw:font-semibold ${realizedPnl > 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>
+                {realizedPnl > 0 ? '+' : ''}{((realizedPnl / startBalance) * 100).toFixed(2)}%
+              </span>
+            )}
+            {riskPct != null && <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">risk {riskPct < 1 ? riskPct.toFixed(2) : riskPct.toFixed(1)}%</span>}
+          </div>
+          ) : (
           <label className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5" title="Initial balance of the simulated account; the risk is shown as a % of it">
             <span className="tw:text-on-surface-variant tw:text-[10px]">Balance $:</span>
             <input aria-label="Initial balance in dollars" type="number" min="0" step="any" value={balanceInput} onChange={e => changeBalance(e.target.value)}
               className="tw:w-20 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
             {riskPct != null && <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">risk {riskPct < 1 ? riskPct.toFixed(2) : riskPct.toFixed(1)}%</span>}
           </label>
+          )}
         </div>
       </section>
     </>

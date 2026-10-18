@@ -24,6 +24,10 @@ export interface WorkspaceDraft {
   openTrade: OpenTrade | null;
   backtestName: string; notes: string; tags: string[]; drawColor: string;
   drawings: SerializedDrawing[];
+  /** Account balance the backtest started with; fixed for the session. */
+  startBalance?: number;
+  /** P&L of the outcomes logged in this session, so the balance carries on. */
+  realizedPnl?: number;
   savedAt: number;
 }
 

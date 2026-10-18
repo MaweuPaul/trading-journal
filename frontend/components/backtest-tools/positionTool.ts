@@ -104,12 +104,22 @@ export function drawTradeOverlay(params: {
   // Stop at the right edge of the plot pane so the box never covers the price scale.
   const timeScale = chart.timeScale();
   const paneRight = timeScale.width() || canvas.width;
-  const entryX = timeScale.timeToCoordinate(trade.entryTime as UTCTimestamp);
+  // After a timeframe switch the entry/exit time can fall inside a candle
+  // (a 5m exit on the 4H): use the candle it's in.
+  const data = series.data();
+  const xAt = (time: number) => {
+    const exact = timeScale.timeToCoordinate(time as UTCTimestamp);
+    if (exact != null) return exact;
+    let lo = 0, hi = data.length - 1, found = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (Number(data[mid].time) <= time) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+    return found >= 0 ? timeScale.timeToCoordinate(data[found].time) : null;
+  };
+  const entryX = xAt(trade.entryTime);
   const left = Math.max(0, entryX ?? 0);
   // Like TradingView's position tool the box has its own width: to the exit
   // candle once closed, otherwise ~24 bars (at least 140px) past entry.
   let right: number;
-  const exitX = closedTrade ? timeScale.timeToCoordinate(closedTrade.exitTime as UTCTimestamp) : null;
+  const exitX = closedTrade ? xAt(closedTrade.exitTime) : null;
   if (closedTrade && exitX != null) right = Math.max(exitX, left + 60);
   else {
     const entryLogical = entryX != null ? timeScale.coordinateToLogical(entryX) : null;

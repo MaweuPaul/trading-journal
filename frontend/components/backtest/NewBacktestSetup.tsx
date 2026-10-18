@@ -164,6 +164,13 @@ export default function NewBacktestSetup() {
   const [newStrategyIdea, setNewStrategyIdea] = useState('');
   const [strategyError, setStrategyError] = useState('');
   const [name, setName] = useState<string | null>(null);
+  // Starting account balance: fixed once the backtest starts (the last one used is suggested).
+  const [balance, setBalance] = useState('10000');
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('backtest-initial-balance'); } catch { /* storage blocked */ }
+    if (saved) queueMicrotask(() => setBalance(saved));
+  }, []);
   const fromRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -210,7 +217,9 @@ export default function NewBacktestSetup() {
       }
     }
     setActiveSymbol(symbol); setCurrentStrategy(chosen);
-    const q = new URLSearchParams({ symbol, interval, from, to, name: sessionName, strategy: chosen, autostart: '1' });
+    const startBalance = Number(balance) > 0 ? String(Number(balance)) : '10000';
+    try { localStorage.setItem('backtest-initial-balance', startBalance); } catch { /* storage blocked */ }
+    const q = new URLSearchParams({ symbol, interval, from, to, name: sessionName, strategy: chosen, balance: startBalance, autostart: '1' });
     router.push(`/backtest/workspace?${q}`);
   };
 
@@ -316,6 +325,11 @@ export default function NewBacktestSetup() {
           <div className="tw:flex tw:flex-col tw:gap-2">
             <label htmlFor="bt-name" className={label}>Session name</label>
             <input id="bt-name" maxLength={100} value={sessionName} onChange={e => setName(e.target.value)} className={`${input} tw:px-3 tw:py-2`} />
+          </div>
+          <div className="tw:flex tw:flex-col tw:gap-2">
+            <label htmlFor="bt-balance" className={label}>Starting balance ($)</label>
+            <input id="bt-balance" type="number" min="1" step="any" required value={balance} onChange={e => setBalance(e.target.value)} className={`${input} tw:px-3 tw:py-2`} />
+            <p className="tw:text-[11px] tw:text-outline">Fixed for this backtest. The balance then moves with each outcome you log.</p>
           </div>
         </div>
         </div>

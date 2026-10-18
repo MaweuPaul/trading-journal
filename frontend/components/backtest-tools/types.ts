@@ -33,7 +33,7 @@ export const DRAWING_COLORS = [
 export const CHART_INTERVALS = [
   { value: '1min', label: '1m' }, { value: '5min', label: '5m' }, { value: '15min', label: '15m' },
   { value: '1h', label: '1H' }, { value: '4h', label: '4H' }, { value: '1day', label: '1D' },
-  { value: '1week', label: '1W' },
+  { value: '1week', label: '1W' }, { value: '1month', label: '1M' },
 ] as const;
 export const SPEEDS = [0.5, 1, 3, 5, 10];
 
@@ -42,7 +42,20 @@ export const SPEEDS = [0.5, 1, 3, 5, 10];
 // MAX_CHART_BARS cap below.
 export const INTERVAL_DAYS: Record<string, number> = {
   '1min': 1 / 1440, '5min': 5 / 1440, '15min': 15 / 1440, '1h': 1 / 24, '4h': 4 / 24, '1day': 1, '1week': 7,
+  '1month': 30, // approximate: use candleEndMs for when a month actually closes
 };
+/**
+ * When a candle opening at `timeSec` closes (ms). Months run 28-31 days, so
+ * a monthly candle ends where the next month's opens (broker months open a
+ * few hours off UTC midnight; the same offset carries over).
+ */
+export function candleEndMs(timeSec: number, interval: string): number {
+  const open = timeSec * 1000;
+  if (interval !== '1month') return open + (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400000;
+  const mid = new Date(open + 10 * 86400000);
+  const monthStart = Date.UTC(mid.getUTCFullYear(), mid.getUTCMonth(), 1);
+  return Date.UTC(mid.getUTCFullYear(), mid.getUTCMonth() + 1, 1) + (open - monthStart);
+}
 export function suggestInterval(fromDate: string, toDate: string): string {
   const days = (new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000;
   const SAFE_BARS = 1200;

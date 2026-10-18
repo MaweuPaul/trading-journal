@@ -17,7 +17,7 @@ import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle, SymbolSpec, SizingMode,
-  CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
+  CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, candleEndMs, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, sizeTrade,
@@ -98,7 +98,7 @@ async function prefetchOtherTimeframes(symbol: string, current: string, clockMs:
     try { await getCandles(symbol, tf, clockMs - SWITCH_BACK_BARS * bar, clockMs + SWITCH_AHEAD_BARS * bar, authHeaders()); } catch { /* best effort */ }
   }
 }
-const FINER: Record<string, string> = { '1week': '1day', '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
+const FINER: Record<string, string> = { '1month': '1week', '1week': '1day', '1day': '4h', '4h': '1h', '1h': '15min', '15min': '5min', '5min': '1min' };
 /**
  * Which level was reached first inside [startMs, endMs), walking smaller and
  * smaller candles (down to 1m) while a candle still spans both. If even 1m
@@ -580,10 +580,9 @@ export default function Workspace() {
     if (tf === interval) return;
     intervalTouchedRef.current = true;
     if (!candles || loading) { setInterval_(tf); return; }
-    const oldSec = (INTERVAL_DAYS[interval] ?? INTERVAL_DAYS['15min']) * 86400;
     const newSec = (INTERVAL_DAYS[tf] ?? INTERVAL_DAYS['15min']) * 86400;
     const seen = candles.slice(0, replayIdx + 1);
-    const clock = Number(seen[seen.length - 1].time) + oldSec; // close time of the current candle
+    const clock = candleEndMs(Number(seen[seen.length - 1].time), interval) / 1000; // close time of the current candle
     const sessionFromMs = new Date(fromDate).getTime();
     const sessionToMs = new Date(toDate).getTime() + DAY;
     const drawings = managerRef.current?.exportDrawings() ?? [];
@@ -604,7 +603,7 @@ export default function Workspace() {
       .then(loaded => {
         // Last candle that is fully closed by the clock...
         let idx = -1;
-        for (let i = 0; i < loaded.length && Number(loaded[i].time) + newSec <= clock; i++) idx = i;
+        for (let i = 0; i < loaded.length && candleEndMs(Number(loaded[i].time), tf) <= clock * 1000; i++) idx = i;
         // ...plus, when zooming out, the forming candle built from what's already revealed.
         let built: { idx: number; candle: Candle; endMs: number } | null = null;
         const forming = loaded[idx + 1];
@@ -1057,7 +1056,7 @@ export default function Workspace() {
   // is known yet -- a release's actual number stays hidden until then.
   // replayIdx can briefly run past the candles while a chart loads or resumes: clamp it.
   const shownIdx = candles?.length ? Math.min(replayIdx, candles.length - 1) : -1;
-  const clockMs = candles && shownIdx >= 0 ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[shownIdx].time) * 1000 + barMsOf(interval)) : null;
+  const clockMs = candles && shownIdx >= 0 ? (partial && replayIdx === partial.idx ? partial.endMs : candleEndMs(Number(candles[shownIdx].time), interval)) : null;
   const newsEvents = useMemo(() => (news ? news.events.filter(e => newsImpact === 'all' || e.impact === 'High') : []), [news, newsImpact]);
   // Released events, grouped by the candle they landed in.
   const newsByCandle = useMemo(() => {
@@ -1263,7 +1262,7 @@ export default function Workspace() {
       resolvingRef.current = key;
       setPlaying(false);
       const startMs = Number(candle.time) * 1000;
-      const endMs = isPartial ? partial!.endMs : startMs + barMsOf(interval);
+      const endMs = isPartial ? partial!.endMs : candleEndMs(startMs / 1000, interval);
       setToast('Stop and target inside one candle — checking smaller candles…');
       firstLevelHit(symbol.trim().toUpperCase(), interval, startMs, endMs, trade)
         .catch(() => 'sl' as const)
@@ -2399,7 +2398,7 @@ export default function Workspace() {
           {dualTf && (
             <SecondChart
               symbol={symbol.trim().toUpperCase()} mainInterval={interval} interval={dualTf} onInterval={setDualTf} onClose={() => setDualTf(null)}
-              clockMs={candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null}
+              clockMs={candles ? (partial && replayIdx === partial.idx ? partial.endMs : candleEndMs(Number(candles[replayIdx].time), interval)) : null}
               mainChart={chartRef.current} mainSeries={seriesRef.current} mainCandles={candles}
               colors={secondChartColors()} headers={authHeaders}
             />

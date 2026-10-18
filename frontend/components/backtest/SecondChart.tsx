@@ -9,7 +9,7 @@ import { createChart, CandlestickSeries, ColorType, CrosshairMode } from 'lightw
 import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import type { SerializedDrawing } from 'lightweight-charts-drawing';
 import { getCandles } from '../backtest-tools/candleCache';
-import { CHART_INTERVALS, INTERVAL_DAYS } from '../backtest-tools/types';
+import { CHART_INTERVALS, INTERVAL_DAYS, candleEndMs } from '../backtest-tools/types';
 import type { Candle } from '../backtest-tools/types';
 import { useChartDrawings } from '../chart-drawing/useChartDrawings';
 import ChartDrawingToolbar from '../chart-drawing/ChartDrawingToolbar';
@@ -147,8 +147,7 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
   useEffect(() => { firstLoad.current = true; }, [interval, symbol]);
   const closed = useMemo(() => {
     if (clockMs == null) return [];
-    const bar = barMs(interval);
-    return nearClock.filter(c => Number(c.time) * 1000 + bar <= clockMs);
+    return nearClock.filter(c => candleEndMs(Number(c.time), interval) <= clockMs);
   }, [nearClock, clockMs, interval]);
   // Another symbol on a larger timeframe: its forming candle comes from its
   // own candles on the main chart's timeframe.
@@ -163,7 +162,7 @@ export default function SecondChart({ symbol: mainSymbol, mainInterval, interval
     if (!series || clockMs == null) return;
     const bar = barMs(interval), mainBar = barMs(mainInterval);
     // Where the last closed candle ends (daily/weekly candles don't start on multiples of their length).
-    const start = closed.length ? Number(closed[closed.length - 1].time) * 1000 + bar : Math.floor(clockMs / bar) * bar;
+    const start = closed.length ? candleEndMs(Number(closed[closed.length - 1].time), interval) : Math.floor(clockMs / bar) * bar;
     const shown: Candle[] = [...closed];
     const source = sameMarket ? mainCandles : needFine ? fine : null;
     if (mainBar < bar && source?.length) {

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseCalendarDate, normalizeEvent, currenciesForSymbol, monthRange, nextMonthToFetch } = require('../lib/newsCalendar');
+const { parseCalendarDate, normalizeEvent, currenciesForSymbol } = require('../lib/newsCalendar');
 
 test('calendar times are New York + 7h: US releases land on 08:30 New York in UTC', () => {
   // Winter (EST, UTC-5): 15:30 server = 08:30 New York = 13:30 UTC. The API docs' own CPI example.
@@ -33,25 +33,4 @@ test('currenciesForSymbol', () => {
   assert.deepEqual(currenciesForSymbol('Nasdaq100'), ['USD']);
   assert.deepEqual(currenciesForSymbol('GER40'), ['EUR']);
   assert.deepEqual(currenciesForSymbol('UK100'), ['GBP']);
-});
-
-test('monthRange', () => {
-  assert.deepEqual(monthRange('2024-02'), { from: '2024-02-01', to: '2024-02-29' });
-  assert.deepEqual(monthRange('2025-12'), { from: '2025-12-01', to: '2025-12-31' });
-});
-
-test('nextMonthToFetch: current month hourly, last month once after it ends, then backfill oldest first', () => {
-  const now = new Date('2026-10-17T12:00:00Z');
-  const at = iso => new Date(iso);
-  assert.equal(nextMonthToFetch(new Map(), now, '2026-07'), '2026-10');
-  const fresh = new Map([['2026-10', at('2026-10-17T11:30:00Z')]]);
-  assert.equal(nextMonthToFetch(fresh, now, '2026-07'), '2026-09');
-  fresh.set('2026-09', at('2026-09-30T20:00:00Z')); // fetched before September was over
-  assert.equal(nextMonthToFetch(fresh, now, '2026-07'), '2026-09');
-  fresh.set('2026-09', at('2026-10-02T00:00:00Z'));
-  assert.equal(nextMonthToFetch(fresh, now, '2026-07'), '2026-07');
-  fresh.set('2026-07', at('2026-10-02T00:00:00Z')).set('2026-08', at('2026-10-02T00:00:00Z'));
-  assert.equal(nextMonthToFetch(fresh, now, '2026-07'), null);
-  fresh.set('2026-10', at('2026-10-17T10:00:00Z')); // over an hour old
-  assert.equal(nextMonthToFetch(fresh, now, '2026-07'), '2026-10');
 });

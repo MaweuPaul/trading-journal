@@ -1,23 +1,23 @@
 // Economic calendar helpers: turning JBlanked News API rows into stored
-// events, which currencies move which symbol, and which month the
-// background sync should fetch next.
+// events, which currencies move which symbol, and time zone conversion.
 
 const HOUR = 60 * 60 * 1000;
 
-/** Minutes New York is ahead of UTC at `utcMs` (-300 in winter, -240 in summer). */
-function nyOffsetMinutes(utcMs) {
+/** Minutes `timeZone` is ahead of UTC at `utcMs` (New York: -300 in winter, -240 in summer). */
+function zoneOffsetMinutes(utcMs, timeZone) {
+  if (timeZone === 'UTC') return 0;
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', hourCycle: 'h23',
+    timeZone, hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).formatToParts(new Date(utcMs)).map(p => [p.type, p.value]));
   const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
   return Math.round((asUtc - utcMs) / 60000);
 }
 
-/** A New York wall-clock time (given as if it were UTC) to the real UTC instant. */
-function nyWallToUtc(wallMs) {
-  let utc = wallMs - nyOffsetMinutes(wallMs) * 60000;
-  utc = wallMs - nyOffsetMinutes(utc) * 60000; // settle across a DST change
+/** A wall-clock time in `timeZone` (given as if it were UTC) to the real UTC instant. */
+function wallToUtc(wallMs, timeZone) {
+  let utc = wallMs - zoneOffsetMinutes(wallMs, timeZone) * 60000;
+  utc = wallMs - zoneOffsetMinutes(utc, timeZone) * 60000; // settle across a DST change
   return utc;
 }
 
@@ -30,7 +30,7 @@ function parseCalendarDate(value) {
   const m = String(value || '').match(/^(\d{4})[.-](\d{2})[.-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
   const serverWall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
-  return new Date(nyWallToUtc(serverWall - 7 * HOUR));
+  return new Date(wallToUtc(serverWall - 7 * HOUR, 'America/New_York'));
 }
 
 const IMPACTS = { high: 'High', medium: 'Medium', low: 'Low' };
@@ -74,30 +74,4 @@ function currenciesForSymbol(symbol) {
   return ['USD'];
 }
 
-const monthKey = date => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-const monthStart = month => Date.UTC(+month.slice(0, 4), +month.slice(5, 7) - 1, 1);
-const nextMonth = month => monthKey(new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 1)));
-
-/** 'YYYY-MM' -> { from, to } as the API's YYYY-MM-DD bounds. */
-function monthRange(month) {
-  const last = new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0));
-  return { from: `${month}-01`, to: `${month}-${String(last.getUTCDate()).padStart(2, '0')}` };
-}
-
-/**
- * The month to fetch next, or null when everything is current:
- * this month once an hour (actuals come in through the day), last month
- * once more after it ended, then any month since `startMonth` never fetched,
- * oldest first. `fetched` maps 'YYYY-MM' -> Date of its last good fetch.
- */
-function nextMonthToFetch(fetched, now = new Date(), startMonth = '2024-01') {
-  const current = monthKey(now);
-  const at = month => fetched.get(month)?.getTime?.() ?? null;
-  if (at(current) == null || now - at(current) > HOUR) return current;
-  const previous = monthKey(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)));
-  if (previous >= startMonth && (at(previous) == null || at(previous) < monthStart(current) + 6 * HOUR)) return previous;
-  for (let m = startMonth; m < current; m = nextMonth(m)) if (at(m) == null) return m;
-  return null;
-}
-
-module.exports = { parseCalendarDate, normalizeEvent, currenciesForSymbol, monthRange, nextMonthToFetch, nyOffsetMinutes };
+module.exports = { parseCalendarDate, normalizeEvent, currenciesForSymbol, zoneOffsetMinutes, wallToUtc };

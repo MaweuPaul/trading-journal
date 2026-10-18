@@ -126,7 +126,7 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
 interface Indicators { ema: boolean; rsi: boolean; volume: boolean; news: boolean }
 /** How far the server's calendar has got (from /api/news). */
-interface NewsStatus { configured?: boolean; lastError?: string; months?: number; earliest?: string | null; latest?: string | null }
+interface NewsStatus { configured?: boolean; lastError?: string; earliest?: string | null; latest?: string | null }
 /** An economic calendar release from /api/news (high or medium impact). */
 interface NewsEvent { currency: string; name: string; impact: 'High' | 'Medium'; time: string; actual: string | number | null; forecast: string | number | null; previous: string | number | null }
 const newsValue = (v: string | number | null) => (v == null ? '—' : String(v));
@@ -994,6 +994,36 @@ export default function Workspace() {
     return () => { cancelled = true; };
   }, [newsKey, newsSymbol, newsFrom, newsTo, news?.key]);
 
+  // One-time history import: the calendar exported from MT5 with NewsExport.mq5.
+  const [newsImporting, setNewsImporting] = useState(false);
+  const importNewsFile = async (file: File) => {
+    setNewsImporting(true);
+    try {
+      const res = await fetch('/api/news/import', {
+        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: await file.text() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Import failed');
+      const day = (iso: string | null) => (iso ? new Date(iso).toISOString().slice(0, 10) : '?');
+      alert(`Imported ${body.imported} news events (${day(body.from)} to ${day(body.to)}). Broker clock: ${body.clock}.`);
+      setNews(null); // reload the chart's events
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setNewsImporting(false);
+    }
+  };
+  const newsImportControl = (
+    <label className="tw:flex tw:items-center tw:gap-1 tw:px-space-xs tw:py-1 tw:mt-1 tw:border-t tw:border-outline-variant tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:text-[11px] tw:text-on-surface-variant"
+      title="Upload the CSV saved by NewsExport.mq5 in MT5. Needed once: after that the calendar keeps itself up to date.">
+      <Icon name="upload_file" className="tw:text-[14px]" />
+      {newsImporting ? 'Importing…' : 'Import MT5 news history'}
+      <input type="file" accept=".csv,text/csv" className="tw:hidden" disabled={newsImporting}
+        onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) importNewsFile(file); }} />
+    </label>
+  );
+
   // The replay clock: the end of the latest revealed candle. Nothing past it
   // is known yet -- a release's actual number stays hidden until then.
   const clockMs = candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null;
@@ -1665,6 +1695,7 @@ export default function Workspace() {
                     <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                   </label>
                 ))}
+                {newsImportControl}
               </div>
             )}
           </div>
@@ -1816,14 +1847,16 @@ export default function Workspace() {
             Next: <span className="tw:text-on-surface">{nextNews.currency} {nextNews.name}</span> in {untilText(nextNews.ms - clockMs)}
           </div>
         )}
-        {indicators.news && news && !news.events.length && (
-          <span className="tw:text-[10px] tw:text-on-surface-variant tw:pl-2 tw:border-l tw:border-outline-variant tw:truncate" title={news.status.lastError || undefined}>
-            {!news.status.configured ? 'News calendar not set up'
-              : news.status.lastError ? `News calendar error: ${news.status.lastError}`
-              : news.status.months ? `News calendar still loading: has ${news.status.earliest} to ${news.status.latest}`
-              : 'News calendar loading…'}
-          </span>
-        )}
+        {indicators.news && news && !news.events.length && (() => {
+          const earliest = news.status.earliest ? new Date(news.status.earliest).getTime() : null;
+          const text = news.status.lastError ? `News calendar error: ${news.status.lastError}`
+            : earliest == null ? (news.status.configured ? 'No news yet: import MT5 news history (Indicators menu)' : 'News calendar not set up')
+            : newsFrom != null && newsFrom < earliest ? `No news before ${new Date(earliest).toISOString().slice(0, 10)}: import MT5 news history (Indicators menu)`
+            : '';
+          return text ? (
+            <span className="tw:text-[10px] tw:text-on-surface-variant tw:pl-2 tw:border-l tw:border-outline-variant tw:truncate" title={text}>{text}</span>
+          ) : null;
+        })()}
       </div>
     </div>
   );
@@ -2055,6 +2088,7 @@ export default function Workspace() {
                         <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                       </label>
                     ))}
+                    {newsImportControl}
                   </div>
                 )}
               </div>

@@ -1023,6 +1023,18 @@ export default function Workspace() {
     }
   };
   const newsImportControl = (
+    <>
+    <div className="tw:flex tw:items-center tw:justify-between tw:gap-2 tw:px-space-xs tw:py-1 tw:text-[11px] tw:text-on-surface-variant">
+      <span>News impact</span>
+      <div className="tw:flex tw:overflow-hidden tw:rounded tw:border tw:border-outline-variant" role="radiogroup" aria-label="News impact">
+        {([['high', 'High'], ['all', 'High + Med']] as const).map(([v, label]) => (
+          <button key={v} type="button" role="radio" aria-checked={newsImpact === v} onClick={() => setNewsImpact(v)}
+            className={`tw:px-2 tw:py-0.5 tw:text-[10px] ${newsImpact === v ? 'tw:bg-primary/15 tw:text-primary tw:font-semibold' : 'tw:hover:bg-surface-bright'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
     <label className="tw:flex tw:items-center tw:gap-1 tw:px-space-xs tw:py-1 tw:mt-1 tw:border-t tw:border-outline-variant tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:text-[11px] tw:text-on-surface-variant"
       title="Upload the CSV saved by NewsExport.mq5 in MT5. Needed once: after that the calendar keeps itself up to date.">
       <Icon name="upload_file" className="tw:text-[14px]" />
@@ -1030,46 +1042,50 @@ export default function Workspace() {
       <input type="file" accept=".csv,text/csv" className="tw:hidden" disabled={newsImporting}
         onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) importNewsFile(file); }} />
     </label>
+    </>
   );
 
   // The replay clock: the end of the latest revealed candle. Nothing past it
   // is known yet -- a release's actual number stays hidden until then.
   const clockMs = candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null;
+  // High only (default) or high + medium, remembered in this browser.
+  const [newsImpact, setNewsImpactState] = useState<'high' | 'all'>('high');
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('bt-news-impact'); } catch { /* storage blocked */ }
+    if (saved === 'all') queueMicrotask(() => setNewsImpactState('all'));
+  }, []);
+  const setNewsImpact = (v: 'high' | 'all') => { setNewsImpactState(v); try { localStorage.setItem('bt-news-impact', v); } catch { /* storage blocked */ } };
+  const newsEvents = useMemo(() => (news ? news.events.filter(e => newsImpact === 'all' || e.impact === 'High') : []), [news, newsImpact]);
   // Released events, grouped by the candle they landed in.
   const newsByCandle = useMemo(() => {
     const out = new Map<number, (NewsEvent & { ms: number })[]>();
     if (!candles || !news || clockMs == null) return out;
-    for (const e of news.events) {
+    for (const e of newsEvents) {
       if (e.ms >= clockMs) break; // sorted by time
       const i = candleIndexAt(candles, e.ms / 1000, replayIdx);
       if (i < 0) continue;
       out.set(i, [...(out.get(i) || []), e]);
     }
     return out;
-  }, [candles, news, clockMs, replayIdx]);
-  // Badges along the bottom of the chart, TradingView style: one per
-  // currency per candle, red ring for high impact, orange for medium.
-  // Released events sit on their candle; scheduled ones show ahead in the
-  // empty space to the right, without their actual number.
-  const [newsHover, setNewsHover] = useState<string | null>(null);
-  const newsBadges = (() => {
+  }, [candles, news, newsEvents, clockMs, replayIdx]);
+  // Badges along the bottom of the chart, TradingView style, red ring for
+  // high impact, orange for medium. Released events sit under their candle;
+  // scheduled ones show ahead in the empty space to the right, without their
+  // actual number. Badges that would overlap are merged when drawn.
+  const [newsHover, setNewsHover] = useState<number | null>(null);
+  const newsMarks = (() => {
     if (!indicators.news || !candles || !news || clockMs == null) return [];
-    const groups = new Map<string, { time: number; currency: string; events: (NewsEvent & { ms: number })[]; released: boolean }>();
-    const add = (time: number, e: NewsEvent & { ms: number }, released: boolean) => {
-      const key = `${time}|${e.currency}`;
-      const g = groups.get(key) ?? { time, currency: e.currency, events: [], released };
-      g.events.push(e);
-      groups.set(key, g);
-    };
-    for (const [i, list] of newsByCandle) for (const e of list) add(Number(candles[i].time), e, true);
+    const out: { time: number; event: NewsEvent & { ms: number }; released: boolean }[] = [];
+    for (const [i, list] of newsByCandle) for (const event of list) out.push({ time: Number(candles[i].time), event, released: true });
     // Scheduled: the future slot each falls in (slots step on from the current candle).
     const barSec = barMsOf(interval) / 1000, base = Number(candles[replayIdx].time);
-    for (const e of news.events) {
-      if (e.ms < clockMs) continue;
-      if (e.ms - clockMs > 30 * DAY) break;
-      add(base + Math.floor((e.ms / 1000 - base) / barSec) * barSec, e, false);
+    for (const event of newsEvents) {
+      if (event.ms < clockMs) continue;
+      if (event.ms - clockMs > 30 * DAY) break;
+      out.push({ time: base + Math.floor((event.ms / 1000 - base) / barSec) * barSec, event, released: false });
     }
-    return [...groups.entries()].map(([key, g]) => ({ key, ...g, high: g.events.some(e => e.impact === 'High') }));
+    return out;
   })();
 
   // Right-click menu on the chart.
@@ -1708,7 +1724,7 @@ export default function Workspace() {
             </button>
             {showIndicatorMenu && (
               <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-40 tw:w-52 tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News (high / medium)']] as const).map(([k, label]) => (
+                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News']] as const).map(([k, label]) => (
                   <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                     <span>{label}</span>
                     <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
@@ -2116,7 +2132,7 @@ export default function Workspace() {
                 </button>
                 {showIndicatorMenu && (
                   <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-30 tw:w-52 tw:bg-surface-container-high tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News (high / medium)']] as const).map(([k, label]) => (
+                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News']] as const).map(([k, label]) => (
                       <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                         <span>{label}</span>
                         <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
@@ -2215,39 +2231,51 @@ export default function Workspace() {
             drawings={managerRef.current?.exportDrawings() ?? []}
             revision={drawingRevision}
           />
-          {newsBadges.length > 0 && chartRef.current && (() => {
+          {newsMarks.length > 0 && chartRef.current && (() => {
             // Re-placed on every pan/zoom (drawingRevision re-renders this).
             void drawingRevision;
             const ts = chartRef.current.timeScale();
             const paneWidth = ts.width(), bottom = ts.height() + 6;
-            const stack = new Map<number, number>();
             const fmtTime = (ms: number) => new Date(ms).toISOString().slice(5, 16).replace('T', ' ').replace('-', '/');
+            // Merge badges closer than one badge width.
+            const placed = newsMarks.flatMap(m => {
+              const x = ts.timeToCoordinate(m.time as Time);
+              return x == null || x < 10 || x > paneWidth - 10 ? [] : [{ ...m, x: Number(x) }];
+            }).sort((a, b) => a.x - b.x || a.event.ms - b.event.ms);
+            const clusters: { x0: number; xs: number[]; items: typeof placed }[] = [];
+            for (const p of placed) {
+              const last = clusters[clusters.length - 1];
+              if (last && p.x - last.x0 < 24) { last.xs.push(p.x); last.items.push(p); }
+              else clusters.push({ x0: p.x, xs: [p.x], items: [p] });
+            }
             return (
               <div aria-label="Economic news" className="tw:absolute tw:inset-0 tw:z-[5] tw:overflow-hidden tw:pointer-events-none">
-                {newsBadges.map(b => {
-                  const x = ts.timeToCoordinate(b.time as Time);
-                  if (x == null || x < 10 || x > paneWidth - 10) return null;
-                  const level = stack.get(b.time) ?? 0;
-                  stack.set(b.time, level + 1);
-                  const ring = b.high ? '#ef4444' : '#f59e0b';
-                  const open = newsHover === b.key;
+                {clusters.map((c, ci) => {
+                  const x = c.xs.reduce((sum, v) => sum + v, 0) / c.xs.length;
+                  const currencies = [...new Set(c.items.map(i => i.event.currency))];
+                  const high = c.items.some(i => i.event.impact === 'High');
+                  const released = c.items.some(i => i.released);
+                  const ring = high ? '#ef4444' : '#f59e0b';
+                  const open = newsHover === ci;
+                  // Keep the card on screen near the edges.
+                  const cardPos = x < 140 ? 'tw:left-0' : x > paneWidth - 140 ? 'tw:right-0' : 'tw:left-1/2 tw:-translate-x-1/2';
                   return (
-                    <div key={b.key} className="tw:absolute tw:pointer-events-auto" style={{ left: x, bottom: bottom + level * 24, transform: 'translateX(-50%)', zIndex: open ? 2 : 1 }}
-                      onMouseEnter={() => setNewsHover(b.key)} onMouseLeave={() => setNewsHover(k => (k === b.key ? null : k))}>
-                      <div className={`tw:w-[22px] tw:h-[22px] tw:rounded-full tw:flex tw:items-center tw:justify-center tw:bg-surface-container-lowest tw:text-[7.5px] tw:font-bold tw:tracking-tight tw:text-on-surface tw:cursor-default ${b.released ? '' : 'tw:opacity-60'}`}
-                        style={{ border: `2px ${b.released ? 'solid' : 'dashed'} ${ring}` }}>
-                        {b.currency}
+                    <div key={`${c.items[0].time}|${ci}`} className="tw:absolute tw:pointer-events-auto" style={{ left: x, bottom, transform: 'translateX(-50%)', zIndex: open ? 2 : 1 }}
+                      onMouseEnter={() => setNewsHover(ci)} onMouseLeave={() => setNewsHover(k => (k === ci ? null : k))}>
+                      <div className={`tw:w-[22px] tw:h-[22px] tw:rounded-full tw:flex tw:items-center tw:justify-center tw:bg-surface-container-lowest tw:font-bold tw:tracking-tight tw:text-on-surface tw:cursor-default ${c.items.length === 1 ? 'tw:text-[7.5px]' : 'tw:text-[9px]'} ${released ? '' : 'tw:opacity-60'}`}
+                        style={{ border: `2px ${released ? 'solid' : 'dashed'} ${ring}` }}>
+                        {c.items.length === 1 ? currencies[0] : c.items.length}
                       </div>
                       {open && (
-                        <div className="tw:absolute tw:bottom-full tw:mb-1.5 tw:left-1/2 tw:-translate-x-1/2 tw:w-64 tw:max-w-[70vw] tw:rounded-md tw:border tw:border-outline-variant tw:bg-surface-container-high tw:shadow-xl tw:p-2 tw:flex tw:flex-col tw:gap-1.5 tw:font-mono-metric-md tw:text-[10px]">
-                          {b.events.map((e, k) => (
+                        <div className={`tw:absolute tw:bottom-full tw:mb-1.5 ${cardPos} tw:w-64 tw:max-w-[70vw] tw:max-h-72 tw:overflow-y-auto tw:rounded-md tw:border tw:border-outline-variant tw:bg-surface-container-high tw:shadow-xl tw:p-2 tw:flex tw:flex-col tw:gap-1.5 tw:font-mono-metric-md tw:text-[10px]`}>
+                          {c.items.map((i, k) => (
                             <div key={k}>
                               <div className="tw:flex tw:items-center tw:gap-1.5">
-                                <span className="tw:w-2 tw:h-2 tw:rounded-full tw:shrink-0" style={{ background: e.impact === 'High' ? '#ef4444' : '#f59e0b' }} />
-                                <span className="tw:text-on-surface tw:font-semibold tw:truncate">{e.currency} {e.name}</span>
+                                <span className="tw:w-2 tw:h-2 tw:rounded-full tw:shrink-0" style={{ background: i.event.impact === 'High' ? '#ef4444' : '#f59e0b' }} />
+                                <span className="tw:text-on-surface tw:font-semibold tw:truncate">{i.event.currency} {i.event.name}</span>
                               </div>
                               <div className="tw:text-on-surface-variant tw:pl-3.5">
-                                {fmtTime(e.ms)} UTC · {b.released ? `A ${newsValue(e.actual)} · ` : 'scheduled · '}F {newsValue(e.forecast)} · P {newsValue(e.previous)}
+                                {fmtTime(i.event.ms)} UTC · {i.released ? `A ${newsValue(i.event.actual)} · ` : 'scheduled · '}F {newsValue(i.event.forecast)} · P {newsValue(i.event.previous)}
                               </div>
                             </div>
                           ))}

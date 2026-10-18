@@ -167,7 +167,7 @@ if (!process.env.MONGODB_URI) {
     .then(async () => {
       console.log(` MongoDB connected — using database "${mongoose.connection.name}"${useTestDatabase ? ' (TEST -- USE_TEST_DATABASE is set)' : ''}`);
 
-      // Economic calendar for the charts (only with JBLANKED_API_KEY set).
+      // Economic calendar for the charts (Forex Factory weekly feed, hourly).
       startNewsSync();
 
       // Optionally seed the very first account from environment variables

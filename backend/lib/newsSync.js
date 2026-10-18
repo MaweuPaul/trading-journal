@@ -1,35 +1,47 @@
-// Keeps the economic calendar (NewsEvent) current from the JBlanked News
-// API's free "this week" Forex Factory calendar: fetched every hour, so new
-// weeks and each release's actual number come in by themselves. History
-// before the server started fetching comes from a one-time MT5 export
-// (lib/newsImport.js). Runs only when JBLANKED_API_KEY is set.
+// Keeps the economic calendar (NewsEvent) current from Forex Factory's own
+// public weekly calendar feed (the JSON their site widgets use; no key
+// needed), fetched every hour. It has forecast and previous but no actual
+// numbers. History before the server started fetching comes from a one-time
+// MT5 export (lib/newsImport.js), which does have actuals.
 
 const NewsEvent = require('../models/NewsEvent');
-const { normalizeEvent } = require('./newsCalendar');
 
-const API = 'https://www.jblanked.com/news/api';
+const FEED = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
 const SOURCE = 'forex-factory';
 const MINUTE = 60 * 1000;
-const status = { configured: false, running: false, lastFetch: null, lastError: '' };
+const status = { configured: true, running: false, lastFetch: null, lastError: '' };
+const IMPACTS = { high: 'High', medium: 'Medium', low: 'Low' };
+const clean = v => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
 
-async function fetchWeek(apiKey) {
-  const res = await fetch(`${API}/${SOURCE}/calendar/week/`, {
-    headers: { 'Authorization': `Api-Key ${apiKey}`, 'Content-Type': 'application/json' },
-  });
-  const body = await res.json().catch(() => null);
+/** A stored event from one feed row ({ title, country, date, impact, forecast, previous }), or null. */
+function eventFromFeed(row) {
+  const time = new Date(String(row?.date || ''));
+  const currency = String(row?.country || '').trim().toUpperCase().slice(0, 8);
+  const name = String(row?.title || '').trim().slice(0, 200);
+  if (!Number.isFinite(time.getTime()) || !/^[A-Z]{3}$/.test(currency) || currency === 'ALL' || !name) return null;
+  return {
+    key: `${SOURCE}|${currency}|${name}|${time.toISOString()}`,
+    source: SOURCE, currency, name,
+    impact: IMPACTS[String(row?.impact || '').trim().toLowerCase()] || 'None',
+    time, forecast: clean(row?.forecast), previous: clean(row?.previous),
+  };
+}
+
+async function fetchWeek() {
+  const res = await fetch(FEED, { headers: { 'User-Agent': 'TradeJournal news sync (hourly)' } });
   if (!res.ok) {
-    const err = new Error(`News API ${res.status}: ${body?.message || body?.detail || body?.error || res.statusText}`);
+    const err = new Error(`Forex Factory calendar feed ${res.status}`);
     err.status = res.status;
     throw err;
   }
-  const rows = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : Array.isArray(body?.results) ? body.results : null;
-  if (!rows) throw new Error('News API returned an unexpected response');
-  return rows.map(row => normalizeEvent(row, SOURCE)).filter(Boolean);
+  const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows)) throw new Error('Forex Factory calendar feed returned an unexpected response');
+  return rows.map(eventFromFeed).filter(Boolean);
 }
 
-async function syncOnce(apiKey) {
+async function syncOnce() {
   try {
-    const events = await fetchWeek(apiKey);
+    const events = await fetchWeek();
     if (events.length) {
       await NewsEvent.bulkWrite(events.map(e => ({ updateOne: { filter: { key: e.key }, update: { $set: e }, upsert: true } })), { ordered: false });
     }
@@ -45,16 +57,14 @@ async function syncOnce(apiKey) {
 
 /** Starts the hourly fetch (once the database is connected). */
 function startNewsSync() {
-  const apiKey = process.env.JBLANKED_API_KEY;
-  status.configured = Boolean(apiKey);
-  if (!apiKey || status.running) return;
+  if (status.running) return;
   status.running = true;
   const tick = async () => {
     let wait = 60 * MINUTE;
-    try { await syncOnce(apiKey); } catch (err) { if (err.status === 429) wait = 10 * MINUTE; }
+    try { await syncOnce(); } catch (err) { if (err.status === 429) wait = 2 * 60 * MINUTE; }
     setTimeout(tick, wait).unref?.();
   };
   setTimeout(tick, 10 * 1000).unref?.();
 }
 
-module.exports = { startNewsSync, syncOnce, fetchWeek, newsStatus: () => ({ ...status }) };
+module.exports = { startNewsSync, syncOnce, fetchWeek, eventFromFeed, newsStatus: () => ({ ...status }) };

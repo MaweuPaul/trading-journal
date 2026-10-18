@@ -7,7 +7,7 @@
 #property description "Exports MT5's economic calendar (high and medium impact, every major currency) to a CSV for TradeJournal's backtest news. Run once; upload the file on the Backtest page (Indicators -> Import MT5 news history)."
 #property script_show_inputs
 
-input datetime InpFrom       = D'2024.01.01';                       // Export from
+input datetime InpFrom       = D'2016.01.01';                       // Export from
 input string   InpCurrencies = "USD,EUR,GBP,JPY,AUD,NZD,CAD,CHF,CNY"; // Currencies (one file covers every pair)
 input string   InpFile       = "tradejournal_news.csv";             // File name (saved in MQL5\Files)
 

@@ -24,4 +24,10 @@ test('currenciesForSymbol', () => {
   assert.deepEqual(currenciesForSymbol('Nasdaq100'), ['USD']);
   assert.deepEqual(currenciesForSymbol('GER40'), ['EUR']);
   assert.deepEqual(currenciesForSymbol('UK100'), ['GBP']);
+  assert.deepEqual(currenciesForSymbol('Germany 40'), ['EUR']);
+  assert.deepEqual(currenciesForSymbol('Japan 225'), ['JPY']);
+  assert.deepEqual(currenciesForSymbol('China A50'), ['CNY']);
+  assert.deepEqual(currenciesForSymbol('SWI20'), ['CHF']);
+  assert.deepEqual(currenciesForSymbol('UKOIL'), ['USD'], 'Brent is priced in dollars, not a UK index');
+  assert.deepEqual(currenciesForSymbol('USTEC'), ['USD']);
 });

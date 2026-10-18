@@ -1002,6 +1002,14 @@ export default function Workspace() {
     return () => { cancelled = true; };
   }, [newsKey, newsSymbol, newsFrom, newsTo, news?.key]);
 
+  // High only (default) or high + medium, remembered in this browser.
+  const [newsImpact, setNewsImpactState] = useState<'high' | 'all'>('high');
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('bt-news-impact'); } catch { /* storage blocked */ }
+    if (saved === 'all') queueMicrotask(() => setNewsImpactState('all'));
+  }, []);
+  const setNewsImpact = (v: 'high' | 'all') => { setNewsImpactState(v); try { localStorage.setItem('bt-news-impact', v); } catch { /* storage blocked */ } };
   // One-time history import: the calendar exported from MT5 with NewsExport.mq5.
   const [newsImporting, setNewsImporting] = useState(false);
   const importNewsFile = async (file: File) => {
@@ -1047,15 +1055,9 @@ export default function Workspace() {
 
   // The replay clock: the end of the latest revealed candle. Nothing past it
   // is known yet -- a release's actual number stays hidden until then.
-  const clockMs = candles ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[replayIdx].time) * 1000 + barMsOf(interval)) : null;
-  // High only (default) or high + medium, remembered in this browser.
-  const [newsImpact, setNewsImpactState] = useState<'high' | 'all'>('high');
-  useEffect(() => {
-    let saved: string | null = null;
-    try { saved = localStorage.getItem('bt-news-impact'); } catch { /* storage blocked */ }
-    if (saved === 'all') queueMicrotask(() => setNewsImpactState('all'));
-  }, []);
-  const setNewsImpact = (v: 'high' | 'all') => { setNewsImpactState(v); try { localStorage.setItem('bt-news-impact', v); } catch { /* storage blocked */ } };
+  // replayIdx can briefly run past the candles while a chart loads or resumes: clamp it.
+  const shownIdx = candles?.length ? Math.min(replayIdx, candles.length - 1) : -1;
+  const clockMs = candles && shownIdx >= 0 ? (partial && replayIdx === partial.idx ? partial.endMs : Number(candles[shownIdx].time) * 1000 + barMsOf(interval)) : null;
   const newsEvents = useMemo(() => (news ? news.events.filter(e => newsImpact === 'all' || e.impact === 'High') : []), [news, newsImpact]);
   // Released events, grouped by the candle they landed in.
   const newsByCandle = useMemo(() => {
@@ -1063,12 +1065,12 @@ export default function Workspace() {
     if (!candles || !news || clockMs == null) return out;
     for (const e of newsEvents) {
       if (e.ms >= clockMs) break; // sorted by time
-      const i = candleIndexAt(candles, e.ms / 1000, replayIdx);
+      const i = candleIndexAt(candles, e.ms / 1000, shownIdx);
       if (i < 0) continue;
       out.set(i, [...(out.get(i) || []), e]);
     }
     return out;
-  }, [candles, news, newsEvents, clockMs, replayIdx]);
+  }, [candles, news, newsEvents, clockMs, shownIdx]);
   // Badges along the bottom of the chart, TradingView style, red ring for
   // high impact, orange for medium. Released events sit under their candle;
   // scheduled ones show ahead in the empty space to the right, without their
@@ -1079,7 +1081,7 @@ export default function Workspace() {
     const out: { time: number; event: NewsEvent & { ms: number }; released: boolean }[] = [];
     for (const [i, list] of newsByCandle) for (const event of list) out.push({ time: Number(candles[i].time), event, released: true });
     // Scheduled: the future slot each falls in (slots step on from the current candle).
-    const barSec = barMsOf(interval) / 1000, base = Number(candles[replayIdx].time);
+    const barSec = barMsOf(interval) / 1000, base = Number(candles[shownIdx].time);
     for (const event of newsEvents) {
       if (event.ms < clockMs) continue;
       if (event.ms - clockMs > 30 * DAY) break;

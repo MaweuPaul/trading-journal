@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
-  createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
+  createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, CrosshairMode, LineStyle,
 } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, MouseEventParams, SeriesMarker, Time } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, MouseEventParams, Time } from 'lightweight-charts';
 import { DrawingManager, getToolRegistry } from 'lightweight-charts-drawing';
 import type { Anchor, IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import { useTheme } from '../ThemeProvider';
@@ -197,7 +197,6 @@ export default function Workspace() {
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const emaRefs = useRef<ISeriesApi<'Line'>[]>([]);
   const rsiRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const newsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const managerRef = useRef<DrawingManager | null>(null);
 
   // ── Session autosave ─────────────────────────────────────────────────────
@@ -686,7 +685,6 @@ export default function Workspace() {
       priceLineColor: down, priceLineStyle: LineStyle.Dotted,
     });
     seriesRef.current = series;
-    newsMarkersRef.current = createSeriesMarkers(series, []);
     lineRef.current = chart.addSeries(LineSeries, { color: up, lineWidth: 2, visible: false, priceLineVisible: false, lastValueVisible: false });
     volumeRef.current = chart.addSeries(HistogramSeries, { priceScaleId: 'bt-volume', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false });
     chart.priceScale('bt-volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -888,7 +886,6 @@ export default function Workspace() {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       chart.remove();
       chartRef.current = null; seriesRef.current = null; lineRef.current = null; volumeRef.current = null; rsiRef.current = null; emaRefs.current = [];
-      newsMarkersRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuilt per chartEpoch; replayIdx/interval are read as of that rebuild
   }, [chartEpoch, resolvedTheme]);
@@ -1050,20 +1047,30 @@ export default function Workspace() {
     }
     return out;
   }, [candles, news, clockMs, replayIdx]);
-  useEffect(() => {
-    const plugin = newsMarkersRef.current;
-    if (!plugin || !candles) return;
-    if (!indicators.news) { plugin.setMarkers([]); return; }
-    const markers: SeriesMarker<Time>[] = [...newsByCandle.entries()].sort((a, b) => a[0] - b[0]).map(([i, list]) => {
-      const high = list.filter(e => e.impact === 'High');
-      return {
-        time: candles[i].time as Time, position: 'aboveBar', shape: 'circle', size: high.length ? 1 : 0.6,
-        color: high.length ? '#ef4444' : '#f59e0b',
-        text: [...new Set(high.map(e => e.currency))].join(' '),
-      };
-    });
-    plugin.setMarkers(markers);
-  }, [newsByCandle, candles, indicators.news, chartEpoch]);
+  // Badges along the bottom of the chart, TradingView style: one per
+  // currency per candle, red ring for high impact, orange for medium.
+  // Released events sit on their candle; scheduled ones show ahead in the
+  // empty space to the right, without their actual number.
+  const [newsHover, setNewsHover] = useState<string | null>(null);
+  const newsBadges = (() => {
+    if (!indicators.news || !candles || !news || clockMs == null) return [];
+    const groups = new Map<string, { time: number; currency: string; events: (NewsEvent & { ms: number })[]; released: boolean }>();
+    const add = (time: number, e: NewsEvent & { ms: number }, released: boolean) => {
+      const key = `${time}|${e.currency}`;
+      const g = groups.get(key) ?? { time, currency: e.currency, events: [], released };
+      g.events.push(e);
+      groups.set(key, g);
+    };
+    for (const [i, list] of newsByCandle) for (const e of list) add(Number(candles[i].time), e, true);
+    // Scheduled: the future slot each falls in (slots step on from the current candle).
+    const barSec = barMsOf(interval) / 1000, base = Number(candles[replayIdx].time);
+    for (const e of news.events) {
+      if (e.ms < clockMs) continue;
+      if (e.ms - clockMs > 30 * DAY) break;
+      add(base + Math.floor((e.ms / 1000 - base) / barSec) * barSec, e, false);
+    }
+    return [...groups.entries()].map(([key, g]) => ({ key, ...g, high: g.events.some(e => e.impact === 'High') }));
+  })();
 
   // Right-click menu on the chart.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number } | null>(null);
@@ -2208,6 +2215,50 @@ export default function Workspace() {
             drawings={managerRef.current?.exportDrawings() ?? []}
             revision={drawingRevision}
           />
+          {newsBadges.length > 0 && chartRef.current && (() => {
+            // Re-placed on every pan/zoom (drawingRevision re-renders this).
+            void drawingRevision;
+            const ts = chartRef.current.timeScale();
+            const paneWidth = ts.width(), bottom = ts.height() + 6;
+            const stack = new Map<number, number>();
+            const fmtTime = (ms: number) => new Date(ms).toISOString().slice(5, 16).replace('T', ' ').replace('-', '/');
+            return (
+              <div aria-label="Economic news" className="tw:absolute tw:inset-0 tw:z-[5] tw:overflow-hidden tw:pointer-events-none">
+                {newsBadges.map(b => {
+                  const x = ts.timeToCoordinate(b.time as Time);
+                  if (x == null || x < 10 || x > paneWidth - 10) return null;
+                  const level = stack.get(b.time) ?? 0;
+                  stack.set(b.time, level + 1);
+                  const ring = b.high ? '#ef4444' : '#f59e0b';
+                  const open = newsHover === b.key;
+                  return (
+                    <div key={b.key} className="tw:absolute tw:pointer-events-auto" style={{ left: x, bottom: bottom + level * 24, transform: 'translateX(-50%)', zIndex: open ? 2 : 1 }}
+                      onMouseEnter={() => setNewsHover(b.key)} onMouseLeave={() => setNewsHover(k => (k === b.key ? null : k))}>
+                      <div className={`tw:w-[22px] tw:h-[22px] tw:rounded-full tw:flex tw:items-center tw:justify-center tw:bg-surface-container-lowest tw:text-[7.5px] tw:font-bold tw:tracking-tight tw:text-on-surface tw:cursor-default ${b.released ? '' : 'tw:opacity-60'}`}
+                        style={{ border: `2px ${b.released ? 'solid' : 'dashed'} ${ring}` }}>
+                        {b.currency}
+                      </div>
+                      {open && (
+                        <div className="tw:absolute tw:bottom-full tw:mb-1.5 tw:left-1/2 tw:-translate-x-1/2 tw:w-64 tw:max-w-[70vw] tw:rounded-md tw:border tw:border-outline-variant tw:bg-surface-container-high tw:shadow-xl tw:p-2 tw:flex tw:flex-col tw:gap-1.5 tw:font-mono-metric-md tw:text-[10px]">
+                          {b.events.map((e, k) => (
+                            <div key={k}>
+                              <div className="tw:flex tw:items-center tw:gap-1.5">
+                                <span className="tw:w-2 tw:h-2 tw:rounded-full tw:shrink-0" style={{ background: e.impact === 'High' ? '#ef4444' : '#f59e0b' }} />
+                                <span className="tw:text-on-surface tw:font-semibold tw:truncate">{e.currency} {e.name}</span>
+                              </div>
+                              <div className="tw:text-on-surface-variant tw:pl-3.5">
+                                {fmtTime(e.ms)} UTC · {b.released ? `A ${newsValue(e.actual)} · ` : 'scheduled · '}F {newsValue(e.forecast)} · P {newsValue(e.previous)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {drawingPropertiesEdit && (() => {
             const drawing = managerRef.current?.getDrawing(drawingPropertiesEdit.drawingId);
             if (!drawing) return null;

@@ -1,4 +1,5 @@
 const express = require('express');
+const zlib = require('zlib');
 const mongoose = require('mongoose');
 const auth = require('../middleware/auth');
 const NewsEvent = require('../models/NewsEvent');
@@ -53,7 +54,13 @@ router.get('/news', auth, async (req, res) => {
         .select('-_id source currency name impact time actual forecast previous').lean(),
       calendarReach(),
     ]);
-    res.json({ events: mergeSources(events), currencies, status: { ...status, ...reach } });
+    // Years of events run to a couple of MB of repetitive JSON: gzip it (~10x smaller).
+    const body = JSON.stringify({ events: mergeSources(events), currencies, status: { ...status, ...reach } });
+    if (/gzip/.test(String(req.headers['accept-encoding'] || '')) && body.length > 4096) {
+      res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      return res.send(zlib.gzipSync(body));
+    }
+    res.type('application/json').send(body);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

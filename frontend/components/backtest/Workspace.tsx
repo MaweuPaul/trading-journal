@@ -983,23 +983,33 @@ export default function Workspace() {
   // ── Economic calendar ──────────────────────────────────────────────────────
   // Events for the loaded candles (and a week past them, for "next up").
   const [news, setNews] = useState<{ key: string; events: (NewsEvent & { ms: number })[]; status: NewsStatus } | null>(null);
+  // One request per session: from the earliest loaded candle (or the session
+  // start) to a month past the session end, rounded to whole months so
+  // candles streaming in during replay don't change it. Only scrolling back
+  // into an earlier month asks again.
   const newsSymbol = symbol.trim().toUpperCase();
-  const newsFrom = candles?.length ? Number(candles[0].time) * 1000 : null;
-  const newsTo = candles?.length ? Number(candles[candles.length - 1].time) * 1000 + 7 * DAY : null;
+  const sessionStartMs = new Date(fromDate).getTime();
+  const firstCandleMs = candles?.length ? Number(candles[0].time) * 1000 : null;
+  const monthStart = (ms: number) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
+  const newsFrom = firstCandleMs != null ? monthStart(Number.isFinite(sessionStartMs) ? Math.min(firstCandleMs, sessionStartMs) : firstCandleMs) : null;
+  const sessionEndMs = new Date(toDate).getTime();
+  const newsTo = firstCandleMs != null && Number.isFinite(sessionEndMs) ? monthStart(sessionEndMs + 45 * DAY) : null;
   const newsKey = newsFrom != null && newsTo != null ? `${newsSymbol}|${newsFrom}|${newsTo}` : '';
+  const newsRequested = useRef('');
   useEffect(() => {
-    if (!newsKey || news?.key === newsKey) return;
-    let cancelled = false;
+    if (!newsKey || news?.key === newsKey || newsRequested.current === newsKey) return;
+    newsRequested.current = newsKey; // a request in flight is never cancelled; a stale answer is dropped below
     const params = new URLSearchParams({ symbol: newsSymbol, from: new Date(newsFrom!).toISOString(), to: new Date(newsTo!).toISOString() });
+    const fail = (why: string) => { if (newsRequested.current === newsKey) setNews({ key: newsKey, events: [], status: { configured: true, lastError: why } }); };
     fetch(`/api/news?${params}`, { headers: authHeaders() })
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (cancelled || !data) return;
+      .then(async r => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !data) { fail(`couldn't load news (${data?.error || `HTTP ${r.status}`})`); return; }
+        if (newsRequested.current !== newsKey) return;
         const events = (data.events as NewsEvent[]).map(e => ({ ...e, ms: new Date(e.time).getTime() }));
         setNews({ key: newsKey, events, status: data.status || {} });
       })
-      .catch(() => {});
-    return () => { cancelled = true; };
+      .catch(() => fail("couldn't reach the server for news"));
   }, [newsKey, newsSymbol, newsFrom, newsTo, news?.key]);
 
   // High only (default) or high + medium, remembered in this browser.
@@ -1023,7 +1033,7 @@ export default function Workspace() {
       if (!res.ok) throw new Error(body.error || 'Import failed');
       const day = (iso: string | null) => (iso ? new Date(iso).toISOString().slice(0, 10) : '?');
       alert(`Imported ${body.imported} news events (${day(body.from)} to ${day(body.to)}). Broker clock: ${body.clock}.`);
-      setNews(null); // reload the chart's events
+      newsRequested.current = ''; setNews(null); // reload the chart's events
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Import failed');
     } finally {

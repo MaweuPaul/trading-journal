@@ -112,6 +112,9 @@ def sync_command():
     return [python, "-u", SYNC_PY_PATH] if python else None
 
 
+MIN_SYNC_INTERVAL = 25  # seconds; sync.py enforces the same floor
+
+
 def load_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -276,7 +279,7 @@ class SyncAgentApp:
 
         ttk.Label(conn, text="Sync interval (seconds)").grid(row=3, column=0, sticky="w", pady=(0, 2))
         self.sync_interval_var = tk.StringVar(value="60")
-        ttk.Spinbox(conn, from_=10, to=86400, textvariable=self.sync_interval_var, width=10).grid(row=4, column=0, sticky="w", pady=(0, 8))
+        ttk.Spinbox(conn, from_=MIN_SYNC_INTERVAL, to=86400, textvariable=self.sync_interval_var, width=10).grid(row=4, column=0, sticky="w", pady=(0, 8))
 
         self.require_real_account_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(conn, text="Reject demo accounts (only sync live accounts)",
@@ -343,12 +346,12 @@ class SyncAgentApp:
     def _load_config_into_form(self):
         config = load_config()
         self.sync_secret_var.set(config.get("syncSecret") or "")
-        self.sync_interval_var.set(str(config.get("syncInterval") or 60))
+        self.sync_interval_var.set(str(max(MIN_SYNC_INTERVAL, int(config.get("syncInterval") or 60))))
         self.require_real_account_var.set(bool(config.get("requireRealAccount")))
 
     def _current_config(self):
         try:
-            interval = max(10, int(self.sync_interval_var.get()))
+            interval = max(MIN_SYNC_INTERVAL, int(self.sync_interval_var.get()))
         except ValueError:
             interval = 60
         return {
@@ -359,7 +362,9 @@ class SyncAgentApp:
         }
 
     def _save_config(self):
-        save_config(self._current_config())
+        config = self._current_config()
+        save_config(config)
+        self.root.after(0, lambda: self.sync_interval_var.set(str(config["syncInterval"])))  # show the 25 s floor if raised
         self.save_state_var.set("Saved")
         self.root.after(1800, lambda: self.save_state_var.set(""))
 
@@ -543,7 +548,7 @@ class SyncAgentApp:
             **os.environ,
             "API_BASE": config["apiBase"],
             "SYNC_SECRET": config["syncSecret"],
-            "SYNC_INTERVAL": str(config["syncInterval"]),
+            "SYNC_INTERVAL": str(max(MIN_SYNC_INTERVAL, int(config.get("syncInterval") or 60))),
             "MT5_REQUIRE_REAL_ACCOUNT": "true" if config["requireRealAccount"] else "false",
         }
         try:

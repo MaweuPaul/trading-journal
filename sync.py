@@ -37,7 +37,11 @@ LEGACY_MT5_SERVER = os.getenv("MT5_SERVER", "")
 LEGACY_REQUIRE_REAL = os.getenv("MT5_REQUIRE_REAL_ACCOUNT", "false").lower() in {"1", "true", "yes", "on"}
 API_BASE      = os.getenv("API_BASE", "http://localhost:4000/api")
 API_TIMEOUT   = int(os.getenv("API_TIMEOUT", "60"))
-SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))  # seconds
+MIN_SYNC_INTERVAL = 25  # seconds; faster cycles add load on the server without syncing anything sooner in practice
+try:
+    SYNC_INTERVAL = max(MIN_SYNC_INTERVAL, int(os.getenv("SYNC_INTERVAL", "60")))
+except ValueError:
+    SYNC_INTERVAL = 60
 SYNC_SECRET   = os.getenv("SYNC_SECRET", "")
 # terminal64.exe to attach to (set by the Linux/Wine setup); blank finds the running terminal.
 MT5_PATH      = os.getenv("MT5_PATH", "").strip()

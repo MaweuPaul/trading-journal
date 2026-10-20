@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const path = require('path');
 const { rateLimit } = require('express-rate-limit');
 const { ipKey } = require('./lib/clientIp');
+const { createLoadShedder } = require('./lib/loadShedding');
 const { convertCTraderPnlToGross } = require('./lib/ctraderPnl');
 
 const tradesRouter = require('./routes/trades');
@@ -57,6 +58,15 @@ app.use(cors({
   },
   credentials: true,
 }));
+// Server-wide overload guard, ahead of body parsing so a swamped server
+// doesn't read 25 MB uploads only to refuse them. See lib/loadShedding.js.
+const loadShedder = createLoadShedder({
+  maxInFlight: Number(process.env.MAX_IN_FLIGHT) || 200,
+  maxLagMs: Number(process.env.MAX_EVENT_LOOP_LAG_MS) || 1000,
+  exempt: req => req.path === '/health',
+});
+app.use(loadShedder.middleware);
+
 app.use(express.json({ limit: '25mb' }));
 
 app.use(morgan('dev'));
@@ -139,7 +149,13 @@ app.get('/api/downloads/sync-agent-version', (req, res) => {
 });
 
 // Health check
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+app.get('/health', (req, res) => res.json({
+  status: 'ok',
+  time: new Date(),
+  load: loadShedder.stats(),
+  memoryMb: Math.round(process.memoryUsage().rss / 1048576),
+  uptimeSec: Math.round(process.uptime()),
+}));
 
 // Start server immediately
 app.listen(PORT, () => {

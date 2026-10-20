@@ -503,7 +503,6 @@ class SyncAgentApp:
         self.sync_stopped_by_user = False
         self.restart_attempts = 0
         self.root.after(0, lambda: self._set_status("starting"))
-        self._append_log("Starting sync...")
         self._spawn_sync(config)
 
     def _dependencies_missing(self, python):

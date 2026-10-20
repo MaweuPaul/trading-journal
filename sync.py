@@ -801,7 +801,7 @@ def sync_account(account, force_full_sync=False):
 
 
 def main(once=False, full=False):
-    log.info("[START] MT5 Sync Script | Interval: %ds | API: %s", SYNC_INTERVAL, API_BASE)
+    log.info("[START] Syncing every %ds", SYNC_INTERVAL)
 
     if not get_jwt_token():
         log.critical("[START] Could not authenticate -- exiting.")

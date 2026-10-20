@@ -11,7 +11,9 @@ const tradingAccountSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   // mt5_import: an MT5 account whose trades come from uploaded MT5 reports
   // (no login stored, never synced by the desktop app -- e.g. MT5 on a Mac).
-  provider: { type: String, enum: ['mt5', 'ctrader', 'mt5_import'], default: 'mt5' },
+  // mt5_terminal: found open in a running MT5 terminal by the desktop agent,
+  // which reads it there without logging in (no login stored, like mt5_import).
+  provider: { type: String, enum: ['mt5', 'ctrader', 'mt5_import', 'mt5_terminal'], default: 'mt5' },
   accountKey: { type: String, required: true },
   label: { type: String, required: true, trim: true, maxlength: 80 },
   credentials: {

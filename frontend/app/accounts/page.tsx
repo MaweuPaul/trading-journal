@@ -16,7 +16,7 @@ type AccountStatus = 'pending' | 'connected' | 'error' | 'disabled';
 interface TradingAccount {
   id: string;
   accountKey: string;
-  provider: 'mt5' | 'ctrader' | 'mt5_import';
+  provider: 'mt5' | 'ctrader' | 'mt5_import' | 'mt5_terminal';
   statementLogin?: string;
   statementServer?: string;
   label: string;
@@ -516,8 +516,10 @@ export default function TradingAccountsPage() {
             const status = statusCopy(account); const StatusIcon = status.icon;
             const isCtrader = account.provider === 'ctrader';
             const isImport = account.provider === 'mt5_import';
+            // Found open in a running MT5 on the trader's computer: read there, no login stored.
+            const isTerminal = account.provider === 'mt5_terminal';
             return <article className="account-card" key={account.id}>
-              <div className="account-card-top"><div className="account-provider-icon">{isCtrader ? <Video size={19} /> : isImport ? <FileUp size={19} /> : <Landmark size={19} />}</div><div className="account-card-name"><h3>{account.label}</h3><span>{isCtrader ? 'cTrader Open API · OAuth' : isImport ? 'MT5 · statement import' : 'MetaTrader 5'} · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${isImport ? 'connected' : account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
+              <div className="account-card-top"><div className="account-provider-icon">{isCtrader ? <Video size={19} /> : isImport ? <FileUp size={19} /> : <Landmark size={19} />}</div><div className="account-card-name"><h3>{account.label}</h3><span>{isCtrader ? 'cTrader Open API · OAuth' : isImport ? 'MT5 · statement import' : isTerminal ? 'MetaTrader 5 · open terminal' : 'MetaTrader 5'} · {account.actualAccountType || 'type pending'}</span></div><span className={`account-status ${isImport ? 'connected' : account.lastStatus}`}><StatusIcon size={13} />{status.label}</span></div>
               {account.lastError && !isImport && <div className="account-card-error"><AlertCircle size={14} />{account.lastError}</div>}
               <dl className="account-metrics"><div><dt>Trades</dt><dd>{account.tradeCount}</dd></div><div><dt>Balance</dt><dd>{account.lastBalance == null ? '—' : `$${account.lastBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}</dd></div><div><dt>{isImport ? 'Last import' : 'Last sync'}</dt><dd>{formatDate(account.lastSyncAt)}</dd></div>{!isCtrader && !isImport && <div><dt>Agent seen</dt><dd>{formatDate(account.lastAgentSeenAt)}</dd></div>}</dl>
               <div className="account-card-foot">
@@ -527,7 +529,9 @@ export default function TradingAccountsPage() {
                 <div>
                   {isCtrader
                     ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="This account is authorized via OAuth in the cTrader section below — there's no login to edit.">Managed via cTrader connection below</span>
-                    : isImport ? null : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
+                    : isImport ? null
+                    : isTerminal ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="The Desktop Sync App found this account logged in to an MT5 on your computer and reads it there, without logging in or storing a password. It syncs while that MT5 is open.">Synced from its open MT5</span>
+                    : <button onClick={() => startEdit(account)} aria-label={`Edit ${account.label}`}><Pencil size={15} /> Edit</button>}
                   <button onClick={() => setInvestorOpenId(current => current === account.id ? null : account.id)} aria-expanded={investorOpenId === account.id} aria-label={`Investor access for ${account.label}`}>
                     <Users size={15} /> Investor{account.investor.enabled ? ' · on' : ''}
                   </button>

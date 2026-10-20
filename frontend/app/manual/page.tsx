@@ -578,6 +578,12 @@ export default function ManualPage() {
               <li><b>Generate your sync key</b><span className="d">Under &quot;Your personal sync key,&quot; click Generate / rotate. It&apos;s shown once — copy it immediately.</span></li>
               <li><b>Install the Desktop Sync App</b><span className="d">Download it, paste in your sync key, and click Start Sync. The account record alone doesn&apos;t sync anything by itself.</span></li>
             </ol>
+            <div className="manual-sub">Several MT5s on one computer (copiers, prop accounts)</div>
+            <ul className="manual-feature-list">
+              <li>The Desktop Sync App (version 1.2 or later) syncs <b>every MT5 that&apos;s open</b> on the computer: a copier&apos;s master and followers, each prop account in its own MT5, and the main one. It reads each terminal as it is and <b>never logs in or switches account</b>, so a running copier or EA isn&apos;t disturbed.</li>
+              <li>An account it hasn&apos;t seen before is added to your accounts by itself, named from MT5 (for example &quot;MavenTrade Limited 10451501 · 2SO P1&quot;) and marked <b>MetaTrader 5 · open terminal</b>. No password is needed or stored; turn its sync off on its card like any other.</li>
+              <li>An account only syncs while its MT5 is open. Accounts added with a password that aren&apos;t open anywhere are still logged in to through the standard MT5 install (C:\Program Files\MetaTrader 5), never through another terminal.</li>
+            </ul>
             <div className="manual-sub">MT5 on Linux (beta)</div>
             <ul className="manual-feature-list">
               <li>MetaTrader 5 runs on Linux through Wine (MetaQuotes&apos; Linux installer sets it up). On the Accounts page, <b>Download for Linux (beta)</b> gives you a setup script, <code>tradejournal-linux.sh</code>.</li>

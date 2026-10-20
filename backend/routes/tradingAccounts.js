@@ -6,6 +6,7 @@ const auth = require('../middleware/auth');
 const TradingAccount = require('../models/TradingAccount');
 const Trade = require('../models/Trade');
 const { encryptCredential, decryptCredential } = require('../lib/credentialEncryption');
+const { findAccountFor, terminalLabel } = require('../lib/terminalAccounts');
 
 const router = express.Router();
 
@@ -230,6 +231,52 @@ router.get('/sync-agent/trading-accounts', auth, async (req, res) => {
     });
     await TradingAccount.updateMany({ _id: { $in: accounts.map(account => account._id) } }, { $set: { lastAgentSeenAt: new Date() } });
     res.json({ accounts: values });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/sync-agent/trading-accounts/discover  { login, server, company, name, accountType }
+// The agent found an MT5 terminal logged into this account. Returns the
+// journal's record for it (added with a password, imported from a
+// statement, or found before), or creates one -- no password: the agent
+// reads the open terminal and never logs in.
+router.post('/sync-agent/trading-accounts/discover', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'sync_agent') return res.status(403).json({ error: 'Sync agent token required.' });
+    const login = String(req.body.login || '').trim();
+    const server = String(req.body.server || '').trim().slice(0, 160);
+    if (!/^\d{1,20}$/.test(login) || !server) return res.status(400).json({ error: 'login and server are required.' });
+
+    const userId = String(req.user.userId);
+    const candidates = await TradingAccount.find({ user: userId, archivedAt: null, provider: { $in: ['mt5', 'mt5_terminal', 'mt5_import'] } }).sort({ createdAt: 1 });
+    const credentialOf = account => {
+      try {
+        const context = field => credentialContext(userId, account._id, field);
+        return { login: decryptCredential(account.credentials.login, context('login')), server: decryptCredential(account.credentials.server, context('server')) };
+      } catch { return null; }
+    };
+    let account = findAccountFor(candidates, login, server, credentialOf);
+    if (!account) {
+      const accountId = new mongoose.Types.ObjectId();
+      account = await TradingAccount.create({
+        _id: accountId, user: userId, accountKey: `mt5:${accountId}`, provider: 'mt5_terminal',
+        label: terminalLabel({ login, server, company: req.body.company, name: req.body.name }),
+        statementLogin: login, statementServer: server,
+        enabled: true, lastStatus: 'pending',
+        actualAccountType: ['live', 'demo'].includes(req.body.accountType) ? req.body.accountType : '',
+      });
+    } else if (account.provider === 'mt5_import') {
+      // A statement-imported account now open in a terminal: it syncs live from here on.
+      account.provider = 'mt5_terminal';
+      await account.save();
+    }
+    res.json({
+      account: {
+        id: String(account._id), accountKey: account.accountKey, label: account.label, provider: account.provider,
+        enabled: account.enabled, requireRealAccount: account.requireRealAccount, symbolAliases: account.symbolAliases || '',
+      },
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

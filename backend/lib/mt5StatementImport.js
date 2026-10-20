@@ -16,7 +16,7 @@ const lc = value => String(value || '').trim().toLowerCase();
 async function matchAccount(userId, account) {
   if (!account) return null;
   const accounts = await TradingAccount.find({ user: userId, archivedAt: null }).lean();
-  const imported = accounts.find(a => a.provider === 'mt5_import' && a.statementLogin === account.login
+  const imported = accounts.find(a => (a.provider === 'mt5_import' || a.provider === 'mt5_terminal') && a.statementLogin === account.login
     && (!account.server || !a.statementServer || lc(a.statementServer) === lc(account.server)));
   if (imported) return imported;
   for (const a of accounts.filter(item => item.provider === 'mt5' && item.credentials?.login)) {

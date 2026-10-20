@@ -85,6 +85,33 @@ PYTHON_INSTALL_DIR = os.path.join(
 )
 
 
+# The packaged app carries sync.py's own Python and packages (MetaTrader5,
+# numpy, requests...) inside it, and runs the sync by starting itself again
+# with this flag -- nothing to install. Only the dev script needs a system Python.
+RUN_SYNC_FLAG = "--run-sync"
+
+
+def run_bundled_sync(argv):
+    """Child-process entry point: run sync.py on the bundled interpreter."""
+    import runpy
+    # A windowed app has no console; write the log to the pipe the window reads.
+    for name, fd in (("stdout", 1), ("stderr", 2)):
+        try:
+            setattr(sys, name, open(fd, "w", buffering=1, encoding="utf-8", errors="replace", closefd=False))
+        except OSError:
+            pass
+    sys.argv = [SYNC_PY_PATH, *argv]
+    runpy.run_path(SYNC_PY_PATH, run_name="__main__")
+
+
+def sync_command():
+    """How to start sync.py: the app itself when packaged, else a system Python."""
+    if IS_FROZEN:
+        return [sys.executable, RUN_SYNC_FLAG]
+    python = resolve_python()
+    return [python, "-u", SYNC_PY_PATH] if python else None
+
+
 def load_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -275,7 +302,8 @@ class SyncAgentApp:
         ).pack(anchor="w", pady=(0, 8))
 
         python_row = ttk.Frame(agent)
-        python_row.pack(fill="x", pady=(0, 8))
+        if not IS_FROZEN:  # the packaged app brings its own Python
+            python_row.pack(fill="x", pady=(0, 8))
         self.python_status_var = tk.StringVar(value="Checking for Python…")
         self.python_status_label = ttk.Label(python_row, textvariable=self.python_status_var)
         self.python_status_label.pack(side="left")
@@ -285,9 +313,10 @@ class SyncAgentApp:
         agent_actions = ttk.Frame(agent)
         agent_actions.pack(anchor="w")
         self.install_btn = ttk.Button(agent_actions, text="Install/update dependencies", command=self._install_dependencies)
-        self.install_btn.pack(side="left")
+        if not IS_FROZEN:
+            self.install_btn.pack(side="left", padx=(0, 8))
         self.start_btn = ttk.Button(agent_actions, text="Start Sync", command=self._start_sync)
-        self.start_btn.pack(side="left", padx=(8, 0))
+        self.start_btn.pack(side="left")
         self.stop_btn = ttk.Button(agent_actions, text="Stop", command=self._stop_sync, state="disabled")
         self.stop_btn.pack(side="left", padx=(8, 0))
 
@@ -380,6 +409,9 @@ class SyncAgentApp:
 
     # ------------------------------------------------------------ python --
     def _check_python(self):
+        if IS_FROZEN:
+            return
+
         def worker():
             found = resolve_python()
             def update():
@@ -457,22 +489,22 @@ class SyncAgentApp:
         if not os.path.exists(SYNC_PY_PATH):
             self._append_log(f"Error: sync.py not found at {SYNC_PY_PATH}")
             return
-        python = resolve_python()
-        if not python:
-            self._append_log("Error: Python was not found on this machine. Install Python 3 from python.org, then try again.")
-            return
-
-        if self._dependencies_missing(python):
-            self._append_log("Setting things up for the first time — this only happens once...")
-            if not self._run_pip_install(python):
-                self._append_log("Error: setup failed. Try again, or check your internet connection.")
+        if not IS_FROZEN:
+            python = resolve_python()
+            if not python:
+                self._append_log("Error: Python was not found on this machine. Install Python 3 from python.org, then try again.")
                 return
+            if self._dependencies_missing(python):
+                self._append_log("Setting things up for the first time — this only happens once...")
+                if not self._run_pip_install(python):
+                    self._append_log("Error: setup failed. Try again, or check your internet connection.")
+                    return
 
         self.sync_stopped_by_user = False
         self.restart_attempts = 0
         self.root.after(0, lambda: self._set_status("starting"))
-        self._append_log(f"Starting sync.py with {python}...")
-        self._spawn_sync(python, config)
+        self._append_log("Starting sync...")
+        self._spawn_sync(config)
 
     def _dependencies_missing(self, python):
         check_code = "import " + ", ".join(REQUIRED_MODULES)
@@ -502,7 +534,12 @@ class SyncAgentApp:
             self._append_log(f"Error: {exc}")
             return False
 
-    def _spawn_sync(self, python, config):
+    def _spawn_sync(self, config):
+        command = sync_command()
+        if not command:
+            self._append_log("Error: Python was not found on this machine.")
+            self.root.after(0, lambda: self._set_status("stopped"))
+            return
         env = {
             **os.environ,
             "API_BASE": config["apiBase"],
@@ -512,11 +549,11 @@ class SyncAgentApp:
         }
         try:
             self.sync_process = subprocess.Popen(
-                [python, "-u", SYNC_PY_PATH],
+                command,
                 cwd=os.path.dirname(SYNC_PY_PATH),
-                env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, creationflags=NO_WINDOW,
+                env={**env, "PYTHONIOENCODING": "utf-8"},
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
             )
         except Exception as exc:
             self._append_log(f"Error: failed to start sync.py: {exc}")
@@ -546,13 +583,7 @@ class SyncAgentApp:
         self.restart_timer = self.root.after(delay_ms, self._restart_sync)
 
     def _restart_sync(self):
-        config = load_config()
-        python = resolve_python()
-        if not python:
-            self._append_log("Error: Python was not found on this machine.")
-            self._set_status("stopped")
-            return
-        self._spawn_sync(python, config)
+        self._spawn_sync(load_config())
 
     def _stop_sync(self):
         self.sync_stopped_by_user = True
@@ -623,6 +654,9 @@ def acquire_single_instance_lock():
 
 
 def main():
+    if RUN_SYNC_FLAG in sys.argv[1:]:
+        run_bundled_sync([a for a in sys.argv[1:] if a != RUN_SYNC_FLAG])
+        return
     lock = acquire_single_instance_lock()
     if lock is None:
         # Another instance is already running.

@@ -14,14 +14,12 @@ backend and is only ever decrypted for `sync.py` itself to use.
 - **MetaTrader 5** installed and **open** (logged into the account added on
   the Accounts page) whenever Sync is started — `sync.py` attaches to an
   already-running terminal via `mt5.initialize()`, it doesn't launch one.
-- **Python 3** installed and on `PATH` (this app looks for `python` then
-  `python3`) to actually run `sync.py` and install its requirements —
-  separate from whatever Python built/runs this GUI itself, since
-  `sync.py`'s own dependencies (like `MetaTrader5`) aren't bundled here.
-  If Python isn't found, the app offers a one-click "Install Python" button
-  that downloads the official python.org installer and runs it silently
-  for the current user (see `download_and_install_python()` in
-  `sync_agent_gui.py`) — no manual download required.
+- Nothing else. The packaged app carries its own Python plus everything
+  `sync.py` imports (`MetaTrader5`, `numpy`, `requests`, `python-dotenv`),
+  and runs the sync by starting itself again with `--run-sync` (see
+  `run_bundled_sync()` in `sync_agent_gui.py`). Only the dev script below
+  (`python sync_agent_gui.py`) uses a system Python and offers to install
+  `requirements.txt` into it.
 
 ## Development
 
@@ -36,6 +34,8 @@ python sync_agent_gui.py
 ```bash
 cd desktop-py
 python build.py
+# while the app in dist/ is running (files locked), build elsewhere:
+# SYNC_AGENT_DISTPATH=C:/some/temp/dir python build.py
 ```
 
 Produces `release/TradeJournal Sync Agent.zip` — a `--onedir` PyInstaller
@@ -43,7 +43,8 @@ build zipped up (not `--onefile`; the one-file self-extracting stub is a
 common false-positive trigger for antivirus/browser download scanners on
 small unsigned Python apps). It bundles `../sync.py`, `../requirements.txt`,
 and `VERSION` (see `build.py`'s `--add-data` flags) so the installed app is
-self-contained apart from the Python 3 requirement above. `assets/icon.ico`
+fully self-contained: `build.py` adds `--paths ..` and `--hidden-import sync`
+so PyInstaller bundles every package `sync.py` imports. `assets/icon.ico`
 is generated automatically from `assets/icon.png` on first build.
 
 `release/` is committed on purpose (unlike the git-ignored `dist/`/`build/`

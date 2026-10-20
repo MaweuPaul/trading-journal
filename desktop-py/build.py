@@ -38,6 +38,10 @@ def ensure_ico():
 
 def main():
     ensure_ico()
+    distpath = os.environ.get("SYNC_AGENT_DISTPATH")  # build elsewhere while the app in dist/ is running
+    global BUILD_DIST_DIR
+    if distpath:
+        BUILD_DIST_DIR = distpath
     sync_py = os.path.join(ROOT, "sync.py")
     requirements_txt = os.path.join(ROOT, "requirements.txt")
 
@@ -49,6 +53,11 @@ def main():
         "--name", APP_NAME,
         "--icon", ICON_ICO,
         "--distpath", BUILD_DIST_DIR,
+        # Bundle everything sync.py imports (MetaTrader5, numpy, requests,
+        # dotenv...) so the app runs the sync itself -- no Python or pip on
+        # the trader's computer.
+        "--paths", ROOT,
+        "--hidden-import", "sync",
         "--add-data", f"{sync_py}{os.pathsep}.",
         "--add-data", f"{requirements_txt}{os.pathsep}.",
         "--add-data", f"{os.path.join(HERE, 'VERSION')}{os.pathsep}.",

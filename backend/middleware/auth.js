@@ -43,6 +43,7 @@ module.exports = function (req, res, next) {
         ['GET', /^\/api\/sync-agent\/trading-accounts$/],
         ['POST', /^\/api\/sync-agent\/trading-accounts\/[^/]+\/status$/],
         ['POST', /^\/api\/sync-agent\/trading-accounts\/import-legacy$/],
+        ['POST', /^\/api\/sync-agent\/trading-accounts\/discover$/],
         ['GET', /^\/api\/trades\/latest-close$/],
         ['POST', /^\/api\/sync$/],
         ['POST', /^\/api\/sync-account-events$/],

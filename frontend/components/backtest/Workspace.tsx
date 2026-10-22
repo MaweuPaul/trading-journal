@@ -2555,6 +2555,10 @@ export default function Workspace() {
           {isDesktop && resultDrawer}
         </div>
         {isDesktop && (
+          // Out of the flow (absolute inside a fixed-width column) so a long
+          // timeline scrolls inside the panel instead of making the row --
+          // and the space under the chart -- taller.
+          <div className="tw:relative tw:w-[300px] tw:shrink-0">
           <TradePanel
             marketPrice={current?.close ?? null} replayTime={current ? Number(current.time) : null}
             openTrade={openTrade} closedTrade={closedTrade} tradeLive={tradeLive} locked={!candles || tradeLocked} unrealizedR={unrealizedR}
@@ -2570,6 +2574,7 @@ export default function Workspace() {
             }}
             timeline={timeline} fmtTime={t => fmtTick(t)}
           />
+          </div>
         )}
       </div>
 

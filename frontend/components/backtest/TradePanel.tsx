@@ -279,14 +279,14 @@ function PositionCard(p: TradePanelProps) {
 function Timeline({ events, fmtTime }: { events: TimelineEvent[]; fmtTime: (s: number) => string }) {
   const tone = (e: TimelineEvent) => (e.tone === 'win' ? 'tw:text-secondary' : e.tone === 'loss' ? 'tw:text-tertiary' : 'tw:text-on-surface');
   return (
-    <section className={`${card} tw:flex-1 tw:min-h-0 tw:flex tw:flex-col`} aria-label="Timeline">
+    <section className={`${card} tw:flex-1 tw:min-h-[140px] tw:flex tw:flex-col`} aria-label="Timeline">
       <div className={heading}><span>Timeline</span><span className="tw:normal-case tw:tracking-normal">{events.length || ''}</span></div>
       {events.length === 0
         ? <p className="tw:text-[11px] tw:text-on-surface-variant">Orders, fills and exits in this session show up here.</p>
         : (
           <ol className="tw:flex tw:flex-col tw:gap-1.5 tw:overflow-y-auto tw:min-h-0 tw:pr-1">
             {[...events].reverse().map((e, i) => (
-              <li key={`${e.time}-${i}`} className="tw:text-[11px] tw:leading-snug">
+              <li key={`${e.time}-${i}`} className="tw:text-[11px] tw:leading-snug tw:break-words">
                 <div className="tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface-variant">{fmtTime(e.time)}</div>
                 <div className={tone(e)}>{e.text}</div>
               </li>
@@ -348,7 +348,7 @@ function Account({ a, spread, onSpread }: { a: TradePanelProps['account'] } & Pi
 
 export default function TradePanel(p: TradePanelProps) {
   return (
-    <aside className="tw:w-[300px] tw:shrink-0 tw:bg-surface-container-low tw:border-l tw:border-outline-variant tw:flex tw:flex-col tw:min-h-0 tw:overflow-y-auto tw:select-text tw:z-20" aria-label="Trading panel">
+    <aside className="tw:absolute tw:inset-0 tw:bg-surface-container-low tw:border-l tw:border-outline-variant tw:flex tw:flex-col tw:overflow-y-auto tw:select-text tw:z-20" aria-label="Trading panel">
       {p.openTrade ? <PositionCard {...p} /> : <OrderTicket {...p} />}
       <Timeline events={p.timeline} fmtTime={p.fmtTime} />
       <Account a={p.account} spread={p.spread} onSpread={p.onSpread} />

@@ -28,6 +28,7 @@ import {
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
 import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
+import DrawingToolbar from '../backtest-tools/DrawingToolbar';
 import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, isUserHidden, setDrawingColor, unhideDrawing } from '../chart-drawing/drawingKit';
 import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
 import SecondChart from './SecondChart';
@@ -143,6 +144,10 @@ function candleIndexAt(list: { time: unknown }[], sec: number, last = list.lengt
   return found;
 }
 interface DrawingPropertiesEdit { drawingId: string; drawingName: string; isNew: boolean }
+/** A unique id for a pasted / cloned drawing. */
+function newDrawingId(type: string) {
+  return `${type}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
 function drawingDisplayName(type: string) {
   return WORKSPACE_TOOLS.find(tool => tool.id === type)?.label ?? type.split('-').map(word => word[0]?.toUpperCase() + word.slice(1)).join(' ');
 }
@@ -456,6 +461,52 @@ export default function Workspace() {
     manager.importDrawings(last, drawingFactory);
     setHiddenDrawingCount(hiddenOf(manager).length);
     setSelectedDrawingId(null);
+  };
+  // ── Copy / paste / clone (Ctrl+C, Ctrl+V, Ctrl+D), as in TradingView ───────
+  const drawingClipboardRef = useRef<SerializedDrawing | null>(null);
+  const [hasDrawingClipboard, setHasDrawingClipboard] = useState(false);
+  const copySelectedDrawing = () => {
+    const manager = managerRef.current; if (!manager || !selectedDrawingId) return false;
+    const src = manager.exportDrawings().find(d => d.id === selectedDrawingId);
+    if (!src) return false;
+    drawingClipboardRef.current = JSON.parse(JSON.stringify(src)) as SerializedDrawing;
+    setHasDrawingClipboard(true);
+    return true;
+  };
+  /** Add a copy of `src`, nudged down a little so it doesn't hide the original, and select it. */
+  const pasteDrawing = (src: SerializedDrawing | null = drawingClipboardRef.current) => {
+    const manager = managerRef.current; if (!manager || !src) return;
+    const prices = src.anchors.map(a => a.price);
+    const span = Math.max(...prices) - Math.min(...prices);
+    const nudge = Math.max(span * 0.15, Math.abs(prices[0] || 0) * 0.002);
+    const id = newDrawingId(src.type);
+    const data: SerializedDrawing = {
+      ...JSON.parse(JSON.stringify(src)) as SerializedDrawing, id,
+      anchors: src.anchors.map(a => ({ ...a, price: a.price - nudge })),
+      options: { ...src.options, visible: true, locked: false, hiddenByUser: false } as SerializedDrawing['options'],
+    };
+    const drawing = drawingFactory(data.type, data);
+    if (!drawing) return;
+    pushHistorySnapshot();
+    manager.addDrawing(drawing);
+    manager.selectDrawing(id);
+    setSelectedDrawingId(id);
+    setDrawingCount(manager.getAllDrawings().length);
+    setDrawingRevision(revision => revision + 1);
+  };
+  const cloneSelectedDrawing = () => {
+    const src = managerRef.current?.exportDrawings().find(d => d.id === selectedDrawingId);
+    if (src) pasteDrawing(src);
+  };
+  /** A quick change from the floating toolbar (colour, width, style, lock, hide). */
+  const patchSelectedDrawing = (patch: Partial<DrawingPropertiesValue>) => {
+    const manager = managerRef.current;
+    const drawing = selectedDrawingId ? manager?.getDrawing(selectedDrawingId) : null;
+    if (!manager || !drawing) return;
+    pushHistorySnapshot();
+    applyDrawingProperties(drawing, { ...drawingPropertiesValue(drawing), ...patch });
+    if (patch.visible === false) { manager.deselectAll(); setSelectedDrawingId(null); setHiddenDrawingCount(hiddenOf(manager).length); }
+    setDrawingRevision(revision => revision + 1);
   };
   const deleteSelectedDrawing = () => {
     const manager = managerRef.current; if (!manager || !selectedDrawingId) return;
@@ -1729,6 +1780,10 @@ export default function Workspace() {
         return;
       }
       if (typing || !candles) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === 'c' || e.key === 'C') && selectedDrawingId) { if (copySelectedDrawing()) { e.preventDefault(); setToast('Drawing copied: Ctrl+V to paste'); } return; }
+      if (mod && (e.key === 'v' || e.key === 'V') && drawingClipboardRef.current) { e.preventDefault(); pasteDrawing(); return; }
+      if (mod && (e.key === 'd' || e.key === 'D') && selectedDrawingId) { e.preventDefault(); cloneSelectedDrawing(); return; }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) { e.preventDefault(); deleteSelectedDrawing(); }
       // No drawing selected: Delete removes the simulated position (it isn't a drawing, so it can't be selected).
       else if ((e.key === 'Delete' || e.key === 'Backspace') && openTrade && !closedTrade) { e.preventDefault(); removePosition(); }
@@ -2352,6 +2407,22 @@ export default function Workspace() {
               </div>
             );
           })()}
+          {selectedDrawingId && !drawingPropertiesEdit && (() => {
+            const drawing = managerRef.current?.getDrawing(selectedDrawingId);
+            if (!drawing) return null;
+            return (
+              <DrawingToolbar
+                key={`${selectedDrawingId}:${drawingRevision}`}
+                name={drawingDisplayName(drawing.type)}
+                value={drawingPropertiesValue(drawing)}
+                canSetWidth={drawingCapabilities(drawing).lineWidth !== false}
+                onChange={patchSelectedDrawing}
+                onSettings={editSelectedDrawingProperties}
+                onClone={cloneSelectedDrawing}
+                onDelete={deleteSelectedDrawing}
+              />
+            );
+          })()}
           {drawingPropertiesEdit && (() => {
             const drawing = managerRef.current?.getDrawing(drawingPropertiesEdit.drawingId);
             if (!drawing) return null;
@@ -2382,6 +2453,19 @@ export default function Workspace() {
                 {openTrade && !closedTrade && (
                   <button type="button" role="menuitem" onClick={() => { setChartMenu(null); removePosition(); }} className={`${menuItem} tw:text-error`}>
                     <Icon name="delete" className="tw:text-[16px]" />Remove position
+                  </button>
+                )}
+                {selectedDrawingId && <>
+                  <button type="button" role="menuitem" onClick={() => { setChartMenu(null); cloneSelectedDrawing(); }} className={menuItem}>
+                    <Icon name="content_copy" className="tw:text-[16px] tw:text-on-surface-variant" />Clone drawing<span className="tw:ml-auto tw:pl-3 tw:text-[10px] tw:text-on-surface-variant">Ctrl+D</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setChartMenu(null); if (copySelectedDrawing()) setToast('Drawing copied: Ctrl+V to paste'); }} className={menuItem}>
+                    <Icon name="file_copy" className="tw:text-[16px] tw:text-on-surface-variant" />Copy drawing<span className="tw:ml-auto tw:pl-3 tw:text-[10px] tw:text-on-surface-variant">Ctrl+C</span>
+                  </button>
+                </>}
+                {hasDrawingClipboard && (
+                  <button type="button" role="menuitem" onClick={() => { setChartMenu(null); pasteDrawing(); }} className={menuItem}>
+                    <Icon name="content_paste" className="tw:text-[16px] tw:text-on-surface-variant" />Paste drawing<span className="tw:ml-auto tw:pl-3 tw:text-[10px] tw:text-on-surface-variant">Ctrl+V</span>
                   </button>
                 )}
                 {selectedDrawingId && (

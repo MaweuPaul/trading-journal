@@ -2,7 +2,7 @@
 // every chart with drawing tools (Backtest workspace, Pre-Trade Analysis,
 // Trade Replay), all on lightweight-charts-drawing so a drawing looks and
 // behaves the same everywhere. React wiring lives in useChartDrawings.ts.
-import { Drawing, TextAnnotation, getToolRegistry } from 'lightweight-charts-drawing';
+import { Drawing, FibRetracement, TextAnnotation, drawControlPoints, getToolRegistry } from 'lightweight-charts-drawing';
 import type { IDrawing, SerializedDrawing } from 'lightweight-charts-drawing';
 import type { DrawingPropertiesCapabilities, DrawingPropertiesValue } from '../backtest-tools/DrawingPropertiesPanel';
 
@@ -77,6 +77,71 @@ noteProto.testHit = function testHit(this: NoteInternals, point: Point, viewport
   if (!anchor) return false;
   const box = noteBox(this, anchor);
   return point.x >= box.left && point.x <= box.left + box.width && point.y >= box.top && point.y <= box.top + box.height;
+};
+
+// Fib retracement, drawn the TradingView way: each level in its own colour
+// with a soft band to the next level, and the labels ("0.618 (102.18)") to the
+// left of the levels -- the library puts them past the right end, where they
+// run under the price scale.
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618];
+const FIB_COLORS: Record<number, string> = {
+  0: '#787b86', 0.236: '#f23645', 0.382: '#ff9800', 0.5: '#4caf50', 0.618: '#089981',
+  0.786: '#00bcd4', 1: '#787b86', 1.618: '#2962ff', 2.618: '#f23645',
+};
+type FibInternals = NoteInternals & {
+  fibOptions: { levels?: number[]; showPrices?: boolean; showPercentages?: boolean; extendLines?: boolean; reverseDirection?: boolean };
+  style: { lineColor?: string; lineWidth?: number };
+  getControlPoints(viewport: unknown): unknown[];
+};
+type FibViewport = { width: number; priceScale: { priceToCoordinate(price: number): number | null } };
+const fibPrice = (n: number) => n.toFixed(Math.abs(n) >= 10 ? 2 : Math.abs(n) >= 1 ? 4 : 5);
+function drawFib(fib: FibInternals, target: PaneTarget) {
+  target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+    const viewport = fib.getViewport() as FibViewport | null;
+    if (!viewport || fib.options.visible === false || !fib.isValid()) return;
+    const a = fib.anchorToPixel(fib.anchors[0], viewport), b = fib.anchorToPixel(fib.anchors[1], viewport);
+    if (!a || !b) return;
+    const o = fib.fibOptions, start = fib.anchors[0].price, end = fib.anchors[1].price, range = end - start;
+    const levels = [...(o.levels ?? FIB_LEVELS)].sort((x, y) => x - y);
+    const left = o.extendLines ? 0 : Math.min(a.x, b.x), right = o.extendLines ? viewport.width : Math.max(a.x, b.x);
+    const priceAt = (level: number) => (o.reverseDirection ? end - range * level : start + range * level);
+    const ys = levels.map(level => viewport.priceScale.priceToCoordinate(priceAt(level)));
+    const colorOf = (level: number) => FIB_COLORS[level] ?? fib.style.lineColor ?? '#787b86';
+    ctx.save();
+    ctx.scale(hr, vr); // draw in CSS pixels
+    // Bands between neighbouring levels.
+    for (let i = 0; i < levels.length - 1; i++) {
+      const y1 = ys[i], y2 = ys[i + 1];
+      if (y1 == null || y2 == null) continue;
+      ctx.globalAlpha = 0.1; ctx.fillStyle = colorOf(levels[i + 1]);
+      ctx.fillRect(left, Math.min(y1, y2), right - left, Math.abs(y2 - y1));
+    }
+    ctx.globalAlpha = 1;
+    // Level lines and their labels.
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif';
+    ctx.textBaseline = 'middle';
+    const labelRight = left - 6, labelsInside = labelRight < 40; // no room on the left: label inside, at the start
+    ctx.textAlign = labelsInside ? 'left' : 'right';
+    levels.forEach((level, i) => {
+      const y = ys[i]; if (y == null) return;
+      const color = colorOf(level);
+      ctx.strokeStyle = color; ctx.lineWidth = fib.style.lineWidth || 1;
+      ctx.beginPath(); ctx.moveTo(left, Math.round(y) + 0.5); ctx.lineTo(right, Math.round(y) + 0.5); ctx.stroke();
+      const parts = [o.showPercentages !== false ? String(Number(level.toFixed(3))) : '', o.showPrices !== false ? `(${fibPrice(priceAt(level))})` : ''].filter(Boolean);
+      if (parts.length) { ctx.fillStyle = color; ctx.fillText(parts.join(' '), labelsInside ? left + 4 : labelRight, y - (labelsInside ? 7 : 0)); }
+    });
+    // The trend line the levels were drawn from.
+    ctx.strokeStyle = fib.style.lineColor || '#787b86'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    if (fib.state === 'selected' || fib.state === 'editing') {
+      drawControlPoints(ctx, fib.getControlPoints(viewport) as Parameters<typeof drawControlPoints>[1], null, hr);
+    }
+  });
+}
+(FibRetracement.prototype as unknown as { paneViews(this: FibInternals): unknown[] }).paneViews = function paneViews(this: FibInternals) {
+  const renderer = { draw: (target: PaneTarget) => drawFib(this, target) };
+  return [{ zOrder: () => 'normal', renderer: () => renderer }];
 };
 
 /** Drawing tools, in toolbar order. `icon` is a Material Symbols name. */

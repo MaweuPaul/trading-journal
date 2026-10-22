@@ -21,6 +21,9 @@ const tradeSchema = new mongoose.Schema({
   rMultiple: Number,
   pnlUSD: Number,
   features: { type: mongoose.Schema.Types.Mixed, default: undefined }, // captured at entry
+  // Costs this trade was opened with (see the session's costs).
+  spread: { type: Number, default: 0 },
+  commission: { type: Number, default: 0 },
 }, { _id: false });
 
 // A limit/stop entry waiting to be filled. Fills are settled on 1-minute
@@ -36,6 +39,8 @@ const orderSchema = new mongoose.Schema({
   placedAt: { type: Number, required: true },  // clock (unix s) when placed
   expiresAt: { type: Number, default: null },  // unix s; null = good till cancelled
   features: { type: mongoose.Schema.Types.Mixed, default: undefined }, // captured when placed
+  spread: { type: Number, default: 0 },
+  commission: { type: Number, default: 0 },
 }, { _id: false });
 
 const agentReplaySessionSchema = new mongoose.Schema({
@@ -52,6 +57,13 @@ const agentReplaySessionSchema = new mongoose.Schema({
   openTrade: { type: tradeSchema, default: null },
   closedTrade: { type: tradeSchema, default: null }, // resolved, waiting to be logged or discarded
   gapFills: { type: Boolean, default: true },
+  // Trading costs. Candles are bid prices: buys (a long's entry, a short's
+  // exits, buy limit/stop triggers) happen at the ask, bid + spread (real
+  // price units). commission: USD per trade, taken off its P/L and R.
+  costs: {
+    spread: { type: Number, default: 0 },
+    commission: { type: Number, default: 0 },
+  },
   loggedTrades: { type: Number, default: 0 },
   status: { type: String, enum: ['active', 'ended'], default: 'active' },
   // Blind mode: the agent never learns where in history it is. The window is

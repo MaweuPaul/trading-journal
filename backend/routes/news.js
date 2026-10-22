@@ -4,23 +4,12 @@ const mongoose = require('mongoose');
 const auth = require('../middleware/auth');
 const NewsEvent = require('../models/NewsEvent');
 const User = require('../models/User');
-const { currenciesForSymbol } = require('../lib/newsCalendar');
+const { currenciesForSymbol, mergeSources } = require('../lib/newsCalendar');
 const { eventsFromExport } = require('../lib/newsImport');
 const { newsStatus } = require('../lib/newsSync');
 
 const router = express.Router();
 const DAY = 24 * 60 * 60 * 1000;
-
-/**
- * The MT5 export and the Forex Factory feed overlap where history meets the
- * live feed, under different names ("Nonfarm Payrolls" / "Non-Farm
- * Employment Change"). Where Forex Factory has a currency's releases at a
- * minute, the MT5 ones at that minute are dropped.
- */
-function mergeSources(events) {
-  const ff = new Set(events.filter(e => e.source === 'forex-factory').map(e => `${e.currency}|${new Date(e.time).getTime()}`));
-  return events.filter(e => e.source === 'forex-factory' || !ff.has(`${e.currency}|${new Date(e.time).getTime()}`));
-}
 
 async function calendarReach() {
   const [first, last] = await Promise.all([

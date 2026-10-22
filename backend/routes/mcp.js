@@ -116,6 +116,7 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
         'You can also work with the whole Backtest Log: list_backtests and get_backtest read every logged backtest (the owner\'s and agents\'), update_backtest edits journal fields such as notes and lessons, and get_metrics breaks results down by strategy, symbol, direction, weekday, hour, month, timeframe or source.',
         'Two ways to backtest. (1) Mechanical rules: write them as code and call run_strategy -- the server runs your code over months or years of candles in seconds to minutes, with fills and exits settled on 1-minute data; read strategy_api first. Nearly any rule-based strategy works this way with no changes to the server. (2) Judgement calls (reading structure, discretionary setups): replay bar by bar with start_session/step and decide yourself.',
         'Prefer step with bars/untilPrice/untilCloseAbove/untilCloseBelow/untilHighAbove/untilLowBelow/untilTime over one call per candle: it is much faster.',
+        'Be realistic: pass costs (spread in price, commission in USD per trade) to start_session when the owner trades with them, and call get_news before entries when the rules mention news -- it shows released figures and what is scheduled next, never an actual before its release.',
         'Use blind: true on start_session to test without knowing the date (the server picks a random window, shifts dates and rescales prices), so memory of what the market did cannot leak into decisions.',
         'Trades you log are marked as agent runs and kept apart from the owner\'s own backtest statistics.',
         ...(journalAccess ? [JOURNAL_INSTRUCTIONS] : []),
@@ -150,6 +151,10 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
       blind: z.boolean().default(false),
       lengthDays: z.number().int().min(1).max(365).optional().describe('Blind sessions: how many days to replay (default 30).'),
       gapFills: z.boolean().default(true).describe('Fill a stop/target at the candle open when price gaps through it.'),
+      costs: z.object({
+        spread: z.number().min(0).optional().describe('Spread in price (e.g. 0.0001 = 1 pip on EURUSD, 0.3 on XAUUSD). Candles are bid: buys -- long entries, short exits, buy limit/stop triggers -- happen at bid + spread.'),
+        commission: z.number().min(0).optional().describe('USD per trade (round trip), taken off its P/L and R.'),
+      }).optional().describe('Trading costs, so results match what a live account would get. Default none.'),
     },
     args => replay.startSession(userId, apiKeyId, args));
 
@@ -265,6 +270,20 @@ function buildServer(userId, apiKeyId, scopes = ['backtest']) {
       price: z.number().optional().describe('Pending orders only: new entry price.'),
     },
     ({ sessionId: id, ...args }) => replay.modifyTrade(userId, id, args));
+
+  tool('get_news', 'Get economic news',
+    'High-impact (or impact: "all" for high + medium) economic calendar events for the currencies that move the session symbol, '
+    + 'around the replay clock: released ones with their actual figures, upcoming ones with forecast and previous only (the actual is never shown before release). '
+    + 'Each has minutesAgo or minutesUntil, and nextHighImpact says what is next -- use it for rules like "no new trades 30 minutes before red news" or "flat before NFP". '
+    + 'Calendar history starts in 2016. In blind sessions times are shifted like the candles and figures are left out.',
+    {
+      sessionId,
+      lookBackHours: z.number().min(0).max(336).default(24).describe('Released events from this many hours before the clock.'),
+      lookAheadHours: z.number().min(0).max(336).default(24).describe('Scheduled events up to this many hours after the clock.'),
+      impact: z.enum(['high', 'all']).default('high'),
+      currencies: z.array(z.string()).max(10).optional().describe('Override the currencies, e.g. ["USD"]. Default: the symbol\'s (XAUUSD -> USD, NAS100 -> USD, EURUSD -> EUR+USD).'),
+    },
+    ({ sessionId: id, ...args }) => replay.getNews(userId, id, args));
 
   tool('get_indicators', 'Get indicators',
     `Indicator values on closed candles before the clock, newest last: ema:<period>, sma:<period>, rsi:<period>, atr:<period>, bb:<period>:<stddev>. ${NO_HINDSIGHT}`,

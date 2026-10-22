@@ -40,4 +40,13 @@ function currenciesForSymbol(symbol) {
   return ['USD'];
 }
 
-module.exports = { currenciesForSymbol, zoneOffsetMinutes, wallToUtc };
+// The MT5 export and the Forex Factory feed overlap where history meets the
+// live feed, under different names ("Nonfarm Payrolls" / "Non-Farm Employment
+// Change"). Where Forex Factory has a currency's releases at a minute, the MT5
+// ones at that minute are dropped.
+function mergeSources(events) {
+  const ff = new Set(events.filter(e => e.source === 'forex-factory').map(e => `${e.currency}|${new Date(e.time).getTime()}`));
+  return events.filter(e => e.source === 'forex-factory' || !ff.has(`${e.currency}|${new Date(e.time).getTime()}`));
+}
+
+module.exports = { currenciesForSymbol, zoneOffsetMinutes, wallToUtc, mergeSources };

@@ -17,6 +17,8 @@ const BacktestTrade = require('../models/BacktestTrade');
 const BacktestStrategy = require('../models/BacktestStrategy');
 const { getTrendbars, listAccountSymbols } = require('./ctraderReplay');
 const { normalizeTags, strategyAndTags } = require('./backtestTags');
+const NewsEvent = require('../models/NewsEvent');
+const { currenciesForSymbol, mergeSources } = require('./newsCalendar');
 
 const TF_SEC = { '1min': 60, '5min': 300, '15min': 900, '1h': 3600, '4h': 14400, '1day': 86400, '1week': 604800 };
 const INTERVALS = Object.keys(TF_SEC);
@@ -202,12 +204,25 @@ async function nextCandles(ctx, tf, clock, count, endSec) {
 }
 
 // ── Trade resolution ────────────────────────────────────────────────────────
-function levelsHit(c, t) {
+// Candles are bid prices; the ask is bid + spread.
+const askOf = (c, spread) => (spread ? { ...c, open: c.open + spread, high: c.high + spread, low: c.low + spread, close: c.close + spread } : c);
+/** The candle a trade's exits are checked on: a long sells at the bid, a short buys back at the ask. */
+const exitSide = (c, t) => (t.direction === 'short' ? askOf(c, t.spread || 0) : c);
+/** The candle an entry fills on: a buy at the ask, a sell at the bid. */
+const entrySide = (c, o) => (o.direction === 'long' ? askOf(c, o.spread || 0) : c);
+function levelsHit(candle, t) {
   const long = t.direction === 'long';
+  const c = exitSide(candle, t);
   return {
     sl: long ? c.low <= t.stopLoss : c.high >= t.stopLoss,
     tp: t.takeProfit != null && (long ? c.high >= t.takeProfit : c.low <= t.takeProfit),
   };
+}
+/** R and P/L of a trade closed at exitPrice, after its commission. */
+function netResult(trade, exitPrice) {
+  const fee = trade.commission && trade.riskAmount ? trade.commission / trade.riskAmount : 0;
+  const rMultiple = rMultipleOf(trade, exitPrice) - fee;
+  return { rMultiple, pnlUSD: rMultiple * trade.riskAmount };
 }
 
 /**
@@ -242,8 +257,8 @@ async function firstHit(ctx, tf, start, end, t, floor = null) {
 
 function closedTradeFrom(trade, which, exitTime, exitPriceOverride) {
   const exitPrice = exitPriceOverride ?? (which === 'sl' ? trade.stopLoss : trade.takeProfit);
-  const rMultiple = rMultipleOf(trade, exitPrice);
-  return { ...trade, exitTime, exitPrice, exitReason: which === 'sl' ? 'stop' : 'target', outcome: outcomeOf(rMultiple, which === 'tp'), rMultiple, pnlUSD: rMultiple * trade.riskAmount };
+  const { rMultiple, pnlUSD } = netResult(trade, exitPrice);
+  return { ...trade, exitTime, exitPrice, exitReason: which === 'sl' ? 'stop' : 'target', outcome: outcomeOf(rMultiple, which === 'tp'), rMultiple, pnlUSD };
 }
 // A stop that was moved to entry is breakeven; one moved past entry locks in a
 // win. The tolerance absorbs rounding: agents see prices rounded (or rescaled
@@ -339,7 +354,7 @@ async function stateOf(s, ctx = ctxOf(s)) {
   const [last] = await closedCandles(ctx, s.interval, s.clock, 1);
   const fromSec = s.fromMs / 1000, toSec = s.toMs / 1000;
   const openTrade = s.openTrade ? v.trade(s.openTrade) : null;
-  if (openTrade && last) openTrade.unrealizedR = round(rMultipleOf(plain(s.openTrade), last.close));
+  if (openTrade && last) openTrade.unrealizedR = round(netResult(plain(s.openTrade), exitSide(last, plain(s.openTrade)).close).rMultiple);
   return {
     sessionId: String(s._id),
     status: s.status,
@@ -354,6 +369,7 @@ async function stateOf(s, ctx = ctxOf(s)) {
     pendingOrder: s.pendingOrder ? v.order(s.pendingOrder) : null,
     openTrade,
     gapFills: s.gapFills !== false,
+    costs: { spread: v.px(s.costs?.spread || 0), commission: s.costs?.commission || 0 },
     closedTrade: s.closedTrade ? v.trade(s.closedTrade) : null,
     loggedTrades: s.loggedTrades,
   };
@@ -365,6 +381,15 @@ function randomBlindScale() {
   const r = Math.random();
   return round(r < 0.5 ? 0.5 + r * 0.7 : 1.2 + (r - 0.5) * 1.6, 4);
 }
+
+function costNumber(value, label) {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) throw new AgentError(`${label} must be a number of 0 or more.`);
+  return n;
+}
+/** The session's costs, copied onto each order/trade so its fills and exits use them. */
+const costsOf = s => ({ spread: s.costs?.spread || 0, commission: s.costs?.commission || 0 });
 
 async function startSession(userId, apiKeyId, input) {
   const symbol = String(input.symbol || '').trim().toUpperCase().slice(0, 40);
@@ -411,6 +436,8 @@ async function startSession(userId, apiKeyId, input) {
       blind: blind ? { enabled: true, timeShift: Math.floor((from - BLIND_EPOCH) / WEEK) * WEEK, priceScale: randomBlindScale() } : { enabled: false },
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
+    const scale = s.blind?.enabled ? s.blind.priceScale : 1;
+    s.costs = { spread: costNumber(input.costs?.spread, 'costs.spread') / scale, commission: costNumber(input.costs?.commission, 'costs.commission') };
     const ctx = ctxOf(s);
     const candles = await closedCandles(ctx, interval, s.clock, Math.max(context, 1));
     // A blind window that landed before the symbol's history: try another.
@@ -508,19 +535,20 @@ async function step(userId, sessionId, input = {}) {
         if (order.type === 'market') {
           s.pendingOrder = null;
           const long = order.direction === 'long';
-          const target = order.takeProfit ?? (order.takeProfitDistance != null ? (long ? c.open + order.takeProfitDistance : c.open - order.takeProfitDistance) : null);
-          const badStop = long ? order.stopLoss >= c.open : order.stopLoss <= c.open;
-          const badTarget = target != null && (long ? target <= c.open : target >= c.open);
-          if (badStop || badTarget) events.push({ type: 'order_cancelled', time: v.iso(c.time), message: `The candle opened at ${v.px(c.open)}, already beyond the ${badStop ? 'stop' : 'target'}; the order was not filled.` });
+          const fillAt = entrySide(c, order).open;
+          const target = order.takeProfit ?? (order.takeProfitDistance != null ? (long ? fillAt + order.takeProfitDistance : fillAt - order.takeProfitDistance) : null);
+          const badStop = long ? order.stopLoss >= fillAt : order.stopLoss <= fillAt;
+          const badTarget = target != null && (long ? target <= fillAt : target >= fillAt);
+          if (badStop || badTarget) events.push({ type: 'order_cancelled', time: v.iso(c.time), message: `The candle opened at ${v.px(fillAt)}, already beyond the ${badStop ? 'stop' : 'target'}; the order was not filled.` });
           else {
-            const features = { ...(await autoFeatures(s, c.open, order.stopLoss)), ...normalizeFeatures(order.features) };
-            s.openTrade = { direction: order.direction, entryTime: c.time, entryPrice: c.open, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss, takeProfit: target, riskAmount: order.riskAmount, features };
+            const features = { ...(await autoFeatures(s, fillAt, order.stopLoss)), ...normalizeFeatures(order.features) };
+            s.openTrade = { direction: order.direction, entryTime: c.time, entryPrice: fillAt, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss, takeProfit: target, riskAmount: order.riskAmount, features, spread: order.spread || 0, commission: order.commission || 0 };
             events.push({ type: 'order_filled', trade: v.trade(s.openTrade) });
           }
         } else {
           const segStart = Math.max(prevClock, c.time);
           const segEnd = order.expiresAt != null ? Math.min(c.time + sec, order.expiresAt) : c.time + sec;
-          const res = segEnd > segStart && orderTouched(c, order) ? await resolveOrder(ctx, order, segStart, segEnd) : null;
+          const res = segEnd > segStart && orderTouched(entrySide(c, order), order) ? await resolveOrder(ctx, order, segStart, segEnd) : null;
           if (res && res.filled) {
             s.pendingOrder = null; s.openTrade = res.trade; settledThisCandle = true;
             events.push({ type: 'order_filled', trade: v.trade(res.trade) });
@@ -538,7 +566,8 @@ async function step(userId, sessionId, input = {}) {
       if (s.openTrade && !settledThisCandle) {
         const trade = plain(s.openTrade);
         const long = trade.direction === 'long';
-        const gap = s.gapFills !== false && c.time >= prevClock ? ((long ? c.open <= trade.stopLoss : c.open >= trade.stopLoss) ? 'sl' : trade.takeProfit != null && (long ? c.open >= trade.takeProfit : c.open <= trade.takeProfit) ? 'tp' : null) : null;
+        const xo = exitSide(c, trade).open;
+        const gap = s.gapFills !== false && c.time >= prevClock ? ((long ? xo <= trade.stopLoss : xo >= trade.stopLoss) ? 'sl' : trade.takeProfit != null && (long ? xo >= trade.takeProfit : xo <= trade.takeProfit) ? 'tp' : null) : null;
         const h = levelsHit(c, trade);
         // Only price action after the previous clock counts (the trade was
         // opened at or after it); a candle that opened earlier, or that spans
@@ -547,7 +576,7 @@ async function step(userId, sessionId, input = {}) {
           : c.time >= prevClock && !(h.sl && h.tp) ? (h.sl ? 'sl' : 'tp')
           : await firstHit(ctx, s.interval, Math.max(prevClock, c.time), c.time + sec, trade));
         if (which) {
-          s.closedTrade = closedTradeFrom(trade, which, c.time, gap ? c.open : undefined);
+          s.closedTrade = closedTradeFrom(trade, which, c.time, gap ? xo : undefined);
           s.openTrade = null;
           events.push({ type: 'trade_closed', trade: v.trade(s.closedTrade), message: 'Call log_trade to record it in the Backtest Log, or discard_trade to drop it.' });
           if (stopOnTradeExit) { stopped = true; break; }
@@ -615,21 +644,21 @@ async function openTrade(userId, sessionId, input = {}) {
   if (!Number.isFinite(riskAmount) || riskAmount <= 0) throw new AgentError('riskAmount must be a positive number of USD.');
 
   if (input.fill === 'next_open') {
-    s.pendingOrder = { type: 'market', direction, stopLoss, takeProfit, takeProfitDistance, riskAmount, placedAt: s.clock, features: normalizeFeatures(input.features) };
+    s.pendingOrder = { type: 'market', direction, stopLoss, takeProfit, takeProfitDistance, riskAmount, placedAt: s.clock, features: normalizeFeatures(input.features), ...costsOf(s) };
     await saveSession(s);
     return { pending: true, message: 'Order placed for the next candle open. Call step.', state: await stateOf(s) };
   }
 
   const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
   if (!last) throw new AgentError('No candle has been revealed yet. Call step first.', 'NO_DATA');
-  const entry = last.close;
+  const entry = entrySide(last, { direction, ...costsOf(s) }).close;
   const long = direction === 'long';
   if (long ? stopLoss >= entry : stopLoss <= entry) throw new AgentError(`For a ${direction} the stop must be ${long ? 'below' : 'above'} the entry (${v.px(entry)}).`);
   if (takeProfit != null && (long ? takeProfit <= entry : takeProfit >= entry)) throw new AgentError(`For a ${direction} the target must be ${long ? 'above' : 'below'} the entry (${v.px(entry)}).`);
 
   const target = takeProfit ?? (takeProfitDistance != null ? (long ? entry + takeProfitDistance : entry - takeProfitDistance) : null);
   const features = { ...(await autoFeatures(s, entry, stopLoss)), ...normalizeFeatures(input.features) };
-  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit: target, riskAmount, features };
+  s.openTrade = { direction, entryTime: last.time, entryPrice: entry, stopLoss, initialStopLoss: stopLoss, takeProfit: target, riskAmount, features, ...costsOf(s) };
   await saveSession(s);
   return { opened: v.trade(s.openTrade), state: await stateOf(s) };
 }
@@ -645,12 +674,12 @@ async function closeTrade(userId, sessionId) {
   if (!s.openTrade) throw new AgentError('There is no open trade to close.', 'NO_TRADE');
   const [last] = await closedCandles(ctxOf(s), s.interval, s.clock, 1);
   const trade = plain(s.openTrade);
-  const exitPrice = last ? last.close : trade.entryPrice;
-  const rMultiple = rMultipleOf(trade, exitPrice);
+  const exitPrice = last ? exitSide(last, trade).close : trade.entryPrice;
+  const { rMultiple, pnlUSD } = netResult(trade, exitPrice);
   s.closedTrade = {
     ...trade, exitTime: last ? last.time : trade.entryTime, exitPrice, exitReason: 'manual',
     outcome: outcomeOf(rMultiple),
-    rMultiple, pnlUSD: rMultiple * trade.riskAmount,
+    rMultiple, pnlUSD,
   };
   s.openTrade = null;
   await saveSession(s);
@@ -690,7 +719,7 @@ async function logTrade(userId, sessionId, input = {}) {
     riskAmount: t.riskAmount,
     pnlUSD: t.pnlUSD,
     rMultiple: t.rMultiple,
-    notes: [String(input.notes || ''), stopMovedNote(t)].filter(Boolean).join('\n\n').slice(0, 5000),
+    notes: [String(input.notes || ''), stopMovedNote(t), costsNote(t)].filter(Boolean).join('\n\n').slice(0, 5000),
     planFollowed: typeof input.planFollowed === 'boolean' ? input.planFollowed : null,
     setupQuality: Math.max(0, Math.min(5, Number(input.setupQuality) || 0)),
     executionQuality: Math.max(0, Math.min(5, Number(input.executionQuality) || 0)),
@@ -796,12 +825,14 @@ async function resolveOrder(ctx, order, start, end) {
   let trade = null;
   for (const m of await candlesIn(ctx, '1min', start, end)) {
     if (!trade) {
-      if (!orderTouched(m, order)) continue;
-      const gapped = order.type === 'limit' ? (long ? m.open < order.price : m.open > order.price) : (long ? m.open > order.price : m.open < order.price);
-      const entryPrice = gapped ? m.open : order.price;
+      const mf = entrySide(m, order);
+      if (!orderTouched(mf, order)) continue;
+      const gapped = order.type === 'limit' ? (long ? mf.open < order.price : mf.open > order.price) : (long ? mf.open > order.price : mf.open < order.price);
+      const entryPrice = gapped ? mf.open : order.price;
       trade = {
         direction: order.direction, entryTime: m.time, entryPrice, stopLoss: order.stopLoss, initialStopLoss: order.stopLoss,
         takeProfit: order.takeProfit, riskAmount: order.riskAmount, features: order.features,
+        ...(order.spread || order.commission ? { spread: order.spread || 0, commission: order.commission || 0 } : {}),
       };
       // Filled beyond its own stop: out immediately at the fill.
       if (long ? entryPrice <= order.stopLoss : entryPrice >= order.stopLoss) return { filled: true, trade, closed: { which: 'sl', time: m.time, price: entryPrice } };
@@ -814,6 +845,10 @@ async function resolveOrder(ctx, order, start, end) {
   return trade ? { filled: true, trade, closed: null } : null;
 }
 
+function costsNote(t) {
+  if (!t.spread && !t.commission) return '';
+  return `Costs: spread ${Number((t.spread || 0).toPrecision(6))}${t.commission ? `, commission $${t.commission}` : ''} (included in the R and P/L).`;
+}
 function stopMovedNote(t) {
   if (t.initialStopLoss == null || t.initialStopLoss === t.stopLoss) return '';
   return `Stop moved from ${t.initialStopLoss} to ${t.stopLoss} during the trade (R is measured from the original stop).`;
@@ -855,7 +890,7 @@ async function placeOrder(userId, sessionId, input = {}) {
   if (expiresAt != null && expiresAt <= s.clock) throw new AgentError('The expiry must be after the current clock.');
 
   const features = { ...(await autoFeatures(s, price, stopLoss)), ...normalizeFeatures(input.features) };
-  s.pendingOrder = { type, direction, price, stopLoss, takeProfit, riskAmount, placedAt: s.clock, expiresAt, features };
+  s.pendingOrder = { type, direction, price, stopLoss, takeProfit, riskAmount, placedAt: s.clock, expiresAt, features, ...costsOf(s) };
   await saveSession(s);
   return { placed: v.order(s.pendingOrder), message: 'Step forward; an order_filled event reports the fill.' };
 }
@@ -990,6 +1025,56 @@ async function getIndicators(userId, sessionId, { timeframe, indicators = ['ema:
 }
 
 // ── Strategies and symbols ───────────────────────────────────────────────
+// ── Economic calendar ──────────────────────────────────────────────────────
+const MAX_NEWS_HOURS = 24 * 14;
+/**
+ * High/medium impact events for the currencies that move the session's
+ * symbol, around the replay clock. Released events carry their actual
+ * figures; upcoming ones only the forecast and previous -- never the actual,
+ * which the market didn't know yet. Blind sessions get shifted times and no
+ * figures (they could give the date away).
+ */
+async function getNews(userId, sessionId, { lookBackHours = 24, lookAheadHours = 24, impact = 'high', currencies } = {}) {
+  const s = await loadSession(userId, sessionId);
+  const v = viewOf(s);
+  const back = Math.max(0, Math.min(MAX_NEWS_HOURS, Number(lookBackHours) || 0));
+  const ahead = Math.max(0, Math.min(MAX_NEWS_HOURS, Number(lookAheadHours) || 0));
+  const ccys = Array.isArray(currencies) && currencies.length
+    ? currencies.map(c => String(c).trim().toUpperCase()).filter(Boolean).slice(0, 10)
+    : currenciesForSymbol(s.symbol);
+  const impacts = impact === 'all' ? ['High', 'Medium'] : ['High'];
+  if (mongoose.connection.readyState !== 1) throw new AgentError('The news calendar is unavailable right now.', 'UNAVAILABLE');
+  const clockMs = s.clock * 1000;
+  const raw = await NewsEvent.find({
+    time: { $gte: new Date(clockMs - back * 3600_000), $lte: new Date(clockMs + ahead * 3600_000) },
+    currency: { $in: ccys }, impact: { $in: impacts },
+  }).sort({ time: 1 }).limit(500).select('-_id source currency name impact time actual forecast previous').lean();
+  const figures = (e, released) => (v.blind ? {} : {
+    ...(released && e.actual ? { actual: e.actual } : {}),
+    ...(e.forecast ? { forecast: e.forecast } : {}),
+    ...(e.previous ? { previous: e.previous } : {}),
+  });
+  const events = mergeSources(raw).map(e => {
+    const t = new Date(e.time).getTime() / 1000;
+    const released = t <= s.clock;
+    const minutes = Math.round((t - s.clock) / 60);
+    return {
+      time: v.iso(t), currency: e.currency, impact: e.impact.toLowerCase(), name: e.name,
+      ...(released ? { minutesAgo: -minutes } : { minutesUntil: minutes }),
+      ...figures(e, released),
+    };
+  });
+  const next = events.find(e => e.minutesUntil != null && e.impact === 'high');
+  return {
+    clock: v.iso(s.clock), currencies: ccys,
+    window: { lookBackHours: back, lookAheadHours: ahead, impact: impact === 'all' ? 'high+medium' : 'high' },
+    events,
+    nextHighImpact: next ? { name: next.name, currency: next.currency, time: next.time, minutesUntil: next.minutesUntil } : null,
+    ...(v.blind ? { note: 'Blind session: times are shifted like the candles and the figures are left out, as they could reveal the date.' } : {}),
+    ...(!events.length ? { note: `No ${impact === 'all' ? 'high or medium' : 'high'} impact ${ccys.join('/')} events in this window${s.clock * 1000 < Date.UTC(2016, 0, 1) ? ' (the calendar starts in 2016)' : ''}.` } : {}),
+  };
+}
+
 async function listStrategies(userId) {
   const [defined, stats] = await Promise.all([
     BacktestStrategy.find({ user: userId }).sort({ name: 1 }).lean(),
@@ -1037,7 +1122,7 @@ module.exports = {
   AgentError, INTERVALS,
   startSession, getCandles, step, openTrade, closeTrade, discardTrade, logTrade,
   setTimeframe, getState, listSessions, endSession,
-  placeOrder, cancelOrder, modifyTrade, getIndicators,
+  placeOrder, cancelOrder, modifyTrade, getIndicators, getNews,
   listStrategies, createStrategy, listSymbols, throttledFetch,
   normalizeFeatures,
   // execution primitives shared with lib/strategyRunner.js

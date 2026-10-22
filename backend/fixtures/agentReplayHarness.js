@@ -122,6 +122,7 @@ function memoryModel(Model) {
 const models = {
   Session: memoryModel(require('../models/AgentReplaySession')),
   Trade: memoryModel(require('../models/BacktestTrade')),
+  News: memoryModel(require('../models/NewsEvent')),
   Strategy: memoryModel(require('../models/BacktestStrategy')),
   ApiKey: memoryModel(require('../models/ApiKey')),
   // The real trade journal (lib/agentJournal).

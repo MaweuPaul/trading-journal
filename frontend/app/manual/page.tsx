@@ -492,6 +492,7 @@ export default function ManualPage() {
 
             <div className="manual-sub">Where the results show up</div>
             <ul className="manual-feature-list">
+              <li><b>Costs and news</b>: ask the agent to use a spread and commission (e.g. &quot;spread 0.3, commission $7&quot;) so its results aren&apos;t better than live, and to check <b>get_news</b> before entering if your rules avoid news. Costs are noted on each logged trade.</li>
               <li>Agent trades appear in <b>Backtest → Log</b> with an <b>AGENT</b> badge (<b>AGENT · BLIND</b> for blind sessions), filed under the session&apos;s strategy.</li>
               <li>They are <b>kept out of your own numbers</b> by default. Once an agent has logged something, a <b>Mine / Agent / All</b> switch appears in the Backtest header (top of the Log on phones). Every Backtest page (Overview, Log, Metrics, Strategies) follows it.</li>
               <li>Open any agent trade to read its notes, lesson and quality scores, the same way as your own backtests.</li>
@@ -504,10 +505,11 @@ export default function ManualPage() {
                 <tbody>
                   <tr><td className="term">list_symbols</td><td>Symbol names on your cTrader account.</td></tr>
                   <tr><td className="term">list_strategies</td><td>Your strategies, their descriptions (the rules), and agent results so far. <code>create_strategy</code> adds one.</td></tr>
-                  <tr><td className="term">start_session</td><td>Start a replay on a symbol, timeframe and date range, or a blind one.</td></tr>
+                  <tr><td className="term">start_session</td><td>Start a replay on a symbol, timeframe and date range, or a blind one. Optional <b>costs</b>: a spread (in price) and a commission (USD per trade), so results match a live account.</td></tr>
                   <tr><td className="term">get_candles</td><td>Closed candles on any timeframe before the clock, plus the still-forming higher-timeframe candle.</td></tr>
                   <tr><td className="term">step</td><td>Reveal the next candles: one at a time, a number of bars, until a price or time, or until the open trade exits.</td></tr>
                   <tr><td className="term">get_indicators</td><td>EMA, SMA, RSI, ATR and Bollinger Bands, calculated on closed candles only.</td></tr>
+                  <tr><td className="term">get_news</td><td>High (or high + medium) impact economic news for the symbol&apos;s currencies around the replay clock: released events with their actual figures, upcoming ones with forecast and previous only, each with minutes ago / until. For rules like &quot;no trades 30 minutes before red news&quot;.</td></tr>
                   <tr><td className="term">open_trade</td><td>Enter at the last close with a required stop, optional target and USD risk. <code>close_trade</code> exits manually.</td></tr>
                   <tr><td className="term">place_order</td><td>A limit (pullback) or stop (breakout) entry, optionally expiring. Fills are checked minute by minute. <code>cancel_order</code> removes it.</td></tr>
                   <tr><td className="term">modify_trade</td><td>Move the stop or target (e.g. stop to breakeven), or a pending order&apos;s price. R is always measured from the original stop.</td></tr>

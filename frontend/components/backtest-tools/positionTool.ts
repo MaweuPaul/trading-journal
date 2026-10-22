@@ -2,7 +2,7 @@
 // risk/reward box with draggable SL/TP/Entry lines, hit-testing those
 // handles, and the pure price math for placing/dragging a hypothetical trade.
 import type { IChartApi, ISeriesApi, Logical, UTCTimestamp } from 'lightweight-charts';
-import { ClosedTrade, OpenTrade, SizingMode, SymbolSpec, TradeHandle, fmtPrice } from './types';
+import { Candle, ClosedTrade, OpenTrade, OrderType, SizingMode, SymbolSpec, TradeHandle, fmtPrice } from './types';
 
 // R is always measured against the stop the trade went live with, so moving
 // the stop to break-even doesn't turn a winner into 0R.
@@ -21,11 +21,63 @@ export const bankedR = (t: OpenTrade) => (t.partials ?? []).reduce((sum, p) => s
 export const totalR = (t: OpenTrade, exitPrice: number) => bankedR(t) + openFraction(t) * rAt(t, exitPrice);
 export const outcomeForR = (r: number): 'win' | 'loss' | 'breakeven' => (Math.abs(r) < 0.005 ? 'breakeven' : r > 0 ? 'win' : 'loss');
 
-export function placeTradeAt(direction: 'long' | 'short', time: number, price: number, riskAmount: number): OpenTrade {
-  const riskDistance = Math.max(price * 0.005, 1e-6);
-  const stopLoss = direction === 'long' ? price - riskDistance : price + riskDistance;
-  const takeProfit = direction === 'long' ? price + riskDistance * 2 : price - riskDistance * 2;
-  return { direction, entryTime: time, entryPrice: price, stopLoss, takeProfit, riskAmount };
+/**
+ * The order an entry at `entry` needs while price is at `market`, as on a
+ * broker's ticket: buying below the market is a limit, above it a stop
+ * (selling the other way round).
+ */
+export function orderTypeFor(direction: 'long' | 'short', entry: number, market: number): Exclude<OrderType, 'market'> {
+  const below = entry < market;
+  return direction === 'long' ? (below ? 'limit' : 'stop') : (below ? 'stop' : 'limit');
+}
+export const orderLabel = (t: Pick<OpenTrade, 'direction' | 'orderType'>) =>
+  `${t.direction === 'long' ? 'Buy' : 'Sell'} ${t.orderType === 'stop' ? 'Stop' : t.orderType === 'limit' ? 'Limit' : 'Market'}`;
+
+/**
+ * A new position at the current replay candle. A price within `snap` of
+ * `market` (the candle's close) buys/sells at market there; anything further
+ * away is a pending limit or stop order that fills once a later candle reaches it.
+ */
+export function placeTradeAt(direction: 'long' | 'short', time: number, price: number, riskAmount: number, market?: number, snap = 0): OpenTrade {
+  const atMarket = market == null || Math.abs(price - market) <= snap;
+  const entry = atMarket && market != null ? market : price;
+  const riskDistance = Math.max(entry * 0.005, 1e-6);
+  const stopLoss = direction === 'long' ? entry - riskDistance : entry + riskDistance;
+  const takeProfit = direction === 'long' ? entry + riskDistance * 2 : entry - riskDistance * 2;
+  const order: Pick<OpenTrade, 'orderType' | 'pending'> = atMarket
+    ? { orderType: 'market' }
+    : { orderType: orderTypeFor(direction, entry, market!), pending: true };
+  return { direction, entryTime: time, entryPrice: entry, stopLoss, takeProfit, riskAmount, ...order };
+}
+
+/**
+ * Where a pending order fills on `c`, or null if price didn't reach it. A
+ * candle that opens past the order (a gap) fills at its open, like a broker:
+ * a limit gets the better price, a stop the worse one.
+ */
+export function pendingFillPrice(t: OpenTrade, c: Pick<Candle, 'open' | 'high' | 'low'>): number | null {
+  if (!t.pending) return null;
+  const e = t.entryPrice;
+  const fillsBelow = (t.direction === 'long') === (t.orderType === 'limit'); // buy limit / sell stop: price falls to it
+  if (fillsBelow) return c.low <= e ? Math.min(e, c.open) : null;
+  return c.high >= e ? Math.max(e, c.open) : null;
+}
+
+/**
+ * TP1 reached on a trade with a TP2: bank tp1Fraction there, optionally move
+ * the stop to entry, and let the rest run to TP2.
+ */
+export function scaleOutAtTp1(t: OpenTrade, time: number): OpenTrade {
+  const tp1 = t.takeProfit!;
+  const fraction = Math.min(t.tp1Fraction ?? 0.5, openFraction(t));
+  return {
+    ...t,
+    initialStop: t.initialStop ?? t.stopLoss,
+    partials: [...(t.partials ?? []), { time, price: tp1, fraction }],
+    stopLoss: t.beAtTp1 ? t.entryPrice : t.stopLoss,
+    takeProfit: t.takeProfit2 ?? null,
+    takeProfit2: null,
+  };
 }
 
 /** Round down to the broker's lot step (with a little tolerance for float noise). */
@@ -68,6 +120,7 @@ export function updateHandlePrice(trade: OpenTrade, handle: TradeHandle, price: 
       ...trade, entryPrice: price,
       stopLoss: trade.stopLoss + delta,
       takeProfit: trade.takeProfit != null ? trade.takeProfit + delta : null,
+      takeProfit2: trade.takeProfit2 != null ? trade.takeProfit2 + delta : trade.takeProfit2,
     };
   }
   if (handle === 'sl') {
@@ -75,7 +128,7 @@ export function updateHandlePrice(trade: OpenTrade, handle: TradeHandle, price: 
     return { ...trade, stopLoss: clamped };
   }
   const clamped = trade.direction === 'long' ? Math.max(price, trade.entryPrice + 1e-6) : Math.min(price, trade.entryPrice - 1e-6);
-  return { ...trade, takeProfit: clamped };
+  return handle === 'tp2' ? { ...trade, takeProfit2: clamped } : { ...trade, takeProfit: clamped };
 }
 
 export function findTradeHandleAt(y: number, openTrade: OpenTrade | null, closedTrade: unknown, series: ISeriesApi<'Candlestick'> | null): TradeHandle | null {
@@ -85,6 +138,10 @@ export function findTradeHandleAt(y: number, openTrade: OpenTrade | null, closed
   if (openTrade.takeProfit != null) {
     const tpY = series.priceToCoordinate(openTrade.takeProfit);
     if (tpY != null && Math.abs(y - tpY) <= 6) return 'tp';
+  }
+  if (openTrade.takeProfit2 != null) {
+    const tp2Y = series.priceToCoordinate(openTrade.takeProfit2);
+    if (tp2Y != null && Math.abs(y - tp2Y) <= 6) return 'tp2';
   }
   const entryY = series.priceToCoordinate(openTrade.entryPrice);
   if (entryY != null && Math.abs(y - entryY) <= 6) return 'entry';
@@ -180,6 +237,12 @@ export function drawTradeOverlay(params: {
     }
     ctx.restore();
   };
+  const tp2Y = trade.takeProfit2 != null ? series.priceToCoordinate(trade.takeProfit2) : null;
+  if (tp2Y != null) {
+    // The runner's zone beyond TP1, fainter than the main reward zone.
+    if (tpY != null) { ctx.fillStyle = withAlpha(palette.win, 0.12); ctx.fillRect(left, Math.min(tpY, tp2Y), right - left, Math.abs(tp2Y - tpY)); }
+    level(tp2Y, palette.win, true, 'tp2');
+  }
   if (tpY != null) level(tpY, palette.win, false, 'tp');
   level(entryY, palette.accent, true, 'entry');
   level(slY, palette.loss, false, 'sl');
@@ -187,10 +250,16 @@ export function drawTradeOverlay(params: {
   const signUSD = (n: number) => `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(0)}`;
   const labelX = left + 8;
   if (tpY != null && trade.takeProfit != null) {
-    const tag = `TP: ${fmtPrice(trade.takeProfit)} (+${rewardR.toFixed(2)}R${riskUSD > 0 ? ` / ${signUSD(riskUSD * rewardR)}` : ''})`;
+    const share = trade.takeProfit2 != null ? ` · ${Math.round((trade.tp1Fraction ?? 0.5) * 100)}%` : '';
+    const tag = `${trade.takeProfit2 != null ? 'TP1' : 'TP'}: ${fmtPrice(trade.takeProfit)} (+${rewardR.toFixed(2)}R${riskUSD > 0 ? ` / ${signUSD(riskUSD * rewardR)}` : ''}${share})`;
     drawTag(ctx, tag, labelX, tpY + (tpY < entryY ? 12 : -12), palette.win, palette.labelBg, right);
   }
-  drawTag(ctx, `Entry: ${fmtPrice(trade.entryPrice)} (${trade.direction === 'long' ? 'Long' : 'Short'}${trade.lots != null ? ` · ${trade.lots} lots` : ''})`, labelX, entryY, palette.accent, palette.labelBg, right);
+  if (tp2Y != null && trade.takeProfit2 != null) {
+    const r2 = rAt(trade, trade.takeProfit2);
+    drawTag(ctx, `TP2: ${fmtPrice(trade.takeProfit2)} (+${r2.toFixed(2)}R)`, labelX, tp2Y + (tp2Y < entryY ? 12 : -12), palette.win, palette.labelBg, right);
+  }
+  const entryName = trade.pending ? `${orderLabel(trade)} ${fmtPrice(trade.entryPrice)} · pending` : `Entry: ${fmtPrice(trade.entryPrice)}`;
+  drawTag(ctx, `${entryName} (${trade.direction === 'long' ? 'Long' : 'Short'}${trade.lots != null ? ` · ${trade.lots} lots` : ''})`, labelX, entryY, palette.accent, palette.labelBg, right);
   const stopUSD = riskUSD * stopR;
   drawTag(ctx, `SL: ${fmtPrice(trade.stopLoss)} (${stopR >= 0 ? '+' : ''}${stopR.toFixed(2)}R${riskUSD > 0 ? ` / ${stopUSD >= 0 ? '+' : '-'}$${Math.abs(stopUSD).toFixed(Math.abs(stopUSD) < 1000 ? 2 : 0)}` : ''})`, labelX, slY + (slY > entryY ? -12 : 12), palette.loss, palette.labelBg, right);
 

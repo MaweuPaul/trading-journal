@@ -145,7 +145,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
     const {
       name, strategy, tags, source, symbol, interval, direction, entryTime, entryPrice, exitTime, exitPrice,
       stopLoss, takeProfit, outcome, riskAmount, lots, pnlUSD, rMultiple, notes, chartAnnotations, snapshot,
-      planFollowed, setupQuality, executionQuality, mistakes, lesson, initialStopLoss, partials,
+      planFollowed, setupQuality, executionQuality, mistakes, lesson, initialStopLoss, partials, orderType,
     } = req.body;
     // Quick logs (from the Backtest Log's "New Backtest" form) carry only a
     // label, symbol, direction, P&L and R -- no chart, prices or times.
@@ -188,6 +188,7 @@ router.post('/backtest-trades', auth, ownerOnly, async (req, res) => {
       takeProfit: takeProfit === '' || takeProfit == null ? null : Number(takeProfit),
       initialStopLoss: optionalNumber(initialStopLoss) ?? null,
       partials: normalizePartials(partials),
+      orderType: ['market', 'limit', 'stop'].includes(orderType) ? orderType : undefined,
       outcome,
       riskAmount: Number.isFinite(Number(riskAmount)) ? Number(riskAmount) : 0,
       lots: lots != null && Number.isFinite(Number(lots)) && Number(lots) > 0 ? Number(lots) : null,

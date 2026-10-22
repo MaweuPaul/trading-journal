@@ -22,13 +22,24 @@ export interface OpenTrade {
   initialStop?: number;
   /** Profit taken along the way; what's left runs to the stop, target or a manual close. */
   partials?: PartialClose[];
+  /** How the entry fills: at once ('market'), or as a pending order once price reaches it. */
+  orderType?: OrderType;
+  /** A limit/stop order still waiting for price; entryTime is when it was placed until it fills. */
+  pending?: boolean;
+  /** Second target: at takeProfit (TP1) tp1Fraction of the position closes, the rest runs to here. */
+  takeProfit2?: number | null;
+  /** Share of the original position closed at TP1 when there's a TP2 (default 0.5). */
+  tp1Fraction?: number;
+  /** Move the stop to entry when TP1 is hit. */
+  beAtTp1?: boolean;
 }
+export type OrderType = 'market' | 'limit' | 'stop';
 export interface ClosedTrade extends OpenTrade {
   exitTime: number; exitPrice: number;
   outcome: 'win' | 'loss' | 'breakeven';
   rMultiple: number; pnlUSD: number;
 }
-export type TradeHandle = 'sl' | 'tp' | 'entry';
+export type TradeHandle = 'sl' | 'tp' | 'tp2' | 'entry';
 
 export const DRAWING_COLORS = [
   { value: '#3b82f6', label: 'Blue' }, { value: '#10b981', label: 'Green' },

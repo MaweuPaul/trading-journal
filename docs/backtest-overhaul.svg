@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" font-family="Segoe UI,Arial" font-size="12">
+<rect width="1200" height="720" fill="#14161b"/>
+<style>.p{fill:#1d2027;stroke:#2e323c}.t{fill:#c9ced8}.m{fill:#7d8594}.h{fill:#e8ebf0;font-weight:600}.b{fill:#16a34a}.r{fill:#dc2626}.a{fill:#2563eb}</style>
+<!-- 1 Replay bar -->
+<rect class="p" x="8" y="8" width="1184" height="40" rx="6"/>
+<text class="t" x="20" y="33">⏮  ▶  ⏸  ⏭ step  |  1m 5m 15m 1H 4H D W M</text>
+<rect x="420" y="25" width="420" height="6" rx="3" fill="#2e323c"/><rect x="420" y="25" width="250" height="6" rx="3" fill="#2563eb"/><circle cx="670" cy="28" r="7" fill="#e8ebf0"/>
+<text class="m" x="430" y="20">news ▲ ▲   ▲      ▲</text>
+<text class="t" x="860" y="33">20 Oct 00:56 (UTC-4)   Speed ━━●━ 50x</text>
+<text class="m" x="1100" y="33">⚙ Settings</text>
+<!-- 2 Chart -->
+<rect class="p" x="8" y="56" width="852" height="430" rx="6"/>
+<text class="h" x="20" y="76">NAS100 · 15m  ▾      O 29506  H 29524  L 29502  C 29514</text>
+<rect class="p" x="826" y="84" width="26" height="250"/><text class="m" x="832" y="104">↖</text><text class="m" x="832" y="128">╱</text><text class="m" x="832" y="152">▭</text><text class="m" x="832" y="176">T</text><text class="m" x="832" y="200">📏</text>
+<polyline fill="none" stroke="#9aa3b2" stroke-width="2" points="20,200 90,260 150,220 230,300 300,180 380,150 440,240 500,380 560,300 620,250 700,230 780,260"/>
+<rect x="700" y="196" width="120" height="34" fill="#16a34a" opacity=".25"/><rect x="700" y="230" width="120" height="22" fill="#dc2626" opacity=".25"/>
+<line x1="700" y1="230" x2="820" y2="230" stroke="#e8ebf0" stroke-dasharray="4"/><text class="t" x="704" y="244">SELL 1.00 · −$12 · −0.4R  [25%][50%][BE]</text>
+<line x1="20" y1="300" x2="820" y2="300" stroke="#f59e0b" stroke-dasharray="6"/><text fill="#f59e0b" x="24" y="295">SELL LIMIT 29600 (pending)</text>
+<g class="r"><circle cx="300" cy="470" r="7"/><circle cx="560" cy="470" r="7"/></g><circle cx="430" cy="470" r="7" fill="#f59e0b"/><text class="m" x="20" y="474">News</text>
+<!-- 3 Order ticket -->
+<rect class="p" x="868" y="56" width="324" height="250" rx="6"/>
+<text class="h" x="880" y="76">New order</text>
+<g class="m"><rect x="880" y="86" width="72" height="22" rx="4" fill="#2563eb"/><text x="892" y="101" fill="#fff">Market</text><text x="968" y="101">Limit</text><text x="1030" y="101">Stop</text><text x="1086" y="101">Stop-limit</text></g>
+<rect class="r" x="880" y="116" width="148" height="44" rx="5"/><text x="928" y="143" fill="#fff" font-weight="600">SELL 29472.6</text>
+<rect class="b" x="1036" y="116" width="148" height="44" rx="5"/><text x="1086" y="143" fill="#fff" font-weight="600">BUY 29472.6</text>
+<text class="t" x="880" y="182">Risk  [ 1 % ▾ ]  →  1.00 lots   ($1,035)</text>
+<text class="t" x="880" y="206">☑ SL  [ 40 pips ]     ☑ TP1 [ 1R · 50% ]</text>
+<text class="t" x="880" y="230">☐ TP2 [ 3R ]          ☑ Move SL to BE at TP1</text>
+<text class="t" x="880" y="254">Comment / setup tag  [ playbook ▾ ]</text>
+<rect class="a" x="880" y="268" width="304" height="28" rx="5"/><text x="990" y="287" fill="#fff" font-weight="600">Place order</text>
+<!-- 4 Timeline -->
+<rect class="p" x="868" y="314" width="324" height="172" rx="6"/>
+<text class="h" x="880" y="334">Timeline</text>
+<g class="t"><text x="880" y="358">00:17  #1 SELL 1.00 @ 29511.4  — opened</text><text x="880" y="380">00:21  #1 SL → BE</text><text x="880" y="402">00:24  #1 closed 50% @ 29490  +0.5R</text><text x="880" y="424">00:26  #1 TP hit @ 29470.5  +$40.88</text><text x="880" y="446" fill="#f59e0b">08:30  USD CPI (high) in 2h</text></g>
+<!-- 5 Bottom tabs -->
+<rect class="p" x="8" y="494" width="1184" height="190" rx="6"/>
+<g class="m"><text x="20" y="516">Positions 1</text><text x="110" y="516">Orders 1</text><text x="186" y="516" fill="#e8ebf0" font-weight="600">History 2</text><text x="266" y="516">Equity curve</text><text x="366" y="516">Statistics</text><text x="446" y="516">Journal notes</text></g>
+<line x1="186" y1="522" x2="246" y2="522" stroke="#2563eb" stroke-width="2"/>
+<g class="m"><text x="20" y="546">ID</text><text x="60" y="546">Symbol</text><text x="140" y="546">Side</text><text x="200" y="546">Lots</text><text x="260" y="546">Entry</text><text x="350" y="546">Exit</text><text x="440" y="546">Opened</text><text x="560" y="546">Closed</text><text x="680" y="546">Pips</text><text x="740" y="546">R</text><text x="800" y="546">Net</text><text x="880" y="546">Partials</text></g>
+<g class="t"><text x="20" y="570">2</text><text x="60" y="570">NAS100</text><text x="140" y="570">Sell</text><text x="200" y="570">1.00</text><text x="260" y="570">29511.43</text><text x="350" y="570">29470.55</text><text x="440" y="570">20 Oct 00:17</text><text x="560" y="570">20 Oct 00:26</text><text x="680" y="570">408.8</text><text x="740" y="570">1.0</text><text x="800" y="570" fill="#22c55e">+40.88</text><text x="880" y="570">50% @ 0.5R</text></g>
+<line x1="8" y1="650" x2="1192" y2="650" stroke="#2e323c"/>
+<text class="t" x="20" y="671">Start $103,522 🔒   Balance $103,562.98   Equity $103,562.98   Open P/L $0.00   Win 1/1   Net R +1.0   Max DD 0.0%</text>
+<!-- 6 Status -->
+<text class="m" x="8" y="704">Data: m1 bars (opening prices) · Spread: fixed 0 ▾ / random · Replay time 20/10/2026 00:56 UTC-4 · Session autosaved</text>
+</svg>

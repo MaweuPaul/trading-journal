@@ -46,6 +46,8 @@ const backtestTradeSchema = new mongoose.Schema({
     type: [{ _id: false, time: Number, price: Number, fraction: Number }],
     default: undefined,
   },
+  // How the entry filled: at market, or as a pending limit/stop order.
+  orderType: { type: String, enum: ['market', 'limit', 'stop'], default: undefined },
 
   outcome: { type: String, enum: ['win', 'loss', 'breakeven'], required: true },
   riskAmount: { type: Number, default: 0 },

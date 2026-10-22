@@ -28,8 +28,22 @@ export interface WorkspaceDraft {
   startBalance?: number;
   /** P&L of the outcomes logged in this session, so the balance carries on. */
   realizedPnl?: number;
+  /** Outcomes logged in this session, newest last (the History tab). */
+  sessionLog?: SessionTrade[];
+  /** What happened in this session, newest last (the Timeline). */
+  timeline?: TimelineEvent[];
   savedAt: number;
 }
+
+/** A trade logged during this backtest session. */
+export interface SessionTrade {
+  id: string; name: string;
+  direction: 'long' | 'short'; orderType?: 'market' | 'limit' | 'stop';
+  entryTime: number; entryPrice: number; exitTime: number; exitPrice: number;
+  lots?: number | null; rMultiple: number; pnlUSD: number;
+}
+/** One line of the session timeline; `time` is the replay time (unix seconds) it happened at. */
+export interface TimelineEvent { time: number; text: string; tone?: 'win' | 'loss' | 'info' }
 
 export const sessionIdFor = (strategy?: string | null) => (strategy?.trim() ? `s:${strategy.trim().toLowerCase()}` : 'none');
 

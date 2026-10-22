@@ -12,7 +12,7 @@ import { useTheme } from '../ThemeProvider';
 import { Icon } from './BacktestShell';
 import { BacktestTrade, authHeaders, fmtR, fmtUSD, hashTag, useBacktest } from './data';
 import JournalFields, { EMPTY_JOURNAL, JournalValues } from './JournalFields';
-import { WorkspaceDraft, readDraft, writeDraft, clearDraft, sessionIdFor } from './session';
+import { WorkspaceDraft, SessionTrade, TimelineEvent, readDraft, writeDraft, clearDraft, sessionIdFor } from './session';
 import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
@@ -22,7 +22,7 @@ import {
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, sizeTrade,
   findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
-  rAt, totalR, openFraction, bankedR, outcomeForR, pendingFillPrice, scaleOutAtTp1, orderTypeFor, orderLabel,
+  rAt, totalR, openFraction, outcomeForR, pendingFillPrice, scaleOutAtTp1, orderTypeFor, orderLabel,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
@@ -30,6 +30,8 @@ import DrawingPropertiesPanel, { DrawingPropertiesValue } from '../backtest-tool
 import { applyDrawingProperties, drawingCapabilities, drawingFactory, drawingPropertiesValue, isUserHidden, setDrawingColor, unhideDrawing } from '../chart-drawing/drawingKit';
 import DrawingTextOverlay, { paintDrawingLabels } from '../backtest-tools/DrawingTextOverlay';
 import SecondChart from './SecondChart';
+import TradePanel, { TicketOrder } from './TradePanel';
+import BottomPanel from './BottomPanel';
 
 // ── Tool catalogue ───────────────────────────────────────────────────────────
 // `type` is the lightweight-charts-drawing registry key.
@@ -305,6 +307,10 @@ export default function Workspace() {
   const [startBalance, setStartBalance] = useState<number | null>(null);
   const [realizedPnl, setRealizedPnl] = useState(0);
   const currentBalance = startBalance != null ? startBalance + realizedPnl : null;
+  // Outcomes logged and what happened in this session (History tab, Timeline).
+  const [sessionLog, setSessionLog] = useState<SessionTrade[]>([]);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [bottomOpen, setBottomOpen] = useState(true);
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   // Against the trade's real (sized) risk once one is open.
   const riskForPct = openTrade ? openTrade.riskAmount : Number(riskAmountInput);
@@ -351,13 +357,14 @@ export default function Workspace() {
     intervalTouchedRef.current = true; setInterval_(draft.interval);
     setDrawColor(draft.drawColor);
     setStartBalance(draft.startBalance ?? (Number(balanceInput) || 10000)); setRealizedPnl(draft.realizedPnl ?? 0);
+    setSessionLog(draft.sessionLog ?? []); setTimeline(draft.timeline ?? []);
     loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
   };
   const discardDraft = () => { if (draftAvailable) clearDraft(draftAvailable.id ?? sessionIdFor(draftAvailable.strategy)); setDraftAvailable(null); };
   const endSession = () => {
     if (!window.confirm(`End the ${symbol.trim().toUpperCase()} session? Drawings and any open hypothetical trade are discarded. Saved backtests are not affected.`)) return;
     setPlaying(false); resetTrade(); setCandles(null); setChartEpoch(e => e + 1); sessionRef.current = null;
-    setStartBalance(null); setRealizedPnl(0);
+    setStartBalance(null); setRealizedPnl(0); setSessionLog([]); setTimeline([]);
     clearDraft(sessionSlotRef.current); setDraftAvailable(null);
   };
 
@@ -372,13 +379,13 @@ export default function Workspace() {
         replayTime: Number(candles[replayIdx]?.time ?? 0) || undefined, strategy: sessionStrategyRef.current, id: sessionSlotRef.current,
         backtestName, notes, tags, drawColor,
         drawings: managerRef.current?.exportDrawings() ?? [],
-        startBalance: startBalance ?? undefined, realizedPnl,
+        startBalance: startBalance ?? undefined, realizedPnl, sessionLog, timeline: timeline.slice(-200),
         savedAt: Date.now(),
       });
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision, startBalance, realizedPnl]);
+  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision, startBalance, realizedPnl, sessionLog, timeline]);
 
   // Re-suggest the timeframe when the range changes (cTrader caps a request
   // at 1500 bars) unless the trader picked one explicitly.
@@ -658,6 +665,7 @@ export default function Workspace() {
     autoLoadedRef.current = true;
     // A new backtest starts its account at the balance chosen on the setup page.
     setStartBalance(Number(params.get('balance')) || Number(balanceInput) || 10000); setRealizedPnl(0);
+    setSessionLog([]); setTimeline([]);
     loadChart();
   }, [params, loadChart]);
 
@@ -1246,6 +1254,19 @@ export default function Workspace() {
   /** The candle as the trader may see it at index i (the rebuilt one while it's still forming). */
   const barAt = (i: number) => (partial && i === partial.idx ? partial.candle : candles?.[i]);
 
+  /** Add a line to the session timeline, stamped with the replay time it happened at. */
+  const addEvent = (text: string, tone?: TimelineEvent['tone'], time?: number) => {
+    const at = time ?? Number(candlesRef.current?.[Math.min(replayIdxRef.current, (candlesRef.current?.length ?? 1) - 1)]?.time ?? 0);
+    setTimeline(list => [...list, { time: at, text, tone }].slice(-200));
+  };
+  const toneFor = (r: number): TimelineEvent['tone'] => (r > 0.005 ? 'win' : r < -0.005 ? 'loss' : 'info');
+  const fillOrder = (trade: OpenTrade, time: number, fill: number) => {
+    setPlaying(false);
+    setOpenTrade({ ...trade, pending: false, entryTime: time, entryPrice: fill });
+    setToast(`${orderLabel(trade)} filled at ${fmtPrice(fill)}`);
+    addEvent(`${orderLabel(trade)} filled at ${fmtPrice(fill)}`, 'info', time);
+  };
+
   // ── Resolve the open trade against each newly revealed candle ──────────────
   useEffect(() => {
     if (!candles || !openTrade || closedTrade) return;
@@ -1257,11 +1278,8 @@ export default function Workspace() {
       // A limit/stop order fills on the first candle after it was placed that
       // reaches it; from then on it's a live position checked from the next candle.
       const fill = pendingFillPrice(trade, candle);
-      if (fill == null) return;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- the order fills on the newly revealed candle
-      setPlaying(false);
-      setOpenTrade({ ...trade, pending: false, entryTime: candle.time, entryPrice: fill });
-      setToast(`${orderLabel(trade)} filled at ${fmtPrice(fill)}`);
+      if (fill != null) fillOrder(trade, Number(candle.time), fill);
       return;
     }
     const close = (which: 'sl' | 'tp') => {
@@ -1269,7 +1287,9 @@ export default function Workspace() {
         // TP1 with a TP2 set: bank part of the position and let the rest run.
         const next = scaleOutAtTp1(trade, Number(candle.time));
         setOpenTrade(next);
-        setToast(`TP1 hit: closed ${Math.round((next.partials!.at(-1)!.fraction) * 100)}% at ${fmtPrice(trade.takeProfit!)}${trade.beAtTp1 ? ', stop to break-even' : ''}`);
+        const msg = `TP1 hit: closed ${Math.round((next.partials!.at(-1)!.fraction) * 100)}% at ${fmtPrice(trade.takeProfit!)} (${fmtR(rAt(trade, trade.takeProfit!))})${trade.beAtTp1 ? ', stop to break-even' : ''}`;
+        setToast(msg);
+        addEvent(msg, 'win', Number(candle.time));
         return;
       }
       const exitPrice = which === 'sl' ? trade.stopLoss : trade.takeProfit!;
@@ -1279,6 +1299,7 @@ export default function Workspace() {
       setPlaying(false);
       setClosedTrade(prev => prev ?? { ...trade, exitTime: candle.time, exitPrice, outcome, rMultiple, pnlUSD: rMultiple * trade.riskAmount });
       setShowCloseout(true);
+      addEvent(`${which === 'sl' ? (Math.abs(trade.stopLoss - trade.entryPrice) < 1e-9 ? 'Stopped at break-even' : 'Stop loss hit') : trade.partials?.length ? 'TP2 hit' : 'Take profit hit'} at ${fmtPrice(exitPrice)}: ${fmtR(rMultiple)} (${fmtUSD(rMultiple * trade.riskAmount)})`, toneFor(rMultiple), Number(candle.time));
     };
     const hit = levelsHit(candle, trade);
     if (hit.sl && hit.tp) {
@@ -1327,6 +1348,7 @@ export default function Workspace() {
     setPlaying(false);
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome: outcomeForR(rMultiple), rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
     setShowCloseout(true);
+    addEvent(`Closed at ${fmtPrice(exitPrice)}: ${fmtR(rMultiple)} (${fmtUSD(rMultiple * openTrade.riskAmount)})`, toneFor(rMultiple));
   };
   /** Take `fraction` of the original position off at the current candle's close. */
   const takePartial = (fraction: number) => {
@@ -1337,12 +1359,21 @@ export default function Workspace() {
     setPlaying(false);
     setOpenTrade({ ...openTrade, initialStop: openTrade.initialStop ?? openTrade.stopLoss, partials: [...(openTrade.partials ?? []), { time: Number(candle.time), price: livePrice, fraction }] });
     setToast(`Closed ${Math.round(fraction * 100)}% at ${fmtPrice(livePrice)} (${fmtR(rAt(openTrade, livePrice))})`);
+    addEvent(`Closed ${Math.round(fraction * 100)}% at ${fmtPrice(livePrice)} (${fmtR(rAt(openTrade, livePrice))})`, toneFor(rAt(openTrade, livePrice)));
   };
   const stopToBreakeven = () => {
     if (!openTrade || !tradeLive || livePrice == null) return;
     const inProfit = openTrade.direction === 'long' ? livePrice > openTrade.entryPrice : livePrice < openTrade.entryPrice;
     if (!inProfit) { setToast('Price is not past entry yet, so a break-even stop would be hit straight away'); return; }
     setOpenTrade({ ...openTrade, initialStop: openTrade.initialStop ?? openTrade.stopLoss, stopLoss: openTrade.entryPrice });
+    addEvent(`Stop moved to break-even (${fmtPrice(openTrade.entryPrice)})`);
+  };
+  /** Cancel a pending order / remove a position from the trade panel. */
+  const cancelTrade = () => {
+    if (!openTrade) return;
+    if (!openTrade.pending && !window.confirm('Remove this simulated position? Nothing is logged.')) return;
+    addEvent(openTrade.pending ? `${orderLabel(openTrade)} at ${fmtPrice(openTrade.entryPrice)} cancelled` : 'Position removed');
+    resetTrade();
   };
   const removePosition = () => {
     if (window.confirm('Remove this simulated position? Nothing is logged.')) resetTrade();
@@ -1395,6 +1426,30 @@ export default function Workspace() {
     setOpenTrade(trade);
     setPlacingDirection(null);
     if (trade.pending) setToast(`${orderLabel(trade)} at ${fmtPrice(trade.entryPrice)}: fills when price gets there`);
+    addEvent(trade.pending ? `${orderLabel(trade)} placed at ${fmtPrice(trade.entryPrice)}` : `${direction === 'long' ? 'Bought' : 'Sold'} at market ${fmtPrice(trade.entryPrice)}`);
+  };
+  /** A trade from the order ticket: market at the current close, or a pending limit/stop. */
+  const placeFromTicket = (o: TicketOrder): string | null => {
+    if (!candles || openTrade || closedTrade) return 'Close or log the current trade first';
+    const market = barAt(replayIdx)?.close;
+    if (market == null) return 'No price yet';
+    const entry = o.type === 'market' ? market : o.price;
+    if (entry == null || !(o.stopDistance > 0)) return 'Enter a stop distance';
+    if (o.tp2R != null && o.tpR != null && o.tp2R <= o.tpR) return 'TP2 has to be further than TP1';
+    const sign = o.direction === 'long' ? 1 : -1;
+    const trade: OpenTrade = {
+      direction: o.direction, entryTime: Number(candles[replayIdx].time), entryPrice: entry,
+      stopLoss: entry - sign * o.stopDistance,
+      takeProfit: o.tpR != null ? entry + sign * o.stopDistance * o.tpR : null,
+      takeProfit2: o.tp2R != null ? entry + sign * o.stopDistance * o.tp2R : null,
+      tp1Fraction: o.tp1Fraction, beAtTp1: o.beAtTp1,
+      riskAmount: Number(riskAmountInput) || 0,
+      orderType: o.type, ...(o.type === 'market' ? {} : { pending: true }),
+    };
+    setOpenTrade(trade);
+    setPlacingDirection(null);
+    addEvent(trade.pending ? `${orderLabel(trade)} placed at ${fmtPrice(entry)}` : `${o.direction === 'long' ? 'Bought' : 'Sold'} at market ${fmtPrice(entry)}`);
+    return null;
   };
   const updateHandlePrice = (handle: TradeHandle, price: number) => setOpenTrade(cur => {
     if (!cur) return cur;
@@ -1476,6 +1531,14 @@ export default function Workspace() {
       if (!res.ok) throw new Error(body.error || 'Could not save backtest trade');
       addTrade(body as BacktestTrade);
       setRealizedPnl(p => p + (Number(closedTrade.pnlUSD) || 0));
+      setSessionLog(list => [...list, {
+        id: String((body as BacktestTrade)._id ?? Date.now()), name: backtestName.trim(),
+        direction: closedTrade.direction, orderType: closedTrade.orderType ?? 'market',
+        entryTime: closedTrade.entryTime, entryPrice: closedTrade.entryPrice,
+        exitTime: closedTrade.exitTime, exitPrice: closedTrade.exitPrice,
+        lots: closedTrade.lots ?? null, rMultiple: closedTrade.rMultiple, pnlUSD: closedTrade.pnlUSD,
+      }]);
+      addEvent(`Logged ${backtestName.trim() || 'trade'}: ${fmtR(closedTrade.rMultiple)} (${fmtUSD(closedTrade.pnlUSD)})`, toneFor(closedTrade.rMultiple), Number(closedTrade.exitTime));
       resetTrade();
       setToast('Saved to Backtest Log — keep replaying for the next setup');
     } catch (e) {
@@ -1759,7 +1822,6 @@ export default function Workspace() {
   // ── Desktop terminal layout (Stitch "Backtest Workspace", >= 900px) ─────────
   const nextCandle = candles?.[replayIdx + 1] ?? null;
   const analysisPct = analysisTotal ? (Math.max(0, analysisBars) / analysisTotal) * 100 : 0;
-  const rrFor = (price: number) => (openTrade ? Math.abs(rAt(openTrade, price)) : 0);
   const exitKind = closedTrade
     ? Math.abs(closedTrade.exitPrice - closedTrade.stopLoss) < 1e-9 ? 'SL HIT'
       : closedTrade.takeProfit != null && Math.abs(closedTrade.exitPrice - closedTrade.takeProfit) < 1e-9 ? 'TP HIT' : 'MANUAL CLOSE'
@@ -1769,6 +1831,41 @@ export default function Workspace() {
     : 0;
   const tfLabel = CHART_INTERVALS.find(t => t.value === interval)?.label ?? interval;
   const dockBtn = 'tw:w-7 tw:h-7 tw:rounded tw:bg-surface-container-high tw:hover:bg-outline-variant tw:border tw:border-outline-variant tw:text-on-surface-variant tw:hover:text-on-surface tw:flex tw:items-center tw:justify-center tw:transition tw:disabled:opacity-40';
+
+  const desktopReplay = (
+    <div className="tw:flex tw:items-center tw:gap-3 tw:flex-1 tw:min-w-0 tw:justify-end">
+      <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
+        <div className="tw:flex tw:items-center tw:gap-1">
+          <button type="button" className={dockBtn} title="Reset to start" aria-label="Reset to start" disabled={!total || replayIdx <= analysisStartIdx} onClick={() => jumpToReplayIndex(analysisStartIdx)}><Icon name="first_page" className="tw:text-[16px]" /></button>
+          <button type="button" className={dockBtn} title="Step -1 bar (←)" aria-label="Step back" disabled={!total || replayIdx === 0} onClick={() => jumpToReplayIndex(replayIdx - 1)}><Icon name="chevron_left" className="tw:text-[16px]" /></button>
+          <button type="button" disabled={!total} onClick={() => setPlaying(p => !p)} title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}
+            className="tw:w-8 tw:h-7 tw:rounded tw:bg-primary-container tw:hover:bg-surface-tint tw:text-on-primary tw:font-bold tw:flex tw:items-center tw:justify-center tw:transition tw:disabled:opacity-40">
+            <Icon name={playing ? 'pause' : 'play_arrow'} className="tw:text-[18px]" />
+          </button>
+          <button type="button" className={dockBtn} title="Step +1 bar (→)" aria-label="Step forward" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(replayIdx + 1)}><Icon name="chevron_right" className="tw:text-[16px]" /></button>
+          <button type="button" className={dockBtn} title="Jump to end" aria-label="Jump to end" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(total - 1)}><Icon name="last_page" className="tw:text-[16px]" /></button>
+        </div>
+      </div>
+      <div className="tw:flex-1 tw:flex tw:flex-col tw:justify-center tw:px-1 tw:min-w-[120px]" title={nextCandle ? `Next candle: ${fmtTick(Number(nextCandle.time))} UTC` : candles ? 'End of window' : ''}>
+        <div className="tw:relative tw:w-full tw:h-3.5 tw:flex tw:items-center tw:group">
+          <div className="tw:w-full tw:h-1.5 tw:bg-surface-container-lowest tw:rounded-full tw:overflow-hidden tw:border tw:border-outline-variant/60">
+            <div className="tw:h-full tw:bg-primary-container tw:rounded-full" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="tw:absolute tw:-translate-x-1/2 tw:w-3.5 tw:h-3.5 tw:rounded-full tw:bg-primary-container tw:border-2 tw:border-surface-container-lowest tw:shadow-[0_0_8px_rgba(245,158,11,0.7)] tw:group-hover:scale-125 tw:transition-transform tw:flex tw:items-center tw:justify-center tw:pointer-events-none" style={{ left: `${progressPct}%` }}>
+            <div className="tw:w-1 tw:h-1 tw:rounded-full tw:bg-surface-container-lowest" />
+          </div>
+          <input type="range" aria-label="Replay progress" min={0} max={Math.max(0, total - 1)} value={replayIdx} disabled={!total}
+            onChange={e => jumpToReplayIndex(Number(e.target.value))} className="tw:absolute tw:inset-0 tw:w-full tw:opacity-0 tw:cursor-pointer" />
+        </div>
+      </div>
+      <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px]" role="group" aria-label="Replay speed">
+          {SPEEDS.map(s => (
+            <button key={s} type="button" aria-pressed={speed === s} onClick={() => setSpeed(s)}
+              className={`tw:px-1.5 tw:py-0.5 tw:rounded ${speed === s ? 'tw:bg-surface-container-high tw:text-primary-container tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{s}x</button>
+          ))}
+      </div>
+    </div>
+  );
 
   const desktopTop = (
     <>
@@ -1837,145 +1934,7 @@ export default function Workspace() {
             {current && <><span className="tw:text-outline-variant">|</span><span className="tw:text-cyan-500">{fmtTick(Number(current.time))} UTC</span></>}
           </div>
         </div>
-        <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
-          {openTrade && (
-            <>
-              <div className="tw:flex tw:items-center tw:gap-2 tw:bg-surface-container-high tw:border tw:border-primary-container/40 tw:px-2.5 tw:py-1 tw:rounded tw:font-mono-metric-md tw:whitespace-nowrap">
-                <span className={`tw:border tw:px-1.5 tw:rounded tw:font-bold tw:text-[10px] tw:tracking-wide ${openTrade.direction === 'long' ? 'tw:bg-secondary/20 tw:text-secondary tw:border-secondary/40' : 'tw:bg-tertiary/20 tw:text-tertiary tw:border-tertiary/40'}`}>
-                  {closedTrade ? 'CLOSED' : openTrade.pending ? `${orderLabel(openTrade).toUpperCase()} · PENDING` : 'SIMULATED'} {openTrade.pending ? '' : openTrade.direction === 'long' ? 'LONG' : 'SHORT'}
-                </span>
-                <span className="tw:text-on-surface-variant">Entry:</span><span className="tw:text-on-surface tw:font-semibold">{fmtPrice(openTrade.entryPrice)}</span>
-                <span className="tw:text-outline-variant">•</span>
-                <span className={rAt(openTrade, openTrade.stopLoss) >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}>
-                  SL: {fmtPrice(openTrade.stopLoss)} ({fmtR(rAt(openTrade, openTrade.stopLoss), 1)} / {fmtUSD(rAt(openTrade, openTrade.stopLoss) * openTrade.riskAmount)})
-                </span>
-                {openTrade.takeProfit != null && <>
-                  <span className="tw:text-outline-variant">•</span>
-                  <span className="tw:text-secondary">{openTrade.takeProfit2 != null ? 'TP1' : 'TP'}: {fmtPrice(openTrade.takeProfit)} (+{rrFor(openTrade.takeProfit).toFixed(1)}R / +${(rrFor(openTrade.takeProfit) * openTrade.riskAmount).toFixed(0)})</span>
-                </>}
-                {openTrade.takeProfit2 != null && <>
-                  <span className="tw:text-outline-variant">•</span>
-                  <span className="tw:text-secondary">TP2: {fmtPrice(openTrade.takeProfit2)} (+{rrFor(openTrade.takeProfit2).toFixed(1)}R)</span>
-                </>}
-                <span className="tw:text-outline-variant">•</span>
-                {(openTrade.partials?.length ?? 0) > 0 && <>
-                  <span className="tw:text-outline-variant">•</span>
-                  <span className="tw:text-on-surface-variant tw:text-[10px]" title={(openTrade.partials ?? []).map(pc => `${Math.round(pc.fraction * 100)}% at ${fmtPrice(pc.price)} (${fmtR(rAt(openTrade, pc.price))})`).join('\n')}>
-                    Banked {fmtR(bankedR(openTrade))} · {Math.round(openFraction(openTrade) * 100)}% open
-                  </span>
-                </>}
-                <span className="tw:text-outline-variant">•</span>
-                <span className="tw:text-on-surface-variant tw:text-[10px]">{closedTrade ? 'Result:' : 'Unrealized:'}</span>
-                <span className={`tw:font-bold ${(closedTrade?.rMultiple ?? unrealizedR) >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>
-                  {fmtR(closedTrade?.rMultiple ?? unrealizedR)} ({fmtUSD((closedTrade?.rMultiple ?? unrealizedR) * openTrade.riskAmount)})
-                </span>
-              </div>
-              {closedTrade ? (
-                <button type="button" onClick={() => setShowCloseout(true)}
-                  className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container/20 tw:hover:bg-primary-container/30 tw:text-primary-container tw:border tw:border-primary-container/50 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap">
-                  <Icon name="bookmark_added" className="tw:text-[14px]" /><span>Log Outcome</span>
-                </button>
-              ) : (
-                <>
-                {!tradeLive && openTrade.takeProfit != null && (
-                  <div className="tw:flex tw:items-center tw:gap-1.5 tw:text-[11px] tw:whitespace-nowrap" role="group" aria-label="Targets">
-                    <button type="button" onClick={toggleTp2} aria-pressed={openTrade.takeProfit2 != null}
-                      title={openTrade.takeProfit2 != null ? 'Remove the second target' : 'Add a second target: part of the position closes at TP1, the rest runs to TP2 (drag the dashed line to move it)'}
-                      className={`tw:px-2 tw:py-1 tw:rounded tw:border tw:font-semibold ${openTrade.takeProfit2 != null ? 'tw:bg-secondary/20 tw:text-secondary tw:border-secondary/40' : 'tw:border-outline-variant tw:text-on-surface tw:hover:bg-surface-container-high'}`}>
-                      {openTrade.takeProfit2 != null ? 'TP2 ✓' : '+ TP2'}
-                    </button>
-                    {openTrade.takeProfit2 != null && <>
-                      <label className="tw:flex tw:items-center tw:gap-1 tw:text-on-surface-variant">Close at TP1
-                        <select value={openTrade.tp1Fraction ?? 0.5} onChange={e => { const f = Number(e.target.value); setOpenTrade(cur => (cur ? { ...cur, tp1Fraction: f } : cur)); }}
-                          className="tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-1 tw:py-0.5 tw:text-on-surface">
-                          {[0.25, 0.33, 0.5, 0.67, 0.75].map(f => <option key={f} value={f}>{Math.round(f * 100)}%</option>)}
-                        </select>
-                      </label>
-                      <label className="tw:flex tw:items-center tw:gap-1 tw:text-on-surface-variant" title="Move the stop to the entry price when TP1 is hit">
-                        <input type="checkbox" checked={openTrade.beAtTp1 ?? true} onChange={e => { const v = e.target.checked; setOpenTrade(cur => (cur ? { ...cur, beAtTp1: v } : cur)); }} />
-                        SL→BE at TP1
-                      </label>
-                    </>}
-                  </div>
-                )}
-                {tradeLive && (
-                  <div className="tw:flex tw:items-center tw:overflow-hidden tw:rounded tw:border tw:border-outline-variant" role="group" aria-label="Manage trade">
-                    {[0.25, 0.5].map(f => (
-                      <button key={f} type="button" onClick={() => takePartial(f)} disabled={openFraction(openTrade) <= f + 1e-9}
-                        title={`Take ${f * 100}% of the original position off at the current candle's close`}
-                        className="tw:px-2 tw:py-1 tw:text-[11px] tw:font-semibold tw:text-on-surface tw:hover:bg-surface-container-high tw:disabled:opacity-40 tw:border-r tw:border-outline-variant">
-                        Close {f * 100}%
-                      </button>
-                    ))}
-                    <button type="button" onClick={stopToBreakeven} disabled={openTrade.stopLoss === openTrade.entryPrice}
-                      title="Move the stop to the entry price (you can also drag the stop line, past entry to lock in profit)"
-                      className="tw:px-2 tw:py-1 tw:text-[11px] tw:font-semibold tw:text-on-surface tw:hover:bg-surface-container-high tw:disabled:opacity-40 tw:whitespace-nowrap">
-                      SL → BE
-                    </button>
-                  </div>
-                )}
-                {!openTrade.pending && <button type="button" onClick={closeTradeNow} title="Close what's left at the current candle's close"
-                  className="tw:flex tw:items-center tw:gap-1.5 tw:bg-primary-container/20 tw:hover:bg-primary-container/30 tw:text-primary-container tw:border tw:border-primary-container/50 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap">
-                  <Icon name="flag" className="tw:text-[14px]" /><span>Close at Current Candle</span>
-                </button>}
-                </>
-              )}
-              <button type="button" onClick={resetTrade}
-                className="tw:flex tw:items-center tw:gap-1 tw:bg-tertiary/10 tw:hover:bg-tertiary/20 tw:text-tertiary tw:border tw:border-tertiary/30 tw:px-2 tw:py-1 tw:rounded tw:transition tw:active:scale-95">
-                <Icon name="close" className="tw:text-[14px]" /><span>{openTrade.pending ? 'Cancel order' : 'Cancel'}</span>
-              </button>
-              <div className="tw:h-4 tw:w-px tw:bg-outline-variant tw:mx-1" />
-            </>
-          )}
-          <button type="button" onClick={() => startPlacing('long')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'long'} title="Simulate Long Position [L]"
-            className={`tw:flex tw:items-center tw:gap-1 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap tw:disabled:opacity-40 ${placingDirection === 'long' ? 'tw:bg-secondary tw:text-on-secondary tw:ring-2 tw:ring-secondary/40' : 'tw:bg-secondary tw:hover:opacity-90 tw:text-on-secondary'}`}>
-            <Icon name="north_east" className="tw:text-[15px]" /><span>+ Simulate Long</span>
-          </button>
-          <button type="button" onClick={() => startPlacing('short')} disabled={!candles || tradeLocked} aria-pressed={placingDirection === 'short'} title="Simulate Short Position [S]"
-            className={`tw:flex tw:items-center tw:gap-1 tw:font-semibold tw:px-2.5 tw:py-1 tw:rounded tw:transition tw:active:scale-95 tw:whitespace-nowrap tw:disabled:opacity-40 ${placingDirection === 'short' ? 'tw:bg-tertiary tw:text-on-tertiary tw:ring-2 tw:ring-tertiary/40' : 'tw:bg-tertiary tw:hover:opacity-90 tw:text-on-tertiary'}`}>
-            <Icon name="south_east" className="tw:text-[15px]" /><span>- Simulate Short</span>
-          </button>
-          <label className="tw:flex tw:items-center tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-1.5 tw:py-0.5 tw:gap-1 tw:font-mono-metric-md"
-            title={spec ? `${spec.symbol}: 1 lot = ${spec.contractSize.toLocaleString()} units · min ${spec.minLots} · step ${spec.lotStep}${spec.quoteCurrency ? ` · quoted in ${spec.quoteCurrency}` : ''}` : specNote || 'Loading contract specs…'}>
-            <select aria-label="Size by" value={sizingMode} onChange={e => setSizingMode(e.target.value as SizingMode)} disabled={Boolean(closedTrade)}
-              className="tw:bg-transparent tw:text-on-surface-variant tw:text-[10px] tw:focus:outline-none">
-              <option value="risk">Risk $</option>
-              <option value="lots" disabled={!spec?.usdPerPointPerLot}>Lots</option>
-            </select>
-            {sizingMode === 'risk'
-              ? <input aria-label="Risk amount in dollars" type="number" min="0" step="any" value={riskAmountInput} onChange={e => setRiskAmountInput(e.target.value)} disabled={Boolean(closedTrade)}
-                  className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
-              : <input aria-label="Position size in lots" type="number" min="0" step={spec?.lotStep ?? 0.01} value={lotsInput} onChange={e => setLotsInput(e.target.value)} disabled={Boolean(closedTrade)}
-                  className="tw:w-14 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />}
-            {openTrade && openTrade.lots != null && (
-              <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">
-                {sizingMode === 'risk' ? `= ${openTrade.lots} lots · $${openTrade.riskAmount.toFixed(2)}` : `= $${openTrade.riskAmount.toFixed(2)} risk`}
-              </span>
-            )}
-            {!spec && specNote && <span className="tw:text-error tw:text-[10px]" title={specNote}>!</span>}
-          </label>
-          {currentBalance != null && startBalance != null ? (
-          <div className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5 tw:whitespace-nowrap"
-            title={`Started at $${startBalance.toLocaleString()} (fixed for this backtest). Moves with each outcome you log; the risk is shown as a % of it.`}>
-            <Icon name="lock" className="tw:text-[11px] tw:text-on-surface-variant" />
-            <span className="tw:text-on-surface-variant tw:text-[10px]">Balance:</span>
-            <span className="tw:text-on-surface tw:font-bold">${currentBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-            {realizedPnl !== 0 && (
-              <span className={`tw:text-[10px] tw:font-semibold ${realizedPnl > 0 ? 'tw:text-secondary' : 'tw:text-tertiary'}`}>
-                {realizedPnl > 0 ? '+' : ''}{((realizedPnl / startBalance) * 100).toFixed(2)}%
-              </span>
-            )}
-            {riskPct != null && <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">risk {riskPct < 1 ? riskPct.toFixed(2) : riskPct.toFixed(1)}%</span>}
-          </div>
-          ) : (
-          <label className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-0.5" title="Initial balance of the simulated account; the risk is shown as a % of it">
-            <span className="tw:text-on-surface-variant tw:text-[10px]">Balance $:</span>
-            <input aria-label="Initial balance in dollars" type="number" min="0" step="any" value={balanceInput} onChange={e => changeBalance(e.target.value)}
-              className="tw:w-20 tw:bg-transparent tw:text-on-surface tw:font-bold tw:focus:outline-none" />
-            {riskPct != null && <span className="tw:text-on-surface-variant tw:text-[10px] tw:whitespace-nowrap">risk {riskPct < 1 ? riskPct.toFixed(2) : riskPct.toFixed(1)}%</span>}
-          </label>
-          )}
-        </div>
+        {desktopReplay}
       </section>
     </>
   );
@@ -2125,51 +2084,7 @@ export default function Workspace() {
     </aside>
   );
 
-  const desktopDock = (
-    <footer className="tw:h-11 tw:bg-surface-container-low tw:border-t tw:border-outline-variant tw:px-3 tw:flex tw:items-center tw:justify-between tw:gap-3 tw:shrink-0 tw:text-[11px]">
-      <div className="tw:flex tw:items-center tw:gap-2 tw:shrink-0">
-        <div className="tw:flex tw:items-center tw:gap-1">
-          <button type="button" className={dockBtn} title="Reset to start" aria-label="Reset to start" disabled={!total || replayIdx <= analysisStartIdx} onClick={() => jumpToReplayIndex(analysisStartIdx)}><Icon name="first_page" className="tw:text-[16px]" /></button>
-          <button type="button" className={dockBtn} title="Step -1 bar (←)" aria-label="Step back" disabled={!total || replayIdx === 0} onClick={() => jumpToReplayIndex(replayIdx - 1)}><Icon name="chevron_left" className="tw:text-[16px]" /></button>
-          <button type="button" disabled={!total} onClick={() => setPlaying(p => !p)} title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}
-            className="tw:w-8 tw:h-7 tw:rounded tw:bg-primary-container tw:hover:bg-surface-tint tw:text-on-primary tw:font-bold tw:flex tw:items-center tw:justify-center tw:transition tw:disabled:opacity-40">
-            <Icon name={playing ? 'pause' : 'play_arrow'} className="tw:text-[18px]" />
-          </button>
-          <button type="button" className={dockBtn} title="Step +1 bar (→)" aria-label="Step forward" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(replayIdx + 1)}><Icon name="chevron_right" className="tw:text-[16px]" /></button>
-          <button type="button" className={dockBtn} title="Jump to end" aria-label="Jump to end" disabled={!total || replayIdx >= total - 1} onClick={() => jumpToReplayIndex(total - 1)}><Icon name="last_page" className="tw:text-[16px]" /></button>
-        </div>
-        <div className="tw:flex tw:items-center tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:border tw:border-outline-variant tw:font-mono-metric-md tw:text-[10px]" role="group" aria-label="Replay speed">
-          {SPEEDS.map(s => (
-            <button key={s} type="button" aria-pressed={speed === s} onClick={() => setSpeed(s)}
-              className={`tw:px-1.5 tw:py-0.5 tw:rounded ${speed === s ? 'tw:bg-surface-container-high tw:text-primary-container tw:font-bold' : 'tw:text-on-surface-variant tw:hover:text-on-surface'}`}>{s}x</button>
-          ))}
-        </div>
-      </div>
-      <div className="tw:flex-1 tw:max-w-2xl tw:flex tw:flex-col tw:justify-center tw:px-3 tw:gap-1 tw:min-w-0">
-        <div className="tw:relative tw:w-full tw:h-3.5 tw:flex tw:items-center tw:group">
-          <div className="tw:w-full tw:h-1.5 tw:bg-surface-container-lowest tw:rounded-full tw:overflow-hidden tw:border tw:border-outline-variant/60">
-            <div className="tw:h-full tw:bg-primary-container tw:rounded-full" style={{ width: `${progressPct}%` }} />
-          </div>
-          <div className="tw:absolute tw:-translate-x-1/2 tw:w-3.5 tw:h-3.5 tw:rounded-full tw:bg-primary-container tw:border-2 tw:border-surface-container-lowest tw:shadow-[0_0_8px_rgba(245,158,11,0.7)] tw:group-hover:scale-125 tw:transition-transform tw:flex tw:items-center tw:justify-center tw:pointer-events-none" style={{ left: `${progressPct}%` }}>
-            <div className="tw:w-1 tw:h-1 tw:rounded-full tw:bg-surface-container-lowest" />
-          </div>
-          <input type="range" aria-label="Replay progress" min={0} max={Math.max(0, total - 1)} value={replayIdx} disabled={!total}
-            onChange={e => jumpToReplayIndex(Number(e.target.value))} className="tw:absolute tw:inset-0 tw:w-full tw:opacity-0 tw:cursor-pointer" />
-        </div>
-        <div className="tw:flex tw:items-center tw:justify-between tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface-variant tw:whitespace-nowrap tw:gap-2">
-          <span>Bar {Math.max(0, analysisBars)} of {analysisTotal} • {analysisPct.toFixed(1)}% elapsed</span>
-          <span className="tw:text-primary-container tw:truncate">{nextCandle ? `Next candle: ${fmtTick(Number(nextCandle.time))} UTC` : candles ? 'End of window' : ''}</span>
-        </div>
-      </div>
-      <div className="tw:hidden tw:min-[1400px]:flex tw:items-center tw:gap-1.5 tw:font-mono-metric-md tw:text-[10px] tw:text-on-surface-variant tw:shrink-0 tw:bg-surface-container-high/60 tw:border tw:border-outline-variant/80 tw:px-2 tw:py-1 tw:rounded">
-        <span className="tw:text-on-surface tw:font-semibold">[Space]</span><span>Play</span><span className="tw:text-outline-variant">•</span>
-        <span className="tw:text-on-surface tw:font-semibold">[← / →]</span><span>Step</span><span className="tw:text-outline-variant">•</span>
-        <span className="tw:text-on-surface tw:font-semibold">[L]</span><span>Long</span><span className="tw:text-outline-variant">•</span>
-        <span className="tw:text-on-surface tw:font-semibold">[S]</span><span>Short</span><span className="tw:text-outline-variant">•</span>
-        <span className="tw:text-on-surface tw:font-semibold">[Esc]</span><span>Cancel</span>
-      </div>
-    </footer>
-  );
+
 
   return (
     <div ref={rootRef} className="tw:flex tw:flex-col tw:w-full tw:text-on-surface tw:select-none">
@@ -2353,7 +2268,7 @@ export default function Workspace() {
         </aside>
         <div className="tw:relative tw:flex-1 tw:min-w-0 tw:flex tw:flex-col">
           {isDesktop && desktopLegend}
-          <div className={`tw:flex tw:w-full ${isDesktop ? 'tw:h-[calc(100dvh-208px)] tw:min-h-[360px]' : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}>
+          <div className={`tw:flex tw:w-full ${isDesktop ? (bottomOpen ? 'tw:h-[calc(100dvh-388px)] tw:min-h-[320px]' : 'tw:h-[calc(100dvh-222px)] tw:min-h-[360px]') : 'tw:h-[clamp(360px,calc(100dvh-330px),900px)]'}`}>
           <div className="tw:relative tw:flex-1 tw:min-w-0 tw:h-full"
             onMouseMove={handleChartHover} onMouseLeave={() => setHoveredHandle(null)}
             onContextMenu={e => {
@@ -2543,9 +2458,32 @@ export default function Workspace() {
           </div>
           {isDesktop && resultDrawer}
         </div>
+        {isDesktop && (
+          <TradePanel
+            marketPrice={current?.close ?? null} replayTime={current ? Number(current.time) : null}
+            openTrade={openTrade} closedTrade={closedTrade} tradeLive={tradeLive} locked={!candles || tradeLocked} unrealizedR={unrealizedR}
+            sizing={{ mode: sizingMode, setMode: setSizingMode, risk: riskAmountInput, setRisk: setRiskAmountInput, lots: lotsInput, setLots: setLotsInput, spec, specNote }}
+            account={{ start: startBalance, current: currentBalance, realized: realizedPnl, riskPct, balanceInput, setBalance: changeBalance }}
+            placingDirection={placingDirection} onPlace={placeFromTicket} onPlaceOnChart={startPlacing}
+            actions={{
+              takePartial, stopToBreakeven, closeNow: closeTradeNow, cancel: cancelTrade, toggleTp2,
+              setTp1Fraction: f => setOpenTrade(cur => (cur ? { ...cur, tp1Fraction: f } : cur)),
+              setBeAtTp1: v => setOpenTrade(cur => (cur ? { ...cur, beAtTp1: v } : cur)),
+              logOutcome: () => setShowCloseout(true),
+            }}
+            timeline={timeline} fmtTime={t => fmtTick(t)}
+          />
+        )}
       </div>
 
-      {isDesktop ? desktopDock : (
+      {isDesktop ? (
+        <BottomPanel
+          openTrade={openTrade} closedTrade={closedTrade} tradeLive={tradeLive} unrealizedR={unrealizedR}
+          marketPrice={current?.close ?? null} sessionLog={sessionLog}
+          startBalance={startBalance} balance={currentBalance}
+          open={bottomOpen} onToggle={() => setBottomOpen(o => !o)} fmtTime={t => `${fmtTick(t)}`}
+        />
+      ) : (
         <>
       {/* 6. Replay controller */}
       <section className="tw:bg-surface-container-high tw:px-gutter tw:py-space-sm tw:flex tw:flex-col tw:gap-space-xs tw:shadow-md">

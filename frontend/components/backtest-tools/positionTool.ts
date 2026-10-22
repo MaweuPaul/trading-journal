@@ -58,10 +58,16 @@ export function placeTradeAt(direction: 'long' | 'short', time: number, price: n
 export function pendingFillPrice(t: OpenTrade, c: Pick<Candle, 'open' | 'high' | 'low'>): number | null {
   if (!t.pending) return null;
   const e = t.entryPrice;
+  // Buy orders trigger on the ask (bid candle + spread), sell orders on the bid.
+  const sp = t.direction === 'long' ? t.spread ?? 0 : 0;
+  const open = c.open + sp, high = c.high + sp, low = c.low + sp;
   const fillsBelow = (t.direction === 'long') === (t.orderType === 'limit'); // buy limit / sell stop: price falls to it
-  if (fillsBelow) return c.low <= e ? Math.min(e, c.open) : null;
-  return c.high >= e ? Math.max(e, c.open) : null;
+  if (fillsBelow) return low <= e ? Math.min(e, open) : null;
+  return high >= e ? Math.max(e, open) : null;
 }
+
+/** The price the position would close at on a candle closing at `bidClose`: a short buys back at the ask. */
+export const exitPriceAt = (t: OpenTrade, bidClose: number) => (t.direction === 'short' ? bidClose + (t.spread ?? 0) : bidClose);
 
 /**
  * TP1 reached on a trade with a TP2: bank tp1Fraction there, optionally move

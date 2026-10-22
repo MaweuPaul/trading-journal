@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Icon } from './BacktestShell';
 import { fmtR, fmtUSD } from './data';
 import type { TimelineEvent } from './session';
-import { ClosedTrade, OpenTrade, OrderType, SizingMode, SymbolSpec, fmtPrice } from '../backtest-tools/types';
+import { ClosedTrade, OpenTrade, OrderType, SizingMode, SpreadSettings, SymbolSpec, fmtPrice } from '../backtest-tools/types';
 import { bankedR, openFraction, orderLabel, orderTypeFor, rAt } from '../backtest-tools/positionTool';
 
 export interface TicketOrder {
@@ -57,6 +57,8 @@ export interface TradePanelProps {
   };
   timeline: TimelineEvent[];
   fmtTime: (unixSeconds: number) => string;
+  spread: SpreadSettings;
+  onSpread: (s: SpreadSettings) => void;
 }
 
 const TYPES: { id: OrderType; label: string }[] = [
@@ -84,7 +86,8 @@ function OrderTicket(p: TradePanelProps) {
   const market = p.marketPrice;
   const autoStop = market != null ? Number((market * 0.005).toPrecision(3)) : null;
   const stopDistance = Number(stopInput) > 0 ? Number(stopInput) : autoStop;
-  const entry = type === 'market' ? market : Number(priceInput) || market;
+  const typicalSpread = p.spread.mode === 'fixed' ? p.spread.fixed : (p.spread.min + p.spread.max) / 2;
+  const entryFor = (direction: 'long' | 'short') => (type === 'market' ? (market != null ? market + (direction === 'long' ? typicalSpread || 0 : 0) : null) : Number(priceInput) || market);
   const disabled = p.locked || market == null;
 
   const place = (direction: 'long' | 'short') => {
@@ -117,7 +120,7 @@ function OrderTicket(p: TradePanelProps) {
           ? 'tw:border-secondary/60 tw:bg-secondary/10 tw:hover:bg-secondary/20 tw:text-secondary'
           : 'tw:border-tertiary/60 tw:bg-tertiary/10 tw:hover:bg-tertiary/20 tw:text-tertiary'}`}>
         <span className="tw:text-[10px] tw:font-semibold tw:uppercase">{label}</span>
-        <span className="tw:font-mono-metric-md tw:text-[15px] tw:font-bold">{entry != null ? fmtPrice(entry) : '—'}</span>
+        <span className="tw:font-mono-metric-md tw:text-[15px] tw:font-bold">{entryFor(direction) != null ? fmtPrice(entryFor(direction)!) : '—'}</span>
       </button>
     );
   };
@@ -294,7 +297,33 @@ function Timeline({ events, fmtTime }: { events: TimelineEvent[]; fmtTime: (s: n
   );
 }
 
-function Account({ a }: { a: TradePanelProps['account'] }) {
+function SpreadSetting({ spread, onSpread }: Pick<TradePanelProps, 'spread' | 'onSpread'>) {
+  const num = (v: string) => Math.max(0, Number(v) || 0);
+  return (
+    <div className="tw:mt-2 tw:text-[11px] tw:text-on-surface-variant" title="Candles are bid prices. Buys (a long's entry, a short's exit) fill at the ask: bid + spread. Random draws a spread between min and max for each trade.">
+      <div className="tw:flex tw:items-center tw:justify-between tw:mb-1">
+        <span>Spread (price)</span>
+        <div className="tw:flex tw:gap-0.5 tw:bg-surface-container-lowest tw:p-0.5 tw:rounded tw:border tw:border-outline-variant" role="group" aria-label="Spread mode">
+          {(['fixed', 'random'] as const).map(m => (
+            <button key={m} type="button" aria-pressed={spread.mode === m} onClick={() => onSpread({ ...spread, mode: m })}
+              className={`tw:px-1.5 tw:rounded tw:text-[10px] tw:font-semibold ${spread.mode === m ? 'tw:bg-surface-container-high tw:text-on-surface' : ''}`}>{m === 'fixed' ? 'Fixed' : 'Random'}</button>
+          ))}
+        </div>
+      </div>
+      {spread.mode === 'fixed'
+        ? <input type="number" min="0" step="any" aria-label="Fixed spread" value={spread.fixed || ''} placeholder="0" onChange={e => onSpread({ ...spread, fixed: num(e.target.value) })} className={field} />
+        : (
+          <div className="tw:flex tw:items-center tw:gap-1">
+            <input type="number" min="0" step="any" aria-label="Minimum spread" value={spread.min || ''} placeholder="min" onChange={e => onSpread({ ...spread, min: num(e.target.value) })} className={field} />
+            <span>–</span>
+            <input type="number" min="0" step="any" aria-label="Maximum spread" value={spread.max || ''} placeholder="max" onChange={e => onSpread({ ...spread, max: num(e.target.value) })} className={field} />
+          </div>
+        )}
+    </div>
+  );
+}
+
+function Account({ a, spread, onSpread }: { a: TradePanelProps['account'] } & Pick<TradePanelProps, 'spread' | 'onSpread'>) {
   return (
     <section className="tw:px-3 tw:py-2.5" aria-label="Account">
       <div className={heading}><span>Account</span></div>
@@ -312,6 +341,7 @@ function Account({ a }: { a: TradePanelProps['account'] }) {
           <input type="number" min="0" step="any" value={a.balanceInput} onChange={e => a.setBalance(e.target.value)} className={`${field} tw:mt-0.5`} />
         </label>
       )}
+      <SpreadSetting spread={spread} onSpread={onSpread} />
     </section>
   );
 }
@@ -321,7 +351,7 @@ export default function TradePanel(p: TradePanelProps) {
     <aside className="tw:w-[300px] tw:shrink-0 tw:bg-surface-container-low tw:border-l tw:border-outline-variant tw:flex tw:flex-col tw:min-h-0 tw:overflow-y-auto tw:select-text tw:z-20" aria-label="Trading panel">
       {p.openTrade ? <PositionCard {...p} /> : <OrderTicket {...p} />}
       <Timeline events={p.timeline} fmtTime={p.fmtTime} />
-      <Account a={p.account} />
+      <Account a={p.account} spread={p.spread} onSpread={p.onSpread} />
     </aside>
   );
 }

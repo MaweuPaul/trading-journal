@@ -32,6 +32,19 @@ export interface OpenTrade {
   tp1Fraction?: number;
   /** Move the stop to entry when TP1 is hit. */
   beAtTp1?: boolean;
+  /**
+   * Spread (price) for this trade. Candles are bid prices: buys -- a long's
+   * entry, a short's exits -- happen at the ask, bid + spread.
+   */
+  spread?: number;
+}
+/** Spread settings of a backtest: fixed, or random between min and max (drawn once per trade). */
+export interface SpreadSettings { mode: 'fixed' | 'random'; fixed: number; min: number; max: number }
+export const NO_SPREAD: SpreadSettings = { mode: 'fixed', fixed: 0, min: 0, max: 0 };
+export function sampleSpread(s: SpreadSettings): number {
+  if (s.mode === 'fixed') return Math.max(0, s.fixed || 0);
+  const lo = Math.max(0, Math.min(s.min, s.max)), hi = Math.max(0, s.min, s.max);
+  return lo + Math.random() * (hi - lo);
 }
 export type OrderType = 'market' | 'limit' | 'stop';
 export interface ClosedTrade extends OpenTrade {

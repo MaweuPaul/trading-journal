@@ -17,12 +17,13 @@ import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle, SymbolSpec, SizingMode,
+  SpreadSettings, NO_SPREAD, sampleSpread,
   CHART_INTERVALS, INTERVAL_DAYS, SPEEDS, candleEndMs, isoDaysAgo, fmtPrice, suggestInterval, lookbackMs, nearestCandleIndex,
 } from '../backtest-tools/types';
 import {
   placeTradeAt as placeTradeAtPure, updateHandlePrice as updateHandlePricePure, sizeTrade,
   findTradeHandleAt as findTradeHandleAtIn, drawTradeOverlay, OverlayPalette,
-  rAt, totalR, openFraction, outcomeForR, pendingFillPrice, scaleOutAtTp1, orderTypeFor, orderLabel,
+  rAt, totalR, openFraction, outcomeForR, exitPriceAt, pendingFillPrice, scaleOutAtTp1, orderTypeFor, orderLabel,
 } from '../backtest-tools/positionTool';
 import { drawMeasureOverlay } from '../backtest-tools/measureTool';
 import { ChartFetchError, getCandles } from '../backtest-tools/candleCache';
@@ -82,9 +83,11 @@ const MAX_DRAWING_BACKFILL_BARS = 20_000;
 /** Did this candle trade through the trade's stop / target? */
 function levelsHit(c: Candle, t: OpenTrade) {
   const long = t.direction === 'long';
+  // A long exits by selling at the bid (the candle); a short buys back at the ask.
+  const sp = long ? 0 : t.spread ?? 0;
   return {
-    sl: long ? c.low <= t.stopLoss : c.high >= t.stopLoss,
-    tp: t.takeProfit != null && (long ? c.high >= t.takeProfit : c.low <= t.takeProfit),
+    sl: long ? c.low <= t.stopLoss : c.high + sp >= t.stopLoss,
+    tp: t.takeProfit != null && (long ? c.high >= t.takeProfit : c.low + sp <= t.takeProfit),
   };
 }
 /**
@@ -311,6 +314,8 @@ export default function Workspace() {
   const [sessionLog, setSessionLog] = useState<SessionTrade[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [bottomOpen, setBottomOpen] = useState(true);
+  // Spread applied to fills and exits (candles are bid prices); kept with the session.
+  const [spreadSettings, setSpreadSettings] = useState<SpreadSettings>(NO_SPREAD);
   const [openTrade, setOpenTrade] = useState<OpenTrade | null>(null);
   // Against the trade's real (sized) risk once one is open.
   const riskForPct = openTrade ? openTrade.riskAmount : Number(riskAmountInput);
@@ -357,7 +362,7 @@ export default function Workspace() {
     intervalTouchedRef.current = true; setInterval_(draft.interval);
     setDrawColor(draft.drawColor);
     setStartBalance(draft.startBalance ?? (Number(balanceInput) || 10000)); setRealizedPnl(draft.realizedPnl ?? 0);
-    setSessionLog(draft.sessionLog ?? []); setTimeline(draft.timeline ?? []);
+    setSessionLog(draft.sessionLog ?? []); setTimeline(draft.timeline ?? []); setSpreadSettings(draft.spread ?? NO_SPREAD);
     loadChartWithInterval(draft.interval, { symbol: draft.symbol, fromDate: draft.fromDate, toDate: draft.toDate });
   };
   const discardDraft = () => { if (draftAvailable) clearDraft(draftAvailable.id ?? sessionIdFor(draftAvailable.strategy)); setDraftAvailable(null); };
@@ -379,13 +384,13 @@ export default function Workspace() {
         replayTime: Number(candles[replayIdx]?.time ?? 0) || undefined, strategy: sessionStrategyRef.current, id: sessionSlotRef.current,
         backtestName, notes, tags, drawColor,
         drawings: managerRef.current?.exportDrawings() ?? [],
-        startBalance: startBalance ?? undefined, realizedPnl, sessionLog, timeline: timeline.slice(-200),
+        startBalance: startBalance ?? undefined, realizedPnl, sessionLog, timeline: timeline.slice(-200), spread: spreadSettings,
         savedAt: Date.now(),
       });
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision, startBalance, realizedPnl, sessionLog, timeline]);
+  }, [candles, symbol, fromDate, toDate, interval, replayIdx, analysisStartIdx, openTrade, backtestName, notes, tags, drawColor, drawingCount, drawingRevision, startBalance, realizedPnl, sessionLog, timeline, spreadSettings]);
 
   // Re-suggest the timeframe when the range changes (cTrader caps a request
   // at 1500 bars) unless the trader picked one explicitly.
@@ -1324,8 +1329,8 @@ export default function Workspace() {
 
   const unrealizedR = useMemo(() => {
     if (!openTrade || !candles) return 0;
-    const px = (partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx])?.close ?? openTrade.entryPrice;
-    return totalR(openTrade, px);
+    const close = (partial && replayIdx === partial.idx ? partial.candle : candles[replayIdx])?.close;
+    return totalR(openTrade, close != null ? exitPriceAt(openTrade, close) : openTrade.entryPrice);
   }, [openTrade, candles, replayIdx, partial]);
 
   // The trade is live once replay has moved past its entry candle: its size
@@ -1333,7 +1338,7 @@ export default function Workspace() {
   // the stop moved to break-even or trailed.
   const liveCandle = openTrade && !closedTrade ? barAt(Math.min(replayIdx, (candles?.length ?? 1) - 1)) : null;
   const tradeLive = Boolean(openTrade && !openTrade.pending && liveCandle && Number(liveCandle.time) > openTrade.entryTime);
-  const livePrice = tradeLive ? liveCandle!.close : undefined;
+  const livePrice = tradeLive ? exitPriceAt(openTrade!, liveCandle!.close) : undefined;
   useEffect(() => {
     if (!tradeLive || !openTrade || openTrade.initialStop != null) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fix 1R the moment the trade goes live
@@ -1343,7 +1348,7 @@ export default function Workspace() {
   const closeTradeNow = () => {
     if (!candles || !openTrade) return;
     const candle = barAt(replayIdx); if (!candle) return;
-    const exitPrice = candle.close;
+    const exitPrice = exitPriceAt(openTrade, candle.close);
     const rMultiple = totalR(openTrade, exitPrice);
     setPlaying(false);
     setClosedTrade({ ...openTrade, exitTime: candle.time, exitPrice, outcome: outcomeForR(rMultiple), rMultiple, pnlUSD: rMultiple * openTrade.riskAmount });
@@ -1422,7 +1427,13 @@ export default function Workspace() {
   }, [openTrade, closedTrade, tradeLive, spec, sizingMode, riskAmountInput, lotsInput]);
 
   const placeTradeAt = (direction: 'long' | 'short', time: number, price: number, market?: number, snap?: number) => {
-    const trade = placeTradeAtPure(direction, time, price, Number(riskAmountInput) || 0, market, snap);
+    const placed = placeTradeAtPure(direction, time, price, Number(riskAmountInput) || 0, market, snap);
+    const sp = sampleSpread(spreadSettings);
+    const shift = placed.orderType === 'market' && direction === 'long' ? sp : 0;
+    const trade: OpenTrade = {
+      ...placed, spread: sp, entryPrice: placed.entryPrice + shift, stopLoss: placed.stopLoss + shift,
+      takeProfit: placed.takeProfit != null ? placed.takeProfit + shift : null,
+    };
     setOpenTrade(trade);
     setPlacingDirection(null);
     if (trade.pending) setToast(`${orderLabel(trade)} at ${fmtPrice(trade.entryPrice)}: fills when price gets there`);
@@ -1433,7 +1444,8 @@ export default function Workspace() {
     if (!candles || openTrade || closedTrade) return 'Close or log the current trade first';
     const market = barAt(replayIdx)?.close;
     if (market == null) return 'No price yet';
-    const entry = o.type === 'market' ? market : o.price;
+    const sp = sampleSpread(spreadSettings);
+    const entry = o.type === 'market' ? market + (o.direction === 'long' ? sp : 0) : o.price;
     if (entry == null || !(o.stopDistance > 0)) return 'Enter a stop distance';
     if (o.tp2R != null && o.tpR != null && o.tp2R <= o.tpR) return 'TP2 has to be further than TP1';
     const sign = o.direction === 'long' ? 1 : -1;
@@ -1444,7 +1456,7 @@ export default function Workspace() {
       takeProfit2: o.tp2R != null ? entry + sign * o.stopDistance * o.tp2R : null,
       tp1Fraction: o.tp1Fraction, beAtTp1: o.beAtTp1,
       riskAmount: Number(riskAmountInput) || 0,
-      orderType: o.type, ...(o.type === 'market' ? {} : { pending: true }),
+      orderType: o.type, ...(o.type === 'market' ? {} : { pending: true }), spread: sp,
     };
     setOpenTrade(trade);
     setPlacingDirection(null);
@@ -2464,6 +2476,7 @@ export default function Workspace() {
             openTrade={openTrade} closedTrade={closedTrade} tradeLive={tradeLive} locked={!candles || tradeLocked} unrealizedR={unrealizedR}
             sizing={{ mode: sizingMode, setMode: setSizingMode, risk: riskAmountInput, setRisk: setRiskAmountInput, lots: lotsInput, setLots: setLotsInput, spec, specNote }}
             account={{ start: startBalance, current: currentBalance, realized: realizedPnl, riskPct, balanceInput, setBalance: changeBalance }}
+            spread={spreadSettings} onSpread={setSpreadSettings}
             placingDirection={placingDirection} onPlace={placeFromTicket} onPlaceOnChart={startPlacing}
             actions={{
               takePartial, stopToBreakeven, closeNow: closeTradeNow, cancel: cancelTrade, toggleTp2,

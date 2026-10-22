@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { SerializedDrawing } from 'lightweight-charts-drawing';
-import type { OpenTrade } from '../backtest-tools/types';
+import type { OpenTrade, SpreadSettings } from '../backtest-tools/types';
 
 // Autosaved workspace sessions -- one per strategy -- so leaving mid-backtest
 // (drawings, an open hypothetical trade, where the replay was) doesn't lose
@@ -32,6 +32,8 @@ export interface WorkspaceDraft {
   sessionLog?: SessionTrade[];
   /** What happened in this session, newest last (the Timeline). */
   timeline?: TimelineEvent[];
+  /** Spread applied to fills and exits. */
+  spread?: SpreadSettings;
   savedAt: number;
 }
 

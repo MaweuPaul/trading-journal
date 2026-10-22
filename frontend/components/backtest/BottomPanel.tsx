@@ -8,7 +8,7 @@ import type { SessionTrade } from './session';
 import { ClosedTrade, OpenTrade, fmtPrice } from '../backtest-tools/types';
 import { openFraction, orderLabel, rAt } from '../backtest-tools/positionTool';
 
-type Tab = 'positions' | 'orders' | 'history' | 'stats';
+export type Tab = 'positions' | 'orders' | 'history' | 'stats';
 
 export interface BottomPanelProps {
   openTrade: OpenTrade | null;
@@ -21,6 +21,8 @@ export interface BottomPanelProps {
   balance: number | null;
   open: boolean;
   onToggle: () => void;
+  /** Tab shown first (default Positions). */
+  initialTab?: Tab;
   fmtTime: (unixSeconds: number) => string;
 }
 
@@ -44,13 +46,60 @@ export function sessionStats(log: SessionTrade[], startBalance: number | null) {
   };
 }
 
+/** Balance after each logged trade, starting from the locked starting balance. Hover a point for its trade. */
+function EquityCurve({ log, start, fmtTime }: { log: SessionTrade[]; start: number; fmtTime: (s: number) => string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const points = log.reduce<number[]>((acc, t) => [...acc, acc[acc.length - 1] + t.pnlUSD], [start]);
+  const W = 520, H = 130, PAD = { l: 8, r: 8, t: 10, b: 10 };
+  const lo = Math.min(...points), hi = Math.max(...points);
+  const span = hi - lo || Math.max(1, Math.abs(hi) * 0.01);
+  const x = (i: number) => PAD.l + (points.length > 1 ? (i / (points.length - 1)) * (W - PAD.l - PAD.r) : (W - PAD.l - PAD.r) / 2);
+  const y = (v: number) => PAD.t + (1 - (v - lo) / span) * (H - PAD.t - PAD.b);
+  const path = points.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const end = points[points.length - 1];
+  const up = end >= start;
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    let best = 0;
+    points.forEach((_, i) => { if (Math.abs(x(i) - px) < Math.abs(x(best) - px)) best = i; });
+    setHover(best);
+  };
+  const t = hover != null && hover > 0 ? log[hover - 1] : null;
+  return (
+    <figure className="tw:relative tw:flex-1 tw:min-w-[280px] tw:max-w-[640px] tw:m-0">
+      <figcaption className="tw:flex tw:justify-between tw:text-[10px] tw:text-on-surface-variant tw:mb-0.5">
+        <span>Balance after each trade</span>
+        <span className="tw:font-mono-metric-md">{`$${start.toLocaleString()} → `}<span className={up ? 'tw:text-secondary' : 'tw:text-tertiary'}>${end.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></span>
+      </figcaption>
+      <svg viewBox={`0 0 ${W} ${H}`} className="tw:w-full tw:h-[130px] tw:bg-surface-container-lowest tw:border tw:border-outline-variant tw:rounded" preserveAspectRatio="none"
+        role="img" aria-label={`Balance from $${start.toLocaleString()} to $${end.toFixed(2)} over ${log.length} trades`} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <line x1={PAD.l} x2={W - PAD.r} y1={y(start)} y2={y(start)} stroke="var(--bt-outline-variant)" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+        <path d={path} fill="none" stroke="var(--bt-primary-container)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        {hover != null && <>
+          <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={H - PAD.b} stroke="var(--bt-on-surface-variant)" strokeWidth={1} vectorEffect="non-scaling-stroke" opacity={0.5} />
+          <circle cx={x(hover)} cy={y(points[hover])} r={4} fill="var(--bt-primary-container)" stroke="var(--bt-surface-container-lowest)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        </>}
+      </svg>
+      {hover != null && (
+        <div className="tw:absolute tw:top-5 tw:pointer-events-none tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:px-2 tw:py-1 tw:text-[10px] tw:shadow-lg tw:whitespace-nowrap"
+          style={{ left: `${(x(hover) / W) * 100}%`, transform: hover > points.length / 2 ? 'translateX(calc(-100% - 8px))' : 'translateX(8px)' }}>
+          <div className="tw:font-mono-metric-md tw:font-bold tw:text-on-surface">${points[hover].toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+          {t ? <div className="tw:text-on-surface-variant">#{hover} {t.direction === 'long' ? 'Buy' : 'Sell'} · {fmtR(t.rMultiple)} · {fmtUSD(t.pnlUSD)} · {fmtTime(t.exitTime)}</div>
+            : <div className="tw:text-on-surface-variant">Starting balance</div>}
+        </div>
+      )}
+    </figure>
+  );
+}
+
 const th = 'tw:text-left tw:font-semibold tw:text-on-surface-variant tw:px-2 tw:py-1 tw:whitespace-nowrap';
 const td = 'tw:px-2 tw:py-1 tw:font-mono-metric-md tw:whitespace-nowrap';
 const sideCls = (d: 'long' | 'short') => (d === 'long' ? 'tw:text-secondary' : 'tw:text-tertiary');
 const pnlCls = (n: number) => (n >= 0 ? 'tw:text-secondary' : 'tw:text-tertiary');
 
 export default function BottomPanel(p: BottomPanelProps) {
-  const [tab, setTab] = useState<Tab>('positions');
+  const [tab, setTab] = useState<Tab>(p.initialTab ?? 'positions');
   const t = p.openTrade;
   const position = t && !t.pending ? t : null;
   const order = t && t.pending ? t : null;
@@ -148,7 +197,9 @@ export default function BottomPanel(p: BottomPanelProps) {
           ) : empty('Outcomes you log in this backtest are listed here.'))}
 
           {tab === 'stats' && (stats.trades ? (
-            <div className="tw:flex tw:flex-wrap tw:gap-2 tw:p-2.5">
+            <div className="tw:flex tw:flex-wrap tw:items-start tw:gap-3 tw:p-2.5">
+            {p.startBalance != null && <EquityCurve log={p.sessionLog} start={p.startBalance} fmtTime={p.fmtTime} />}
+            <div className="tw:flex tw:flex-wrap tw:gap-2 tw:flex-1 tw:min-w-[300px]">
               {stat('Trades', String(stats.trades))}
               {stat('Win rate', `${(stats.winRate * 100).toFixed(0)}%`)}
               {stat('Wins / losses', `${stats.wins} / ${stats.losses}`)}
@@ -158,6 +209,7 @@ export default function BottomPanel(p: BottomPanelProps) {
               {stat('Profit factor', Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : '∞')}
               {stat('Best / worst', `${fmtR(stats.bestR, 1)} / ${fmtR(stats.worstR, 1)}`)}
               {stats.maxDrawdownPct != null && stat('Max drawdown', `${stats.maxDrawdownPct.toFixed(2)}%`, stats.maxDrawdownPct > 0 ? 'tw:text-tertiary' : 'tw:text-on-surface')}
+            </div>
             </div>
           ) : empty('Statistics appear once you log an outcome in this backtest.'))}
         </div>

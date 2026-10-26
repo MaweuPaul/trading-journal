@@ -1,3 +1,4 @@
+import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { Candle } from '../backtest-tools/types';
 
 export interface Session {
@@ -14,10 +15,10 @@ export const SESSIONS: Session[] = [
   {
     name: 'Tokyo',
     timeZone: 'Asia/Tokyo',
-    startHour: 8,
+    startHour: 9,
     startMinute: 0,
-    endHour: 16,
-    endMinute: 30,
+    endHour: 15,
+    endMinute: 0,
     color: '#ef4444',
   },
   {
@@ -43,8 +44,8 @@ export const SESSIONS: Session[] = [
     timeZone: 'America/New_York',
     startHour: 8,
     startMinute: 0,
-    endHour: 16,
-    endMinute: 30,
+    endHour: 17,
+    endMinute: 0,
     color: '#f59e0b',
   },
 ];
@@ -132,4 +133,76 @@ export function sessionBoxes(
   }
 
   return boxes;
+}
+
+/**
+ * The boxes as they looked at replay candle `idx`: later boxes dropped, and the
+ * one in progress cut back to candles 0..idx. `current` is candle `idx` as the
+ * replay shows it (it may still be forming), so its high/low never leak ahead.
+ * `boxes` come from sessionBoxes over all loaded candles, computed once.
+ */
+export function sessionBoxesAt(
+  boxes: SessionBox[],
+  candles: Candle[],
+  idx: number,
+  current: Candle,
+): SessionBox[] {
+  const now = current.time;
+  const out: SessionBox[] = [];
+
+  for (const box of boxes) {
+    if (box.startTime > now) continue; // hasn't started yet
+    if (box.endTime < now) {
+      out.push(box); // finished before now
+      continue;
+    }
+    // In progress: rebuild high/low from its start up to now.
+    let high = current.high;
+    let low = current.low;
+    for (let i = idx - 1; i >= 0 && candles[i].time >= box.startTime; i--) {
+      high = Math.max(high, candles[i].high);
+      low = Math.min(low, candles[i].low);
+    }
+    out.push({ ...box, open: true, high, low, endTime: now });
+  }
+
+  return out;
+}
+
+/** Draw session boxes on the overlay canvas, behind everything else. */
+export function drawSessionOverlay(params: {
+  ctx: CanvasRenderingContext2D;
+  chart: IChartApi;
+  series: ISeriesApi<'Candlestick'>;
+  boxes: SessionBox[];
+}) {
+  const { ctx, chart, series, boxes } = params;
+  const ts = chart.timeScale();
+  // Times map to candle centres; widen by half a bar so the box covers whole candles.
+  const halfBar = ts.options().barSpacing / 2;
+
+  ctx.save();
+  ctx.font = '600 10px sans-serif';
+  ctx.lineWidth = 1;
+  for (const box of boxes) {
+    const x1 = ts.timeToCoordinate(box.startTime as UTCTimestamp);
+    const x2 = ts.timeToCoordinate(box.endTime as UTCTimestamp);
+    const y1 = series.priceToCoordinate(box.high);
+    const y2 = series.priceToCoordinate(box.low);
+    if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+
+    const left = x1 - halfBar;
+    const width = x2 - x1 + halfBar * 2;
+    const color = box.session.color;
+    ctx.fillStyle = color + '14'; // ~8% opacity so candles show through
+    ctx.fillRect(left, y1, width, y2 - y1);
+    ctx.strokeStyle = color + '80';
+    ctx.setLineDash(box.open ? [4, 3] : []); // dashed while still forming
+    ctx.strokeRect(left, y1, width, y2 - y1);
+    if (width > 40) {
+      ctx.fillStyle = color;
+      ctx.fillText(box.session.name, left + 4, y1 - 4);
+    }
+  }
+  ctx.restore();
 }

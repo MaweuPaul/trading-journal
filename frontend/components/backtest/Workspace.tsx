@@ -15,6 +15,7 @@ import JournalFields, { EMPTY_JOURNAL, JournalValues } from './JournalFields';
 import { WorkspaceDraft, SessionTrade, TimelineEvent, readDraft, writeDraft, clearDraft, sessionIdFor } from './session';
 import { useIsDesktop } from './layout';
 import { EMA_CONFIG, ema, rsi, symbolDescription } from './indicators';
+import { SESSIONS, sessionBoxes, sessionBoxesAt, drawSessionOverlay } from '../backtest-indicators/sessions';
 import {
   Candle, MeasureRange, OpenTrade, ClosedTrade, TradeHandle, SymbolSpec, SizingMode,
   SpreadSettings, NO_SPREAD, sampleSpread,
@@ -131,7 +132,7 @@ async function firstLevelHit(symbol: string, tf: string, startMs: number, endMs:
 // A drawing being placed: `placed` anchors are fixed, the rest follow the
 // cursor until clicked (or, for the 2nd anchor, until a drag is released).
 interface PendingDrawing { drawing: IDrawing; required: number; placed: number; startX: number; startY: number; origin: Anchor }
-interface Indicators { ema: boolean; rsi: boolean; volume: boolean; news: boolean }
+interface Indicators { ema: boolean; rsi: boolean; volume: boolean; news: boolean; sessions: boolean }
 /** How far the server's calendar has got (from /api/news). */
 interface NewsStatus { configured?: boolean; lastError?: string; earliest?: string | null; latest?: string | null }
 /** An economic calendar release from /api/news (high or medium impact). */
@@ -292,7 +293,7 @@ export default function Workspace() {
 
   // ── Chart view extras ──────────────────────────────────────────────────────
   // EMAs only by default; RSI and volume stay available in the Indicators menu.
-  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false, news: true });
+  const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false, news: true, sessions: false });
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -961,6 +962,20 @@ export default function Workspace() {
     return { emas: EMA_CONFIG.map(cfg => ema(closes, cfg.period)), rsi: rsi(closes, 14) };
   }, [candles, partial]);
 
+  // Session boxes: built once per load (the slow part, a time-zone lookup per
+  // candle), then cut back to the replay position each step. Intraday only --
+  // on 1D and above a session is less than a candle.
+  const allSessionBoxes = useMemo(() => {
+    if (!indicators.sessions || !candles || candles.length < 2 || candles[1].time - candles[0].time >= 86_400) return [];
+    return SESSIONS.flatMap(s => sessionBoxes(candles, s));
+  }, [candles, indicators.sessions]);
+  const shownSessionBoxes = useMemo(() => {
+    if (!candles || !allSessionBoxes.length) return [];
+    const idx = Math.min(replayIdx, candles.length - 1);
+    const current = partial && idx === partial.idx ? partial.candle : candles[idx];
+    return sessionBoxesAt(allSessionBoxes, candles, idx, current);
+  }, [allSessionBoxes, candles, replayIdx, partial]);
+
   // ── Indicator / chart-type visibility ──────────────────────────────────────
   const showIndicators = true;
   useEffect(() => {
@@ -1627,11 +1642,12 @@ export default function Workspace() {
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const colors = palette();
+    if (shownSessionBoxes.length) drawSessionOverlay({ ctx, chart, series, boxes: shownSessionBoxes });
     const trade = closedTrade || openTrade;
     if (trade) drawTradeOverlay({ ctx, chart, series, canvas, trade, closedTrade, hoveredHandle, draggingHandle: draggingHandleRef.current, palette: colors });
     const activeMeasure = measureDragRef.current || measureRange;
     if (activeMeasure) drawMeasureOverlay({ ctx, chart, series, range: activeMeasure, candles, resolvedTheme: resolvedTheme === 'dark' ? 'dark' : 'light' });
-  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, palette]);
+  }, [candles, resolvedTheme, openTrade, closedTrade, hoveredHandle, measureRange, palette, shownSessionBoxes]);
   useEffect(() => { redrawCanvasRef.current = redrawCanvas; redrawCanvas(); }, [redrawCanvas, replayIdx]);
 
   // ── Pointer handling on the overlay canvas ─────────────────────────────────
@@ -1958,11 +1974,11 @@ export default function Workspace() {
             <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
               className="tw:flex tw:items-center tw:gap-1 tw:px-2 tw:h-7 tw:rounded tw:hover:bg-surface-container-high tw:text-on-surface-variant tw:hover:text-on-surface tw:transition">
               <Icon name="tune" className="tw:text-[15px] tw:text-primary" />
-              <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0)})</span>
+              <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0) + (indicators.sessions ? 1 : 0)})</span>
             </button>
             {showIndicatorMenu && (
               <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-40 tw:w-52 tw:bg-surface-container-high tw:border tw:border-outline-variant tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News']] as const).map(([k, label]) => (
+                {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News'], ['sessions', 'Sessions']] as const).map(([k, label]) => (
                   <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                     <span>{label}</span>
                     <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
@@ -2248,11 +2264,11 @@ export default function Workspace() {
                 <button type="button" onClick={() => setShowIndicatorMenu(v => !v)} aria-expanded={showIndicatorMenu}
                   className="tw:flex tw:items-center tw:gap-1 tw:bg-surface-container-high tw:hover:bg-surface-bright tw:px-space-sm tw:py-1 tw:rounded tw:text-on-surface tw:font-label-action tw:text-label-action">
                   <Icon name="tune" className="tw:text-[15px] tw:text-primary" />
-                  <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0)})</span>
+                  <span>Indicators ({(indicators.ema ? 3 : 0) + (indicators.rsi ? 1 : 0) + (indicators.volume ? 1 : 0) + (indicators.news ? 1 : 0) + (indicators.sessions ? 1 : 0)})</span>
                 </button>
                 {showIndicatorMenu && (
                   <div className="tw:absolute tw:right-0 tw:top-full tw:mt-1 tw:z-30 tw:w-52 tw:bg-surface-container-high tw:rounded tw:shadow-xl tw:p-space-sm tw:flex tw:flex-col tw:gap-1">
-                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News']] as const).map(([k, label]) => (
+                    {([['ema', 'EMA 20 / 50 / 200'], ['rsi', 'RSI (14)'], ['volume', 'Volume'], ['news', 'News'], ['sessions', 'Sessions']] as const).map(([k, label]) => (
                       <label key={k} className="tw:flex tw:items-center tw:justify-between tw:gap-space-sm tw:px-space-xs tw:py-1 tw:rounded tw:hover:bg-surface-bright tw:cursor-pointer tw:font-label-action tw:text-label-action">
                         <span>{label}</span>
                         <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />

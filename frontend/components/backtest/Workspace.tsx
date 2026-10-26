@@ -295,6 +295,8 @@ export default function Workspace() {
   // EMAs only by default; RSI and volume stay available in the Indicators menu.
   const [indicators, setIndicators] = useState<Indicators>({ ema: true, rsi: false, volume: false, news: true, sessions: false });
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
+  /** Names of sessions switched off in the Indicators menu. */
+  const [hiddenSessions, setHiddenSessions] = useState<string[]>([]);
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -973,8 +975,10 @@ export default function Workspace() {
     if (!candles || !allSessionBoxes.length) return [];
     const idx = Math.min(replayIdx, candles.length - 1);
     const current = partial && idx === partial.idx ? partial.candle : candles[idx];
-    return sessionBoxesAt(allSessionBoxes, candles, idx, current);
-  }, [allSessionBoxes, candles, replayIdx, partial]);
+    // Filter here, not when building, so switching a session back on is instant.
+    const visible = hiddenSessions.length ? allSessionBoxes.filter(b => !hiddenSessions.includes(b.session.name)) : allSessionBoxes;
+    return sessionBoxesAt(visible, candles, idx, current);
+  }, [allSessionBoxes, candles, replayIdx, partial, hiddenSessions]);
 
   // ── Indicator / chart-type visibility ──────────────────────────────────────
   const showIndicators = true;
@@ -1119,6 +1123,21 @@ export default function Workspace() {
       setNewsImporting(false);
     }
   };
+  const sessionToggles = indicators.sessions && (
+    <div className="tw:flex tw:flex-wrap tw:gap-1 tw:px-space-xs tw:py-1" role="group" aria-label="Sessions shown">
+      {SESSIONS.map(s => {
+        const on = !hiddenSessions.includes(s.name);
+        return (
+          <button key={s.name} type="button" aria-pressed={on}
+            onClick={() => setHiddenSessions(h => (on ? [...h, s.name] : h.filter(n => n !== s.name)))}
+            className={`tw:flex tw:items-center tw:gap-1 tw:px-2 tw:py-0.5 tw:rounded tw:border tw:border-outline-variant tw:text-[10px] ${on ? 'tw:font-semibold' : 'tw:opacity-50 tw:line-through'}`}>
+            <span className="tw:w-2 tw:h-2 tw:rounded-sm" style={{ background: s.color }} />
+            {s.name}
+          </button>
+        );
+      })}
+    </div>
+  );
   const newsImportControl = (
     <>
     <div className="tw:flex tw:items-center tw:justify-between tw:gap-2 tw:px-space-xs tw:py-1 tw:text-[11px] tw:text-on-surface-variant">
@@ -1984,6 +2003,7 @@ export default function Workspace() {
                     <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                   </label>
                 ))}
+                {sessionToggles}
                 {newsImportControl}
               </div>
             )}
@@ -2274,6 +2294,7 @@ export default function Workspace() {
                         <input type="checkbox" checked={indicators[k]} onChange={e => setIndicators(v => ({ ...v, [k]: e.target.checked }))} className="tw:accent-primary" />
                       </label>
                     ))}
+                    {sessionToggles}
                     {newsImportControl}
                   </div>
                 )}

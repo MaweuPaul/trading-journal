@@ -2257,12 +2257,6 @@ tbody tr.clickable:hover {
 .calendar-stats-bar strong.positive { color: var(--green); }
 .calendar-stats-bar strong.negative { color: var(--red); }
 
-@media (max-width: 900px) {
-  .calendar-weekday-row, .calendar-grid { grid-template-columns: repeat(7, 1fr); }
-  .calendar-weekday-pnl-label { display: none; }
-  .calendar-week-box { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; min-height: auto; padding: 8px 12px; }
-}
-
 .calendar-toolbar {
   display: flex;
   align-items: center;
@@ -2405,8 +2399,20 @@ tbody tr.clickable:hover {
   color: var(--text-muted);
 }
 
-/* Responsive adjustments for mobile calendar */
+/* Responsive adjustments for mobile calendar. These come after the base
+   rules above on purpose: same specificity, so the later rule wins. */
+.day-pnl-short { display: none; }
+
+@media (max-width: 900px) {
+  .calendar-weekday-row, .calendar-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .calendar-weekday-pnl-label { display: none; }
+  .calendar-week-box { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; min-height: auto; padding: 8px 12px; }
+}
+
 @media (max-width: 768px) {
+  .calendar-card { padding: 14px 10px; }
+  .calendar-toolbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .calendar-weekday-row { letter-spacing: 0; font-size: 9px; }
   .calendar-day {
     min-height: 56px;
     padding: 4px 6px;
@@ -2428,12 +2434,16 @@ tbody tr.clickable:hover {
     align-items: center;
   }
   .day-pnl {
-    font-size: 8px;
+    font-size: 10px;
     margin-top: 2px;
     text-align: center;
+    letter-spacing: -0.3px;
   }
+  .day-pnl-full, .day-sub-metric { display: none; }
+  .day-pnl-short { display: inline; }
   .day-num {
-    font-size: 10px;
+    font-size: 11px;
+    text-align: center;
   }
 }
 
@@ -2441,8 +2451,10 @@ tbody tr.clickable:hover {
    PREMIUM PAGE TRANSITIONS & FEEL
    Subtle ease-out fade-in animations
 ══════════════════════════════ */
+/* No `forwards`: a held animation makes each page its own stacking context,
+   which traps fixed drawers and modals under the mobile top bar. */
 .main-content > div {
-  animation: pageFadeIn 0.35s ease-out forwards;
+  animation: pageFadeIn 0.35s ease-out;
 }
 
 @keyframes pageFadeIn {

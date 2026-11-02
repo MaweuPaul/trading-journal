@@ -60,6 +60,13 @@ function fmtUSD(n: number) {
   return n < 0 ? `-$${abs}` : `$${abs}`;
 }
 
+/** Signed P&L short enough for a phone-width day cell: +$1.3k, -$842. */
+function shortUSD(n: number) {
+  const abs = Math.abs(n);
+  const body = abs >= 1000 ? `${(abs / 1000).toFixed(abs >= 10_000 ? 0 : 1)}k` : abs.toFixed(0);
+  return `${n >= 0 ? '+' : '-'}$${body}`;
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -398,7 +405,7 @@ export default function CalendarPage() {
                 <button className="page-btn" onClick={prevMonth}>
                   <ChevronLeft size={16} />
                 </button>
-                <button className="page-btn" onClick={() => { setCurrentDate(new Date()); setSelectedDateStr(null); }} style={{ fontSize: 11, fontWeight: 600 }}>
+                <button className="page-btn" onClick={() => { setCurrentDate(new Date()); setSelectedDateStr(null); }} style={{ fontSize: 11, fontWeight: 600, width: 'auto', padding: '0 10px' }}>
                   Today
                 </button>
                 <button className="page-btn" onClick={nextMonth}>
@@ -437,7 +444,8 @@ export default function CalendarPage() {
                         {statsExist && (
                           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'flex-end' }}>
                             <span className="day-pnl">
-                              {stats.pnl >= 0 ? '+' : '-'}${Math.abs(stats.pnl).toFixed(2)}
+                              <span className="day-pnl-full">{stats.pnl >= 0 ? '+' : '-'}${Math.abs(stats.pnl).toFixed(2)}</span>
+                              <span className="day-pnl-short">{shortUSD(stats.pnl)}</span>
                             </span>
                             <span className="day-trades-lbl">{stats.tradesCount} trade{stats.tradesCount > 1 ? 's' : ''}</span>
                             <span className="day-sub-metric">

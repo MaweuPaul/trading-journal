@@ -302,11 +302,7 @@ export default function PerformancePage() {
           )}
 
           {/* ── Hero KPI Row ──────────────────────────────────────── */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 14, marginBottom: 20,
-          }}>
+          <div className="perf-kpi-grid">
             {/* Net P&L */}
             <div className={`stat-card ${isGrowth ? 'green-card' : 'red-card'}`}>
               <div className={`stat-icon ${isGrowth ? 'green' : 'red'}`}><DollarSign size={14} /></div>
@@ -499,11 +495,7 @@ export default function PerformancePage() {
                 <div className="card-subtitle">The numbers that define your trading edge</div>
               </div>
             </div>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: 0,
-            }}>
+            <div className="perf-risk-grid">
               {[
                 {
                   label: 'Win Rate',
@@ -562,11 +554,7 @@ export default function PerformancePage() {
                   icon: <TrendingDown size={14} />,
                 },
               ].map((m, i) => (
-                <div key={i} style={{
-                  padding: '18px 20px',
-                  borderRight: i % 4 !== 3 ? '1px solid var(--border)' : 'none',
-                  borderBottom: i < 4 ? '1px solid var(--border)' : 'none',
-                }}>
+                <div key={i} style={{ padding: '18px 20px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                     <span style={{ color: m.good ? 'var(--green)' : 'var(--red)' }}>{m.icon}</span>
                     <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>

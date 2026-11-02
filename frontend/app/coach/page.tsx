@@ -263,7 +263,7 @@ export default function CoachPage() {
             </div>
 
             {/* ROW 2: Missed Profit + Exit Reasons */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div className="grid-2" style={{ marginBottom: 0 }}>
 
               {/* Early Exit / Missed Profit */}
               <SectionCard title="💸 Missed Profit from Early Exits" icon={<TrendingDown size={15} />} accent="#ef4444">
@@ -369,7 +369,7 @@ export default function CoachPage() {
             </div>
 
             {/* ROW 3: Grade Gap + Plan Adherence */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div className="grid-2" style={{ marginBottom: 0 }}>
 
               {/* Grade Gap */}
               <SectionCard title="Analysis vs Execution Grade Gap" icon={<Zap size={15} />} accent="#8b5cf6">
@@ -530,7 +530,7 @@ export default function CoachPage() {
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Each version is measured separately, so later edits never rewrite the performance of earlier rules.</p>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {data!.playbookAnalytics.map(item => (
-                    <div key={item.versionId} style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 1fr) repeat(3, minmax(70px, auto))', gap: 12, alignItems: 'center', padding: '11px 13px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <div key={item.versionId} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) repeat(3, minmax(56px, auto))', gap: 12, alignItems: 'center', padding: '11px 13px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10 }}>
                       <div><div style={{ fontWeight: 750, fontSize: 13 }}>{item.playbookName} <span style={{ color: '#8b5cf6' }}>v{item.versionNumber}</span></div><div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{item.tradeCount < 5 ? 'Early evidence' : `${item.tradeCount} completed trades`}</div></div>
                       <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Trades</div><strong>{item.tradeCount}</strong></div>
                       <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Win rate</div><strong>{item.winRate}%</strong></div>

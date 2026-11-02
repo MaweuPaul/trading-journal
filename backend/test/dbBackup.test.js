@@ -83,6 +83,26 @@ test('keeps the newest N complete backups and clears incomplete leftovers', asyn
   assert.deepEqual(left, ['backup_prerestore_20261001T10', 'backup_2026-10-01', 'backup_2026-09-30'], 'safety copies are never pruned');
 });
 
+test('a full backup cluster makes room before copying, so backups recover by themselves', async () => {
+  const live = fakeClient(), backup = fakeClient();
+  const src = live.db('tradejournal'); await seed(src);
+  for (const day of ['2026-09-28', '2026-09-29', '2026-09-30']) await runBackup({ sourceDb: src, backupClient: backup, name: `backup_${day}`, prune: false });
+  await backup.db('backup_2026-10-01').collection('trades').insertOne({ _id: 'half' }); // yesterday's run hit the quota
+  // Room for two backups and no more: any write beyond that is refused, like Atlas over its quota.
+  const full = { ...backup, db: name => {
+    const db = backup.db(name);
+    return { ...db, collection: c => ({ ...db.collection(c), async insertMany(list) {
+      const others = [...backup.dbs.keys()].filter(n => n !== name && backup.dbs.get(n).size);
+      if (others.length >= 2) throw new Error('you are over your space quota');
+      return db.collection(c).insertMany(list);
+    } }) };
+  } };
+  const result = await runBackup({ sourceDb: src, backupClient: full, name: 'backup_2026-10-02', retention: { daily: 2, weekly: 0, monthly: 0 } });
+  assert.equal(result.documents, 2502);
+  assert.deepEqual(result.dropped.sort(), ['backup_2026-09-28', 'backup_2026-09-29', 'backup_2026-10-01']);
+  assert.deepEqual((await listBackups(backup)).map(b => b.name), ['backup_2026-10-02', 'backup_2026-09-30']);
+});
+
 test('restore replaces collections from a complete backup and refuses an incomplete one', async () => {
   const live = fakeClient(), backup = fakeClient();
   const src = live.db('tradejournal'); await seed(src);

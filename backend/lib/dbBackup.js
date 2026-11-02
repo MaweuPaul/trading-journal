@@ -109,12 +109,16 @@ function backupsToKeep(names, retention = DEFAULT_RETENTION) {
   return keep;
 }
 
-/** Drop dated backups the retention doesn't keep (incomplete leftovers too). Returns dropped names. */
-async function pruneBackups(backupClient, retention = DEFAULT_RETENTION, { today = backupName(), log = () => {} } = {}) {
+/**
+ * Drop dated backups the retention doesn't keep (incomplete leftovers too). Returns dropped names.
+ * With beforeCopy, `today` counts as already made, so the copy it's about to
+ * become has room even on a cluster that's at its storage limit.
+ */
+async function pruneBackups(backupClient, retention = DEFAULT_RETENTION, { today = backupName(), beforeCopy = false, log = () => {} } = {}) {
   const all = await listBackups(backupClient);
   const dated = all.filter(b => DAY_NAME.test(b.name));
   const complete = dated.filter(b => b.marker?.completedAt).map(b => b.name); // newest first
-  const keep = backupsToKeep(complete, retention);
+  const keep = backupsToKeep(beforeCopy && !complete.includes(today) ? [today, ...complete] : complete, retention);
   const dropped = [];
   for (const b of dated) {
     if (keep.has(b.name) || b.name === today) continue;
@@ -137,6 +141,9 @@ async function runBackup({ sourceDb, backupClient, name = backupName(), retentio
     log(`${name} already exists and is complete; nothing to do (use --force to redo it).`);
     return { name, skipped: true };
   }
+  // Make room first: a full cluster blocks the copy, and the prune after it
+  // would then never run, so backups would stay stuck until someone stepped in.
+  const freed = prune ? await pruneBackups(backupClient, retention, { today: name, beforeCopy: true, log }) : [];
   await target.dropDatabase();
   log(`Copying "${sourceDb.databaseName}" into ${name}...`);
   const counts = await copyCollections(sourceDb, target, { log });
@@ -153,7 +160,7 @@ async function runBackup({ sourceDb, backupClient, name = backupName(), retentio
   });
   log(`${name}: ${Object.keys(counts).length} collections, ${documents} documents, checked.`);
   const dropped = prune ? await pruneBackups(backupClient, retention, { today: name, log }) : [];
-  return { name, counts, documents, dropped };
+  return { name, counts, documents, dropped: [...freed, ...dropped] };
 }
 
 /**

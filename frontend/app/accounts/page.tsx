@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, KeyRound,
   Landmark, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Server,
   ShieldCheck, Trash2, WifiOff, PlugZap, Unlink, Video, DownloadCloud,
-  Users, Copy, ShieldOff, Check, TerminalSquare, FileUp,
+  Users, Copy, ShieldOff, Check, TerminalSquare, FileUp, X,
 } from 'lucide-react';
 import InfoHint from '@/components/InfoHint';
 import AgentKeys from '@/components/AgentKeys';
@@ -276,6 +276,14 @@ export default function TradingAccountsPage() {
     return () => window.clearTimeout(timer);
   }, [loadAccounts]);
 
+  // Escape closes the add/edit drawer.
+  useEffect(() => {
+    if (!formOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setFormOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [formOpen]);
+
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
@@ -473,37 +481,43 @@ export default function TradingAccountsPage() {
         </div>
       </section>
 
-      {error && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}
+      {error && !formOpen && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}
       {notice && <div className="account-alert success" aria-live="polite"><CheckCircle2 size={17} />{notice}</div>}
 
       {formOpen && (
-        <section className="account-editor" aria-labelledby="account-editor-title">
-          <div className="account-editor-head">
-            <div><h2 id="account-editor-title">{editingId ? 'Edit trading account' : 'Add an MT5 account'}</h2><p>{editingId ? 'Leave credential fields empty to keep the values already stored securely.' : 'Use the exact login and server shown inside your broker terminal.'}</p></div>
-            <button className="btn-ghost" type="button" onClick={() => setFormOpen(false)}>Cancel</button>
-          </div>
-          <form onSubmit={saveAccount}>
-            <div className="account-form-grid">
-              <label><span>Account label *</span><input required maxLength={80} value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="e.g. Exness main account" /></label>
-              <label><span>MT5 login {editingId ? '' : '*'}</span><input required={!editingId} inputMode="numeric" autoComplete="off" value={form.login} onChange={event => setForm({ ...form, login: event.target.value.replace(/\D/g, '') })} placeholder={editingId ? 'Unchanged' : 'Account number'} /></label>
-              <label><span>Broker server {editingId ? '' : '*'}</span><div className="account-input-icon"><Server size={16} /><input required={!editingId} autoComplete="off" value={form.server} onChange={event => setForm({ ...form, server: event.target.value })} placeholder={editingId ? 'Unchanged' : 'e.g. Broker-MT5Real'} /></div></label>
-              <label>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  MT5 password {editingId ? '' : '*'}
-                  <InfoHint text="Use the investor (read-only) password from your broker, not your trading/master password — every MT5 account has both. This journal only ever reads history and balance, never places trades, so the investor password is all it needs. If your credentials were ever exposed, an investor password can only be used to view the account, not trade or withdraw from it." label="Which password should I use?" />
-                </span>
-                <div className="account-input-icon"><KeyRound size={16} /><input required={!editingId} type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} placeholder={editingId ? 'Unchanged' : 'Investor (read-only) password'} /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
-              </label>
+        <>
+          <div className="drawer-overlay" onClick={() => setFormOpen(false)} />
+          <aside className="drawer account-drawer" role="dialog" aria-modal="true" aria-labelledby="account-editor-title">
+            <div className="drawer-header">
+              <div><h3 id="account-editor-title">{editingId ? 'Edit trading account' : 'Add an MT5 account'}</h3><p>{editingId ? 'Leave credential fields empty to keep the values already stored securely.' : 'Use the exact login and server shown inside your broker terminal.'}</p></div>
+              <button className="drawer-close" type="button" onClick={() => setFormOpen(false)} aria-label="Close"><X size={16} /></button>
             </div>
-            <div className="account-toggle-row">
-              <label className="account-switch"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} /><span />Sync this account</label>
-              <label className="account-switch"><input type="checkbox" checked={form.requireRealAccount} onChange={event => setForm({ ...form, requireRealAccount: event.target.checked })} /><span />Reject demo logins</label>
-            </div>
-            <button className="account-advanced-toggle" type="button" onClick={() => setAdvancedOpen(value => !value)} aria-expanded={advancedOpen}><ChevronDown size={16} className={advancedOpen ? 'open' : ''} /> Advanced symbol mapping</button>
-            {advancedOpen && <label className="account-alias-field"><span>Symbol aliases</span><textarea rows={3} value={form.symbolAliases} onChange={event => setForm({ ...form, symbolAliases: event.target.value })} placeholder="XAUUSD:XAUUSDm, USTEC:USTECm" /><small>Optional comma-separated journal-symbol:broker-symbol pairs.</small></label>}
-            <div className="account-form-actions"><button type="button" className="btn-ghost" onClick={() => setFormOpen(false)}>Cancel</button><button className="btn-primary" disabled={saving}>{saving ? <Loader2 size={17} className="spin" /> : <LockKeyhole size={17} />}{saving ? 'Saving…' : editingId ? 'Save changes' : 'Save account securely'}</button></div>
-          </form>
-        </section>
+            <form onSubmit={saveAccount}>
+              <div className="drawer-body">
+                {error && <div className="account-alert error" role="alert"><AlertCircle size={17} />{error}</div>}
+                <div className="account-form-grid">
+                  <label><span>Account label *</span><input required maxLength={80} value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="e.g. Exness main account" /></label>
+                  <label><span>MT5 login {editingId ? '' : '*'}</span><input required={!editingId} inputMode="numeric" autoComplete="off" value={form.login} onChange={event => setForm({ ...form, login: event.target.value.replace(/\D/g, '') })} placeholder={editingId ? 'Unchanged' : 'Account number'} /></label>
+                  <label><span>Broker server {editingId ? '' : '*'}</span><div className="account-input-icon"><Server size={16} /><input required={!editingId} autoComplete="off" value={form.server} onChange={event => setForm({ ...form, server: event.target.value })} placeholder={editingId ? 'Unchanged' : 'e.g. Broker-MT5Real'} /></div></label>
+                  <label>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      MT5 password {editingId ? '' : '*'}
+                      <InfoHint text="Use the investor (read-only) password from your broker, not your trading/master password — every MT5 account has both. This journal only ever reads history and balance, never places trades, so the investor password is all it needs. If your credentials were ever exposed, an investor password can only be used to view the account, not trade or withdraw from it." label="Which password should I use?" />
+                    </span>
+                    <div className="account-input-icon"><KeyRound size={16} /><input required={!editingId} type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} placeholder={editingId ? 'Unchanged' : 'Investor (read-only) password'} /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
+                  </label>
+                </div>
+                <div className="account-toggle-row">
+                  <label className="account-switch"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} /><span />Sync this account</label>
+                  <label className="account-switch"><input type="checkbox" checked={form.requireRealAccount} onChange={event => setForm({ ...form, requireRealAccount: event.target.checked })} /><span />Reject demo logins</label>
+                </div>
+                <button className="account-advanced-toggle" type="button" onClick={() => setAdvancedOpen(value => !value)} aria-expanded={advancedOpen}><ChevronDown size={16} className={advancedOpen ? 'open' : ''} /> Advanced symbol mapping</button>
+                {advancedOpen && <label className="account-alias-field"><span>Symbol aliases</span><textarea rows={3} value={form.symbolAliases} onChange={event => setForm({ ...form, symbolAliases: event.target.value })} placeholder="XAUUSD:XAUUSDm, USTEC:USTECm" /><small>Optional comma-separated journal-symbol:broker-symbol pairs.</small></label>}
+              </div>
+              <div className="drawer-footer account-form-actions"><button type="button" className="btn-ghost" onClick={() => setFormOpen(false)}>Cancel</button><button className="btn-primary" disabled={saving}>{saving ? <Loader2 size={17} className="spin" /> : <LockKeyhole size={17} />}{saving ? 'Saving…' : editingId ? 'Save changes' : 'Save account securely'}</button></div>
+            </form>
+          </aside>
+        </>
       )}
 
       <section className="account-list-head"><div><h2>Your accounts</h2><p>{accounts.length} configured · {accounts.filter(account => account.enabled).length} enabled</p></div><button className="btn-ghost" onClick={loadAccounts} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} /> Refresh</button></section>

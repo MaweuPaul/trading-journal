@@ -6,8 +6,8 @@ editing), but as a plain Python script instead of an entire bundled Chromium
 browser. The packaged installer is ~30MB instead of ~104MB.
 
 It only ever handles your **sync secret** (from the Accounts page) and the
-backend API URL — never your MT5 password. That still lives encrypted on the
-backend and is only ever decrypted for `sync.py` itself to use.
+backend API URL — never your MT5 password. `sync.py` reads whichever account is
+logged in to your MT5 and never logs in itself.
 
 ## Prerequisites
 

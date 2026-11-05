@@ -88,10 +88,11 @@ def activate_account(account):
 
 
 # -- Running terminals --------------------------------------------------------
-# Trade copiers and prop traders run one MT5 per account (D:\MT5\Master,
-# D:\MT5\10451501...). Each running terminal is read as it is: attach,
-# read its account, sync it. Never mt5.login() there -- that would switch the
-# account under a running copier.
+# Only what's logged in syncs. Each running terminal is read as it is: attach,
+# read its account, sync it. Never mt5.login(): that would switch the account
+# under the trader or a running copier, and a refused login leaves the terminal
+# logged out. Copiers and prop traders run one MT5 per account (D:\MT5\Master,
+# D:\MT5\10451501...), and each of those is read the same way.
 TERMINAL_EXE = "terminal64.exe"
 _terminal_listing_failed = False
 _terminals_seen = None
@@ -101,7 +102,7 @@ def running_terminals():
     """Paths of the MT5 terminals running on this computer."""
     global _terminal_listing_failed, _terminals_seen
     if os.name != "nt" or _terminal_listing_failed:
-        return []
+        return [MT5_PATH] if MT5_PATH else []
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
@@ -109,10 +110,10 @@ def running_terminals():
             capture_output=True, text=True, timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
-    except Exception as exc:  # no PowerShell (e.g. under Wine): accounts sync by login only
+    except Exception as exc:  # no PowerShell (e.g. under Wine): the setup script's MT5_PATH is the terminal
         _terminal_listing_failed = True
-        log.info("[TERMINALS] Can't list running MT5 terminals here (%s); syncing added accounts by login only.", exc)
-        return []
+        log.info("[TERMINALS] Can't list running MT5 terminals here (%s); using MT5_PATH.", exc)
+        return [MT5_PATH] if MT5_PATH else []
     paths, seen = [], set()
     for line in (out or "").splitlines():
         path = line.strip()
@@ -125,20 +126,6 @@ def running_terminals():
     return paths
 
 
-def login_terminal_path():
-    """The MT5 that accounts added with a password log in to: MT5_PATH, else the
-    standard install. Never "whichever MT5 the library finds" -- with several
-    running that could be a copier's terminal, and logging in would switch it."""
-    if MT5_PATH:
-        return MT5_PATH
-    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), r"C:\Program Files"):
-        if base:
-            candidate = os.path.join(base, "MetaTrader 5", TERMINAL_EXE)
-            if os.path.exists(candidate):
-                return candidate
-    return None
-
-
 def attach_terminal(path):
     """Connect to a running terminal as it is (no login, nothing switched); its account, or None."""
     with MT5_LOCK:
@@ -147,7 +134,7 @@ def attach_terminal(path):
         except Exception:
             pass
         if not mt5.initialize(path=path, timeout=15000):
-            log.warning("[TERMINALS] Could not attach to %s: %s", path, mt5.last_error())
+            log.warning("[TERMINALS] Could not attach to %s: %s", path, mt5_error_text())
             return None
         info = mt5.account_info()
     return info if info and info.login else None
@@ -174,81 +161,31 @@ def discover_account(info):
         return None
 
 
+def mt5_error_text():
+    """The last MT5 error, in words that say what to do about it."""
+    code, message = mt5.last_error()
+    if code == mt5.RES_E_AUTH_FAILED:
+        return f"MT5 is open but not logged in to an account ({message}). Log in with File > Login to Trade Account."
+    return f"({code}, {message!r}) -- is MetaTrader 5 running?"
+
+
 def connect_mt5(account=None):
-    """Initialize MT5 and log into one database-managed account."""
+    """Attach to the running MT5 this account is logged in to. Never logs in."""
     if account is not None:
         activate_account(account)
-    if not ACTIVE_ACCOUNT:
-        log.error("[MT5] No active database-managed trading account.")
+    if not ACTIVE_ACCOUNT or not ACTIVE_ACCOUNT.get("terminalPath"):
+        log.error("[MT5] No active account open in a running MT5.")
         return False
-    terminal_path = ACTIVE_ACCOUNT.get("terminalPath")
-    if terminal_path:
-        # Found in a running terminal: read it there, never log in.
-        info = attach_terminal(terminal_path)
-        if not info or str(info.login) != str(ACTIVE_ACCOUNT.get("terminalLogin")):
-            log.error("[MT5] %s is no longer logged in to %s", ACTIVE_ACCOUNT.get("label"), terminal_path)
-            return False
-        real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
-        if ACTIVE_ACCOUNT.get("requireRealAccount") and info.trade_mode != real_mode:
-            log.critical("[MT5] Refusing to sync. Account %s on %s is not REAL.", info.login, info.server)
-            return False
-        log.info("[MT5] Attached | Login: %s | Server: %s | Balance: %.2f | %s", info.login, info.server, info.balance, terminal_path)
-        return True
-    login = int(ACTIVE_ACCOUNT.get("login") or 0)
-    password = ACTIVE_ACCOUNT.get("password", "")
-    server = ACTIVE_ACCOUNT.get("server", "")
-    with MT5_LOCK:
-        try:
-            mt5.shutdown()  # let go of any terminal attached above before logging in
-        except Exception:
-            pass
-        login_path = login_terminal_path()
-        if not login_path and running_terminals():
-            log.error("[MT5] No standard MT5 install to log %s in with, and other MT5s are running; "
-                      "not touching them. Open this account in its own MT5 and it syncs from there.",
-                      ACTIVE_ACCOUNT.get("label"))
-            return False
-        if not (mt5.initialize(path=login_path) if login_path else mt5.initialize()):
-            log.error("[MT5] mt5.initialize() failed -- is MetaTrader 5 running? Error: %s", mt5.last_error())
-            return False
-
-        authorized = mt5.login(login, password=password, server=server)
-        if not authorized:
-            log.error("[MT5] Login failed: %s", mt5.last_error())
-            return False
-
-        info = mt5.account_info()
-        if not info:
-            log.error("[MT5] Connected, but account_info() returned no account details: %s", mt5.last_error())
-            return False
-
-    if int(info.login) != login:
-        log.critical(
-            "[MT5] Refusing to sync. Connected login %s does not match MT5_LOGIN %s.",
-            info.login,
-            login,
-        )
+    terminal_path = ACTIVE_ACCOUNT["terminalPath"]
+    info = attach_terminal(terminal_path)
+    if not info or str(info.login) != str(ACTIVE_ACCOUNT.get("terminalLogin")):
+        log.error("[MT5] %s is no longer logged in to %s", ACTIVE_ACCOUNT.get("label"), terminal_path)
         return False
-
-    real_trade_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
-    trade_mode_names = {
-        getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0): "DEMO",
-        getattr(mt5, "ACCOUNT_TRADE_MODE_CONTEST", 1): "CONTEST",
-        real_trade_mode: "REAL",
-    }
-    trade_mode = trade_mode_names.get(info.trade_mode, f"UNKNOWN({info.trade_mode})")
-
-    if ACTIVE_ACCOUNT.get("requireRealAccount") and info.trade_mode != real_trade_mode:
-        log.critical(
-            "[MT5] Refusing to sync. Account %s on %s is %s, not REAL.",
-            info.login,
-            info.server,
-            trade_mode,
-        )
+    real_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
+    if ACTIVE_ACCOUNT.get("requireRealAccount") and info.trade_mode != real_mode:
+        log.critical("[MT5] Refusing to sync. Account %s on %s is not REAL.", info.login, info.server)
         return False
-
-    log.info("[MT5] Connected | Login: %s | Server: %s | Type: %s | Balance: %.2f",
-             info.login, info.server, trade_mode, info.balance)
+    log.info("[MT5] Attached | Login: %s | Server: %s | Balance: %.2f | %s", info.login, info.server, info.balance, terminal_path)
     return True
 
 
@@ -770,12 +707,10 @@ def sync_account_events(events):
 
 
 def sync_account(account, force_full_sync=False):
-    """Sync one account's closed trades and cash flows (connect_mt5 attaches or logs in)."""
+    """Sync one account's closed trades and cash flows from the MT5 it's open in."""
     try:
         if not connect_mt5(account):
-            error = f"MT5 rejected login or server for {account.get('label', 'account')}" if not account.get("terminalPath") \
-                else f"{account.get('label', 'Account')} is no longer open in its MT5"
-            report_account_status(account, "error", error)
+            report_account_status(account, "error", f"{account.get('label', 'Account')} is no longer open in its MT5")
             return
         account_identity = get_account_identity()
         latest_time = None if force_full_sync else get_latest_trade_time(account_identity.get("accountKey", ""))
@@ -815,14 +750,15 @@ def main(once=False, full=False):
         accounts = fetch_trading_accounts()
         if not accounts and import_legacy_account():
             accounts = fetch_trading_accounts()
-        if not accounts and not running_terminals():
-            log.warning("[ACCOUNTS] No MT5 running and no accounts added. Open MT5, or add an account on the Accounts page.")
+        terminals = running_terminals()
+        if not terminals:
+            log.warning("[TERMINALS] No MT5 running. Open MT5 and log in to the account you want to sync.")
 
         force_full_sync = full or get_resync_request()
 
         # Every running MT5, read as it is (copier and prop terminals included).
         synced_here = set()
-        for path in running_terminals():
+        for path in terminals:
             info = attach_terminal(path)
             if not info:
                 continue
@@ -834,13 +770,6 @@ def main(once=False, full=False):
             if not account or not account.get("enabled", True):
                 continue
             sync_account({**account, "terminalPath": path, "terminalLogin": str(info.login)}, force_full_sync)
-
-        # Accounts added with a password that aren't open in any running MT5: log in.
-        for account in accounts:
-            ident = (str(account.get("login", "")).strip(), str(account.get("server", "")).strip().lower())
-            if ident in synced_here:
-                continue
-            sync_account(account, force_full_sync)
 
         if force_full_sync and not full:
             mark_resync_complete()

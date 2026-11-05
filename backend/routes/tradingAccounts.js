@@ -73,7 +73,7 @@ function validateInput(body, creating = false) {
   const password = String(body.password || '');
   const server = String(body.server || '').trim();
   if (!label || label.length > 80) return 'Enter an account label of 80 characters or fewer.';
-  if (creating && (!login || !password || !server)) return 'Login, password and broker server are required.';
+  if (creating && (!login || !server)) return 'Login and broker server are required.';
   if (login && !/^\d{3,20}$/.test(login)) return 'MT5 login must contain 3 to 20 digits.';
   if (password && password.length > 200) return 'MT5 password is too long.';
   if (server && server.length > 160) return 'Broker server is too long.';
@@ -94,19 +94,36 @@ router.get('/trading-accounts', auth, ownerOnly, async (req, res) => {
   }
 });
 
+// The journal's MT5 account for a login and server, however it got here.
+async function findMt5Account(userId, login, server) {
+  const candidates = await TradingAccount.find({ user: userId, archivedAt: null, provider: { $in: ['mt5', 'mt5_terminal', 'mt5_import'] } }).sort({ createdAt: 1 });
+  const credentialOf = account => {
+    try {
+      const context = field => credentialContext(userId, account._id, field);
+      return { login: decryptCredential(account.credentials.login, context('login')), server: decryptCredential(account.credentials.server, context('server')) };
+    } catch { return null; }
+  };
+  return findAccountFor(candidates, login, server, credentialOf);
+}
+
+// No password: the Sync App reads this account from an MT5 it's logged in to.
 router.post('/trading-accounts', auth, ownerOnly, async (req, res) => {
   try {
     const validationError = validateInput(req.body, true);
     if (validationError) return res.status(400).json({ error: validationError });
     const accountId = new mongoose.Types.ObjectId();
     const userId = String(req.user.userId);
+    const login = String(req.body.login).trim();
+    const server = String(req.body.server).trim();
+    if (await findMt5Account(userId, login, server)) return res.status(409).json({ error: 'This MT5 account is already in your journal.' });
     const account = await TradingAccount.create({
       _id: accountId,
       user: userId,
       accountKey: `mt5:${accountId}`,
-      provider: 'mt5',
+      provider: 'mt5_terminal',
       label: String(req.body.label).trim(),
-      credentials: encryptFields(userId, accountId, req.body),
+      statementLogin: login,
+      statementServer: server,
       enabled: req.body.enabled !== false,
       requireRealAccount: Boolean(req.body.requireRealAccount),
       symbolAliases: String(req.body.symbolAliases || '').trim(),
@@ -249,14 +266,7 @@ router.post('/sync-agent/trading-accounts/discover', auth, async (req, res) => {
     if (!/^\d{1,20}$/.test(login) || !server) return res.status(400).json({ error: 'login and server are required.' });
 
     const userId = String(req.user.userId);
-    const candidates = await TradingAccount.find({ user: userId, archivedAt: null, provider: { $in: ['mt5', 'mt5_terminal', 'mt5_import'] } }).sort({ createdAt: 1 });
-    const credentialOf = account => {
-      try {
-        const context = field => credentialContext(userId, account._id, field);
-        return { login: decryptCredential(account.credentials.login, context('login')), server: decryptCredential(account.credentials.server, context('server')) };
-      } catch { return null; }
-    };
-    let account = findAccountFor(candidates, login, server, credentialOf);
+    let account = await findMt5Account(userId, login, server);
     if (!account) {
       const accountId = new mongoose.Types.ObjectId();
       account = await TradingAccount.create({
